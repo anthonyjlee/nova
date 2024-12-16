@@ -44,53 +44,59 @@ class MemorySystem:
     
     async def process_interaction(
         self,
-        content: Dict[str, Any],
+        content: str,
         metadata: Optional[Dict] = None
     ) -> Any:
         """Process an interaction through the memory system."""
         try:
+            # Convert string content to dict
+            content_dict = {
+                'content': content,
+                'timestamp': datetime.now().isoformat()
+            }
+            
             # Store in episodic memory (raw interaction)
             episodic_id = await self.vector_store.store_vector(
-                content=content,
+                content=content_dict,
                 metadata=metadata,
                 layer="episodic"
             )
             
             # Find similar memories from both layers
             similar_memories = await self.vector_store.search_vectors(
-                content=content,
+                content=content_dict,
                 limit=5
             )
             
             # Add similar memories to content
             if similar_memories:
-                content['similar_memories'] = similar_memories
+                content_dict['similar_memories'] = similar_memories
             
             # Extract concepts to knowledge graph
             await self.store.store_memory(
                 memory_type="concept",
-                content=content,
+                content=content_dict,
                 metadata=metadata
             )
             
             # Process through belief system
-            belief_response = await self.belief_agent.process(content, metadata)
+            belief_response = await self.belief_agent.process(content_dict, metadata)
             logger.info("BeliefAgent processed interaction")
             
             # Process through desire system
-            desire_response = await self.desire_agent.process(content, metadata)
+            desire_response = await self.desire_agent.process(content_dict, metadata)
             logger.info("DesireAgent processed interaction")
             
             # Process through emotion system
-            emotion_response = await self.emotion_agent.process(content, metadata)
+            emotion_response = await self.emotion_agent.process(content_dict, metadata)
             logger.info("EmotionAgent processed interaction")
             
             # Process through reflection system
-            reflection_response = await self.reflection_agent.process(content, metadata)
+            reflection_response = await self.reflection_agent.process(content_dict, metadata)
             logger.info("ReflectionAgent processed interaction")
             
             # Process through research system
-            research_response = await self.research_agent.process(content, metadata)
+            research_response = await self.research_agent.process(content_dict, metadata)
             logger.info("ResearchAgent processed interaction")
             
             # Synthesize responses
@@ -103,7 +109,7 @@ class MemorySystem:
                     'research': research_response
                 },
                 context={
-                    'original_content': content,
+                    'original_content': content_dict,
                     'metadata': metadata,
                     'episodic_id': episodic_id,
                     'similar_memories': similar_memories
@@ -113,11 +119,11 @@ class MemorySystem:
             # Store synthesized response in semantic memory
             await self.vector_store.store_vector(
                 content={
-                    'original_content': str(content),
-                    'metadata': str(metadata) if metadata else "",
-                    'episodic_id': str(episodic_id),
-                    'similar_memories': str(similar_memories),
-                    'final_response': str(response.dict()),
+                    'original_content': content_dict,
+                    'metadata': metadata,
+                    'episodic_id': episodic_id,
+                    'similar_memories': similar_memories,
+                    'final_response': response.dict(),
                     'agent_responses': {
                         'belief': belief_response.dict(),
                         'desire': desire_response.dict(),
@@ -178,7 +184,7 @@ class MemorySystem:
         try:
             # Search both memory layers
             vector_results = await self.vector_store.search_vectors(
-                content=query,
+                content={'content': query},
                 limit=limit
             )
             
