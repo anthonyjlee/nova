@@ -25,33 +25,62 @@ class BeliefAgent(TimeAwareAgent):
     
     async def _analyze_beliefs(self, content: str, context: Dict) -> Dict:
         """Analyze and update beliefs."""
-        # Get similarity with current belief state
-        belief_similarity = await self.get_state_similarity('beliefs', content)
-        
-        # Get current context
-        current_context = self.memory_store.get_current_context()
-        
-        # Format context for prompt
-        context_str = ""
-        if current_context:
+        try:
+            # Get similarity with current belief state
+            belief_similarity = await self.get_state_similarity('beliefs', content)
+            
+            # Search for similar belief memories
+            similar_beliefs = await self.memory_store.search_similar_memories(
+                content=content,
+                limit=5,
+                filter_dict={'memory_type': 'belief'},  # Only search belief memories
+                prioritize_temporal=True  # Boost recent memories
+            )
+            
+            # Format similar memories for context
+            memory_context = []
+            for memory in similar_beliefs:
+                memory_content = memory.get('content', {})
+                if isinstance(memory_content, dict) and 'beliefs' in memory_content:
+                    beliefs = memory_content['beliefs']
+                    if isinstance(beliefs, dict):
+                        memory_context.append(f"Previous belief ({memory['time_ago']}):")
+                        if beliefs.get('core_belief'):
+                            memory_context.append(f"- Core: {beliefs['core_belief']}")
+                        if beliefs.get('supporting_evidence'):
+                            evidence = beliefs['supporting_evidence']
+                            if isinstance(evidence, list):
+                                memory_context.append("- Evidence:")
+                                for item in evidence[:2]:  # Limit to 2 pieces of evidence
+                                    memory_context.append(f"  * {item}")
+            
+            # Get current context
+            current_context = self.memory_store.get_current_context()
+            
+            # Format context sections
             context_sections = []
-            if 'beliefs' in current_context:
-                context_sections.append("Current Beliefs:\n- " + "\n- ".join(current_context['beliefs'][-3:]))
-            if 'insights' in current_context:
-                context_sections.append("Recent Insights:\n- " + "\n- ".join(current_context['insights'][-3:]))
-            context_str = "\n\n".join(context_sections)
-        
-        prompt = f"""You are part of Nova, an AI assistant. Analyze beliefs and knowledge state:
+            if memory_context:
+                context_sections.append("Similar Past Beliefs:\n" + "\n".join(memory_context))
+            if current_context:
+                if 'beliefs' in current_context:
+                    context_sections.append("Current Beliefs:\n- " + "\n- ".join(current_context['beliefs'][-3:]))
+                if 'insights' in current_context:
+                    context_sections.append("Recent Insights:\n- " + "\n- ".join(current_context['insights'][-3:]))
+            
+            context_str = "\n\n".join(context_sections) if context_sections else "No prior context available"
+            
+            prompt = f"""You are part of Nova, an AI assistant. Analyze beliefs and knowledge state, considering past beliefs:
 
 Input: {content}
 
-Context:
-{context_str if context_str else "No prior context available"}
+Memory Context:
+{context_str}
 
 Current State:
 - Belief similarity: {belief_similarity:.2f}
 
 Important Guidelines:
+- Consider and maintain consistency with past beliefs
 - Focus only on information explicitly provided
 - Be direct and clear about session state
 - For first interactions, acknowledge them clearly
@@ -59,17 +88,21 @@ Important Guidelines:
 - Show interest in learning but acknowledge limitations
 - Be honest about current knowledge state
 - Do not claim capabilities not mentioned
+- Identify any conflicts with previous beliefs
+- Update beliefs based on new information while maintaining consistency
 
 Return ONLY a JSON object in this EXACT format (no other text):
 {{
     "core_belief": "string - primary belief or understanding",
     "confidence": "string - high/medium/low",
     "supporting_evidence": ["list of evidence"],
-    "state_update": "string - description of belief evolution"
-}}
-"""
+    "state_update": "string - description of belief evolution",
+    "belief_conflicts": ["list of conflicts with previous beliefs, if any"],
+    "resolution_strategy": "string - how to resolve any conflicts or maintain consistency",
+    "knowledge_source": "string - where this belief comes from (e.g., direct interaction, past memory)",
+    "belief_evolution": ["list showing how this belief has changed over time"]
+}}"""
 
-        try:
             # Get belief analysis
             analysis = await self.get_completion(prompt)
             
@@ -80,6 +113,9 @@ Return ONLY a JSON object in this EXACT format (no other text):
                 json_end = analysis.rfind('}') + 1
                 if json_start >= 0 and json_end > json_start:
                     analysis = analysis[json_start:json_end]
+                    # Clean up common formatting issues
+                    analysis = analysis.replace('\n', ' ').replace('\r', ' ')
+                    analysis = analysis.replace('```json', '').replace('```', '')
                 data = json.loads(analysis)
             except json.JSONDecodeError:
                 logger.error("Failed to parse belief analysis JSON")
@@ -91,12 +127,16 @@ Return ONLY a JSON object in this EXACT format (no other text):
                 'confidence': self._safe_str(data.get('confidence'), "low"),
                 'supporting_evidence': self._safe_list(data.get('supporting_evidence')),
                 'state_update': self._safe_str(data.get('state_update'), "no significant change"),
+                'belief_conflicts': self._safe_list(data.get('belief_conflicts')),
+                'resolution_strategy': self._safe_str(data.get('resolution_strategy'), "maintain current beliefs"),
+                'knowledge_source': self._safe_str(data.get('knowledge_source'), "unknown source"),
+                'belief_evolution': self._safe_list(data.get('belief_evolution')),
                 'timestamp': datetime.now().isoformat()
             }
             
-            # Update belief state vector
+            # Update belief state vector with richer context
             await self.update_state_vector('beliefs', 
-                f"{belief_data['core_belief']} {belief_data['state_update']}")
+                f"{belief_data['core_belief']} {belief_data['state_update']} {belief_data['knowledge_source']}")
             
             return belief_data
             
@@ -107,6 +147,10 @@ Return ONLY a JSON object in this EXACT format (no other text):
                 'confidence': "low",
                 'supporting_evidence': ["analysis failed"],
                 'state_update': "error in processing",
+                'belief_conflicts': [],
+                'resolution_strategy': "maintain current beliefs",
+                'knowledge_source': "error during analysis",
+                'belief_evolution': [],
                 'timestamp': datetime.now().isoformat()
             }
     
@@ -119,69 +163,45 @@ Return ONLY a JSON object in this EXACT format (no other text):
             # Analyze beliefs
             beliefs = await self._analyze_beliefs(content, context)
             
-            # Store memory
+            # Store memory with enhanced metadata
             await self.store_memory(
                 memory_type="belief",
                 content={
                     'beliefs': beliefs,
                     'timestamp': datetime.now().isoformat()
+                },
+                metadata={
+                    'importance': 1.0 if any(marker.lower() in content.lower() 
+                                          for marker in ['nia', 'echo', 'predecessor']) 
+                              else 0.5  # Boost importance for key topics
                 }
             )
             
-            # Return concise belief statement
-            evidence = '; '.join(beliefs['supporting_evidence'][:2]) if beliefs['supporting_evidence'] else "no clear evidence"
-            return f"Core belief: {beliefs['core_belief']} ({beliefs['confidence']} confidence) - {beliefs['state_update']}"
+            # Build response parts
+            core = f"Core belief: {beliefs['core_belief']} ({beliefs['confidence']} confidence)"
+            update = f" - {beliefs['state_update']}"
+            
+            # Add evidence if available
+            evidence = ""
+            if beliefs['supporting_evidence']:
+                evidence = f" (Evidence: {'; '.join(str(e) for e in beliefs['supporting_evidence'][:2])})"
+            
+            # Add conflicts if available
+            conflicts = ""
+            if beliefs['belief_conflicts']:
+                conflicts = f" (Conflicts: {'; '.join(str(c) for c in beliefs['belief_conflicts'])})"
+            
+            # Add evolution if available
+            evolution = ""
+            if beliefs.get('belief_evolution'):
+                evolution_items = [str(item) for item in beliefs['belief_evolution']]
+                if evolution_items:
+                    evolution = f" [Evolution: {'; '.join(evolution_items)}]"
+            
+            # Combine all parts
+            return f"{core}{update}{evidence}{conflicts}{evolution}"
             
         except Exception as e:
             error_msg = f"Error in belief processing: {str(e)}\n{traceback.format_exc()}"
             logger.error(error_msg)
             return "Unable to process beliefs at this time"
-    
-    async def reflect(self) -> Dict:
-        """Reflect on belief development."""
-        try:
-            # Get recent memories
-            memories = await self.memory_store.get_recent_memories(
-                agent_name=self.name,
-                memory_type="belief",
-                limit=3
-            )
-            
-            # Extract belief patterns
-            beliefs = []
-            evidence = []
-            updates = []
-            
-            for memory in memories:
-                if isinstance(memory.get('content'), dict):
-                    belief_data = memory['content'].get('beliefs', {})
-                    if isinstance(belief_data, dict):
-                        if belief_data.get('core_belief'):
-                            beliefs.append(belief_data['core_belief'])
-                        if belief_data.get('supporting_evidence'):
-                            evidence.extend(belief_data['supporting_evidence'])
-                        if belief_data.get('state_update'):
-                            updates.append(belief_data['state_update'])
-            
-            # Limit to most recent unique items
-            beliefs = list(dict.fromkeys(beliefs))[-3:]
-            evidence = list(dict.fromkeys(evidence))[-3:]
-            updates = list(dict.fromkeys(updates))[-3:]
-            
-            return {
-                'belief_pattern': ', '.join(beliefs) if beliefs else 'no clear beliefs',
-                'evidence_trend': ', '.join(evidence) if evidence else 'no clear evidence',
-                'update_evolution': ', '.join(updates) if updates else 'no clear evolution',
-                'timestamp': datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            error_msg = f"Error in belief reflection: {str(e)}\n{traceback.format_exc()}"
-            logger.error(error_msg)
-            return {
-                'error': error_msg,
-                'belief_pattern': 'no clear beliefs',
-                'evidence_trend': 'no clear evidence',
-                'update_evolution': 'no clear evolution',
-                'timestamp': datetime.now().isoformat()
-            }
