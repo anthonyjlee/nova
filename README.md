@@ -6,7 +6,8 @@ A modular system for building intelligent agents with memory, reasoning, and lea
 
 - **Two-Layer Memory System**
   - Semantic Search Layer (Qdrant + LMStudio embeddings)
-  - Graph Knowledge Layer (Neo4j)
+  - Rich Knowledge Graph Layer (Neo4j)
+  - Concept extraction and linking
   - Memory consolidation and integration
   - Hybrid retrieval system
 
@@ -26,6 +27,7 @@ A modular system for building intelligent agents with memory, reasoning, and lea
 - **LLM Integration**
   - LMStudio chat completions
   - LMStudio embeddings
+  - Concept extraction
   - Structured JSON responses
   - Error recovery
   - Context management
@@ -90,9 +92,9 @@ similar_memories = await vector_store.search_vectors(
 )
 ```
 
-### 2. Graph Knowledge Layer (Neo4j)
+### 2. Knowledge Graph Layer (Neo4j)
 
-The graph layer uses Neo4j to store structured knowledge and relationships:
+The graph layer uses Neo4j to store structured knowledge with rich relationships:
 
 ```
 Graph Structure:
@@ -105,6 +107,11 @@ Graph Structure:
    |                      |                         |
    |                      v                         v
    |                  (Concept) -[:RELATED_TO]-> (Concept)
+   |                      |                         |
+   |                [:HAS_TOPIC]              [:HAS_TOPIC]
+   |                      |                         |
+   |                      v                         v
+   |                   (Topic) -[:RELATED_TO]-> (Topic)
    |                      |
 [:DEPENDS_ON]        [:INFLUENCES]
    |                      |
@@ -115,15 +122,22 @@ Graph Structure:
 
 Node Types:
 - Memory: Episodic experiences with content and metadata
-- Concept: Extracted insights and patterns
+- Concept: Extracted insights and patterns (LLM extracted)
+- Topic: High-level categories and themes
 - State: System states (beliefs, emotions, desires)
 - Task: Execution units with status tracking
+- AISystem: System versions and capabilities
+- Capability: System capabilities and functions
 
 Relationship Types:
 - SIMILAR_TO: Links semantically similar memories
-- HAS_CONCEPT: Connects memories to concepts
-- RELATED_TO: Shows concept relationships
+- HAS_CONCEPT: Connects memories to extracted concepts
+- RELATED_TO: Shows relationships between nodes
+- HAS_TOPIC: Categorizes memories and concepts
 - INFLUENCES/AFFECTS/MODIFIES: State changes
+- CREATED_BY: Links memories to creating system
+- HAS_CAPABILITY: Links systems to capabilities
+- PREDECESSOR_OF: Shows system evolution
 ```
 
 ### Memory Integration
@@ -131,7 +145,7 @@ Relationship Types:
 The system combines both layers for comprehensive memory operations:
 
 ```python
-# Store new memory
+# Store new memory with concept extraction
 async def store_memory(content: Dict[str, Any]) -> str:
     # 1. Store in vector store for semantic search
     vector_id = await vector_store.store_vector(content)
@@ -139,21 +153,28 @@ async def store_memory(content: Dict[str, Any]) -> str:
     # 2. Find similar memories using embeddings
     similar = await vector_store.search_vectors(content)
     
-    # 3. Store in graph with relationships
+    # 3. Extract concepts using LLM
+    concepts = await extract_concepts(content)
+    
+    # 4. Store in graph with relationships
     memory_id = await graph_store.store_memory(
         content=content,
-        similar_memories=similar
+        similar_memories=similar,
+        concepts=concepts
     )
     
     return memory_id
 
-# Retrieve memories
+# Retrieve memories with concepts
 async def search_memories(query: str) -> List[Dict]:
     # 1. Search vector store
     vector_results = await vector_store.search_vectors(query)
     
-    # 2. Search graph store
-    graph_results = await graph_store.search_memories(query)
+    # 2. Search graph store with concepts
+    graph_results = await graph_store.search_memories(
+        content_pattern=query,
+        include_concepts=True
+    )
     
     # 3. Combine and deduplicate results
     return combine_results(vector_results, graph_results)
@@ -161,7 +182,7 @@ async def search_memories(query: str) -> List[Dict]:
 
 ## LLM Integration
 
-The system uses LMStudio for both text generation and embeddings:
+The system uses LMStudio for text generation, embeddings, and concept extraction:
 
 ### Chat Completions
 
@@ -187,6 +208,25 @@ curl http://localhost:1234/v1/embeddings \
     "model": "text-embedding-nomic-embed-text-v1.5@q8_0",
     "input": "Text to embed"
   }'
+```
+
+### Concept Extraction
+
+```python
+# Extract concepts using LLM
+async def extract_concepts(content: str) -> List[Dict]:
+    prompt = """Extract key concepts from the content.
+    Include:
+    1. Name of concept
+    2. Type (technology, capability, system, idea)
+    3. Description
+    4. Related concepts
+    """
+    
+    response = await llm.get_structured_completion(
+        prompt.format(content=content)
+    )
+    return response.analysis.get("concepts", [])
 ```
 
 ## Development
