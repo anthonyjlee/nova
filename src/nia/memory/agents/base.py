@@ -44,9 +44,9 @@ class BaseAgent(ABC):
             response = AgentResponse(
                 response=llm_response.response,
                 analysis=Analysis(
-                    key_points=llm_response.analysis["key_points"],
-                    confidence=llm_response.analysis["confidence"],
-                    state_update=llm_response.analysis["state_update"]
+                    key_points=llm_response.analysis.get("key_points", []),
+                    confidence=float(llm_response.analysis.get("confidence", 0.0)),
+                    state_update=str(llm_response.analysis.get("state_update", ""))
                 )
             )
             
