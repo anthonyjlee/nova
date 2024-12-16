@@ -30,31 +30,41 @@ class BaseAgent(ABC):
     
     def _extract_concept_text(self, concept: Dict[str, Any]) -> str:
         """Extract concept text from a dictionary."""
-        # Get main concept fields
-        name = concept.get('name', 'Unknown concept')
-        type_str = concept.get('type', '')
-        desc = concept.get('description', '')
-        
-        # Get related concepts if any
-        related = concept.get('related_concepts', [])
-        related_names = []
-        if isinstance(related, list):
-            for rel in related:
-                if isinstance(rel, dict):
-                    related_names.append(rel.get('name', ''))
-                elif isinstance(rel, str):
-                    related_names.append(rel)
-        
-        # Format the concept text
-        text = f"{name}"
-        if type_str:
-            text += f" ({type_str})"
-        if desc:
-            text += f": {desc}"
-        if related_names:
-            text += f" [Related: {', '.join(related_names)}]"
-        
-        return text
+        try:
+            # Get main concept fields with debug logging
+            name = concept.get('name', 'Unknown concept')
+            type_str = concept.get('type', '')
+            desc = concept.get('description', '')
+            logger.debug(f"Extracting concept: name={name}, type={type_str}, desc={desc}")
+            
+            # Get related concepts if any
+            related = concept.get('related_concepts', [])
+            related_names = []
+            if isinstance(related, list):
+                for rel in related:
+                    if isinstance(rel, dict):
+                        rel_name = rel.get('name', '')
+                        if rel_name:
+                            related_names.append(rel_name)
+                    elif isinstance(rel, str):
+                        related_names.append(rel)
+            logger.debug(f"Related concepts: {related_names}")
+            
+            # Format the concept text
+            text = f"{name}"
+            if type_str:
+                text += f" ({type_str})"
+            if desc:
+                text += f": {desc}"
+            if related_names:
+                text += f" [Related: {', '.join(related_names)}]"
+            
+            logger.debug(f"Formatted concept text: {text}")
+            return text
+            
+        except Exception as e:
+            logger.error(f"Error extracting concept text: {str(e)}")
+            return str(concept)
     
     async def process(
         self,
@@ -67,35 +77,35 @@ class BaseAgent(ABC):
             llm_response = await self.llm.get_structured_completion(
                 self._format_prompt(content)
             )
+            logger.debug(f"LLM Response: {llm_response.dict()}")
             
             # Extract key points from both concepts and analysis
             key_points = []
             
-            # Handle concepts if present
-            if hasattr(llm_response, 'concepts'):
-                concepts = llm_response.concepts
-                if isinstance(concepts, list):
-                    for concept in concepts:
-                        if isinstance(concept, dict):
-                            key_points.append(self._extract_concept_text(concept))
+            # Handle concepts
+            for concept in llm_response.concepts:
+                try:
+                    if isinstance(concept, dict):
+                        key_points.append(self._extract_concept_text(concept))
+                except Exception as e:
+                    logger.error(f"Error processing concept: {str(e)}")
             
-            # Handle analysis.key_points if present
-            if hasattr(llm_response, 'analysis'):
-                analysis_points = llm_response.analysis.get("key_points", [])
-                if isinstance(analysis_points, list):
-                    for point in analysis_points:
-                        if isinstance(point, str):
-                            key_points.append(point)
-                        elif isinstance(point, dict):
-                            key_points.append(self._extract_concept_text(point))
+            # Handle analysis key points
+            analysis_points = llm_response.analysis.get("key_points", [])
+            if isinstance(analysis_points, list):
+                for point in analysis_points:
+                    if isinstance(point, str):
+                        key_points.append(point)
+            
+            logger.debug(f"Extracted key points: {key_points}")
             
             # Create agent response
             response = AgentResponse(
                 response=llm_response.response,
                 analysis=Analysis(
                     key_points=key_points or ["No key points found"],
-                    confidence=float(getattr(llm_response, 'analysis', {}).get("confidence", 0.8)),
-                    state_update=str(getattr(llm_response, 'analysis', {}).get("state_update", "Processed content"))
+                    confidence=float(llm_response.analysis.get("confidence", 0.8)),
+                    state_update=str(llm_response.analysis.get("state_update", "Processed content"))
                 )
             )
             
@@ -137,6 +147,7 @@ class BaseAgent(ABC):
                         'agent_response': response.dict(),
                         'agent_type': self.agent_type,
                         'key_points': key_points,
+                        'concepts': [c for c in llm_response.concepts if isinstance(c, dict)],
                         'timestamp': metadata.get('timestamp') if metadata else None
                     },
                     metadata=metadata

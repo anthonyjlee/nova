@@ -69,8 +69,8 @@ class LLMInterface:
             # Fix missing commas between elements
             text = re.sub(r'}\s*{', '},{', text)
             text = re.sub(r']\s*{', '],{', text)
-            text = re.sub(r'}\s*\[', '},\[', text)
-            text = re.sub(r']\s*\[', '],\[', text)
+            text = re.sub(r'}\s*\[', '},\\[', text)  # Fix escape sequence
+            text = re.sub(r']\s*\[', '],\\[', text)  # Fix escape sequence
             
             # Validate the fixed JSON
             json.loads(text)
@@ -84,6 +84,8 @@ class LLMInterface:
     def _format_response(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Format response to standard structure."""
         try:
+            logger.debug(f"Formatting response data: {json.dumps(data, indent=2)}")
+            
             # Handle response field
             if not isinstance(data.get("response"), str):
                 data["response"] = str(data.get("response", ""))
@@ -116,6 +118,7 @@ class LLMInterface:
             elif not isinstance(data["analysis"]["state_update"], str):
                 data["analysis"]["state_update"] = str(data["analysis"]["state_update"])
             
+            logger.debug(f"Formatted response: {json.dumps(data, indent=2)}")
             return data
             
         except Exception as e:
@@ -175,16 +178,21 @@ class LLMInterface:
                             raise ValueError(f"API request failed: {response.status}")
                         
                         result = await response.json()
+                        logger.debug(f"Raw API response: {json.dumps(result, indent=2)}")
+                        
                         if not result.get("choices"):
                             raise ValueError("No choices in response")
                         
+                        # Extract content from choices[0].message.content
                         content = result["choices"][0]["message"]["content"]
-                        logger.debug(f"Raw content: {content}")
+                        logger.debug(f"Extracted content: {content}")
                         
                         # Parse response
                         try:
                             data = json.loads(content)
-                        except:
+                        except json.JSONDecodeError as e:
+                            logger.error(f"JSON decode error: {str(e)}")
+                            logger.debug(f"Failed content: {content}")
                             # Try to fix JSON formatting
                             fixed_content = self._fix_json(content)
                             data = json.loads(fixed_content)
@@ -192,7 +200,7 @@ class LLMInterface:
                         # Format response
                         data = self._format_response(data)
                         
-                        logger.info(f"Raw LLM response: {json.dumps(data, indent=2)}")
+                        logger.info(f"Final formatted response: {json.dumps(data, indent=2)}")
                         
                         return LLMResponse(
                             response=data["response"],
