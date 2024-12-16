@@ -6,6 +6,7 @@ import logging
 from typing import Dict, List, Any, Optional
 from neo4j import GraphDatabase
 from .llm_interface import LLMInterface
+from .vector_store import VectorStore
 from .neo4j import (
     Neo4jSchemaManager,
     Neo4jConceptManager,
@@ -22,11 +23,15 @@ class Neo4jMemoryStore:
         uri: str = "bolt://localhost:7687",
         username: str = "neo4j",
         password: str = "password",
-        llm: Optional[LLMInterface] = None
+        llm: Optional[LLMInterface] = None,
+        vector_store: Optional[VectorStore] = None,
+        similarity_threshold: float = 0.85
     ):
         """Initialize Neo4j connection."""
         self.driver = GraphDatabase.driver(uri, auth=(username, password))
         self.llm = llm or LLMInterface()
+        self.vector_store = vector_store or VectorStore()
+        self.similarity_threshold = similarity_threshold
         
         # Initialize database
         self.initialize_database()
@@ -55,14 +60,50 @@ class Neo4jMemoryStore:
         with self.driver.session() as session:
             try:
                 # Extract and store concepts
-                concept_manager = Neo4jConceptManager(session, self.llm)
+                concept_manager = Neo4jConceptManager(
+                    session,
+                    self.llm,
+                    self.vector_store,
+                    self.similarity_threshold
+                )
                 concepts = await concept_manager.extract_concepts(str(content))
                 for concept in concepts:
-                    concept_manager.create_concept(concept)
+                    await concept_manager.create_concept(concept)
                 
             except Exception as e:
                 logger.error(f"Error storing concepts: {str(e)}")
                 raise
+    
+    async def search_concepts(
+        self,
+        query: str,
+        limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Search concepts using vector similarity."""
+        with self.driver.session() as session:
+            try:
+                concept_manager = Neo4jConceptManager(
+                    session,
+                    self.llm,
+                    self.vector_store,
+                    self.similarity_threshold
+                )
+                return await concept_manager.search_concepts(query, limit)
+            except Exception as e:
+                logger.error(f"Error searching concepts: {str(e)}")
+                return []
+    
+    async def get_system_info(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get information about an AI system."""
+        with self.driver.session() as session:
+            system_manager = Neo4jSystemManager(session)
+            return system_manager.get_system_info(name)
+    
+    async def get_system_relationships(self, name: str) -> List[Dict[str, Any]]:
+        """Get relationships for an AI system."""
+        with self.driver.session() as session:
+            system_manager = Neo4jSystemManager(session)
+            return system_manager.get_system_relationships(name)
     
     async def get_capabilities(self) -> List[Dict[str, Any]]:
         """Get all capabilities in the system."""
@@ -79,7 +120,12 @@ class Neo4jMemoryStore:
                 schema_manager.cleanup_schema()
                 
                 # Clean up nodes
-                concept_manager = Neo4jConceptManager(session, self.llm)
+                concept_manager = Neo4jConceptManager(
+                    session,
+                    self.llm,
+                    self.vector_store,
+                    self.similarity_threshold
+                )
                 system_manager = Neo4jSystemManager(session)
                 
                 concept_manager.cleanup_concepts()
