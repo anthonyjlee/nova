@@ -1,44 +1,50 @@
 """
-Logging configuration for memory system.
+Logging configuration for the memory system.
 """
 
-import os
 import logging
-from logging.handlers import RotatingFileHandler
+import sys
 from datetime import datetime
 
-def setup_logging():
-    """Set up logging configuration."""
-    # Create logs directory if it doesn't exist
-    os.makedirs('logs', exist_ok=True)
-    
-    # Create formatters
-    console_formatter = logging.Formatter('%(message)s')
-    file_formatter = logging.Formatter('%(asctime)s - %(name)s\n%(message)s\n')
-    
-    # Console handler - minimal output
-    console_handler = logging.StreamHandler()
-    console_handler.setFormatter(console_formatter)
-    console_handler.setLevel(logging.INFO)
-    
-    # File handler for agent responses - detailed output
-    responses_file = 'logs/agent_responses.log'
-    responses_handler = RotatingFileHandler(
-        responses_file,
-        maxBytes=10*1024*1024,  # 10MB
-        backupCount=5
+def configure_logging():
+    """Configure logging for the memory system."""
+    # Create formatter
+    formatter = logging.Formatter(
+        '%(asctime)s%(msecs)03d - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
     )
-    responses_handler.setFormatter(file_formatter)
-    responses_handler.setLevel(logging.INFO)
+    
+    # Create console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    console_handler.setLevel(logging.DEBUG)  # Set to DEBUG to see detailed logs
     
     # Configure root logger
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.INFO)
+    root_logger.setLevel(logging.DEBUG)  # Set to DEBUG to see detailed logs
+    
+    # Remove any existing handlers
+    for handler in root_logger.handlers[:]:
+        root_logger.removeHandler(handler)
+    
+    # Add our handlers
     root_logger.addHandler(console_handler)
     
-    # Create agent response logger
-    agent_logger = logging.getLogger('agent_responses')
-    agent_logger.setLevel(logging.INFO)
-    agent_logger.addHandler(responses_handler)
+    # Configure specific loggers
+    logging.getLogger('aiohttp').setLevel(logging.WARNING)
+    logging.getLogger('asyncio').setLevel(logging.WARNING)
+    logging.getLogger('urllib3').setLevel(logging.WARNING)
     
-    return agent_logger
+    # Configure our loggers
+    for logger_name in [
+        'nia.memory.llm_interface',
+        'nia.memory.agents.base',
+        'nia.memory.neo4j.concept_manager',
+        'nia.memory.memory_integration'
+    ]:
+        logger = logging.getLogger(logger_name)
+        logger.setLevel(logging.DEBUG)
+        logger.propagate = True  # Allow messages to propagate to root logger
+    
+    # Log startup message
+    logging.info("Logging configured with DEBUG level")
