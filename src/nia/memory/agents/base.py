@@ -83,10 +83,13 @@ class BaseAgent(ABC):
             key_points = []
             
             # Handle concepts
+            logger.debug(f"Processing {len(llm_response.concepts)} concepts")
             for concept in llm_response.concepts:
                 try:
                     if isinstance(concept, dict):
-                        key_points.append(self._extract_concept_text(concept))
+                        concept_text = self._extract_concept_text(concept)
+                        key_points.append(concept_text)
+                        logger.debug(f"Added concept: {concept_text}")
                 except Exception as e:
                     logger.error(f"Error processing concept: {str(e)}")
             
@@ -96,8 +99,9 @@ class BaseAgent(ABC):
                 for point in analysis_points:
                     if isinstance(point, str):
                         key_points.append(point)
+                        logger.debug(f"Added analysis point: {point}")
             
-            logger.debug(f"Extracted key points: {key_points}")
+            logger.debug(f"Extracted {len(key_points)} key points")
             
             # Create agent response
             response = AgentResponse(

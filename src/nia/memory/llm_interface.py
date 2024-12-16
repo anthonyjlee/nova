@@ -45,18 +45,25 @@ class LLMInterface:
         self.api_url = api_url
         self.api_key = api_key
     
-    def _fix_json(self, text: str) -> str:
-        """Fix common JSON formatting issues."""
+    def _extract_json_content(self, text: str) -> str:
+        """Extract JSON content from text."""
         try:
-            # Find JSON content
+            # Find JSON content between curly braces
             start = text.find("{")
             end = text.rfind("}") + 1
             if start == -1 or end == 0:
                 raise ValueError("No JSON content found")
             
             # Extract JSON part
-            text = text[start:end]
+            return text[start:end]
             
+        except Exception as e:
+            logger.error(f"Failed to extract JSON content: {str(e)}")
+            raise
+    
+    def _fix_json(self, text: str) -> str:
+        """Fix common JSON formatting issues."""
+        try:
             # Fix missing quotes around property names
             text = re.sub(r'(\s*?)(\w+)(\s*?):', r'\1"\2"\3:', text)
             
@@ -69,8 +76,8 @@ class LLMInterface:
             # Fix missing commas between elements
             text = re.sub(r'}\s*{', '},{', text)
             text = re.sub(r']\s*{', '],{', text)
-            text = re.sub(r'}\s*\[', '},\\[', text)  # Fix escape sequence
-            text = re.sub(r']\s*\[', '],\\[', text)  # Fix escape sequence
+            text = re.sub(r'}\s*\[', '},\\[', text)
+            text = re.sub(r']\s*\[', '],\\[', text)
             
             # Validate the fixed JSON
             json.loads(text)
@@ -187,14 +194,18 @@ class LLMInterface:
                         content = result["choices"][0]["message"]["content"]
                         logger.debug(f"Extracted content: {content}")
                         
+                        # Extract JSON from content
+                        json_content = self._extract_json_content(content)
+                        logger.debug(f"Extracted JSON: {json_content}")
+                        
                         # Parse response
                         try:
-                            data = json.loads(content)
+                            data = json.loads(json_content)
                         except json.JSONDecodeError as e:
                             logger.error(f"JSON decode error: {str(e)}")
-                            logger.debug(f"Failed content: {content}")
+                            logger.debug(f"Failed content: {json_content}")
                             # Try to fix JSON formatting
-                            fixed_content = self._fix_json(content)
+                            fixed_content = self._fix_json(json_content)
                             data = json.loads(fixed_content)
                         
                         # Format response
@@ -205,7 +216,7 @@ class LLMInterface:
                         return LLMResponse(
                             response=data["response"],
                             analysis=data["analysis"],
-                            concepts=data["concepts"]
+                            concepts=data.get("concepts", [])
                         )
                 
             except Exception as e:
