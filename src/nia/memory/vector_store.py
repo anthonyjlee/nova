@@ -6,6 +6,7 @@ import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import json
+import numpy as np
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from qdrant_client.http.exceptions import UnexpectedResponse
@@ -84,12 +85,16 @@ class VectorStore:
             # Convert content to JSON string
             content_str = json.dumps(content)
             
+            # Generate temporary random vector (replace with actual embeddings)
+            temp_vector = np.random.rand(self.dim).tolist()
+            
             # Store in Qdrant
             self.client.upsert(
                 collection_name=self.collection_name,
                 points=[
                     models.PointStruct(
                         id=vector_id,
+                        vector=temp_vector,  # Required vector field
                         payload={
                             "content": content_str,
                             "metadata": metadata
@@ -119,6 +124,9 @@ class VectorStore:
             # Convert content to JSON string
             content_str = json.dumps(content)
             
+            # Generate temporary query vector (replace with actual embeddings)
+            query_vector = np.random.rand(self.dim).tolist()
+            
             # Build search filter
             search_filter = {}
             if filter:
@@ -129,6 +137,7 @@ class VectorStore:
             # Search in Qdrant
             results = self.client.search(
                 collection_name=self.collection_name,
+                query_vector=query_vector,  # Required query vector
                 query_filter=models.Filter(
                     must=[
                         models.FieldCondition(
