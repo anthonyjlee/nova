@@ -1,5 +1,5 @@
 """
-Example showing DAG integration with memory system.
+Example showing DAG integration with two-layer memory system.
 """
 
 import asyncio
@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Dict, Any
 
 from nia.memory import MemorySystem
+from nia.memory.memory_integration import MemoryIntegration
 from nia.memory.agents import (
     MetaAgent,
     BeliefAgent,
@@ -36,6 +37,9 @@ class DAGMemorySystem:
         """Initialize system asynchronously."""
         # Initialize memory system
         await self.memory_system.initialize()
+        
+        # Initialize memory integration
+        self.memory_integration = MemoryIntegration(self.memory_system.memory_store)
         
         # Get agents
         self.meta_agent = self.memory_system.meta_agent
@@ -73,10 +77,17 @@ class DAGMemorySystem:
         print(f"\nExecuting task: {task.task_id} ({task.task_type.name})")
         
         try:
-            # Create context
+            # Get relevant memories for context
+            memories = await self.memory_integration.get_relevant_memories(task)
+            
+            # Create context with memories
             context = TaskContext(
                 inputs=task.inputs,
-                parameters=task.parameters
+                parameters=task.parameters,
+                memory_context={
+                    'episodic': memories['episodic'],
+                    'semantic': memories['semantic']
+                }
             )
             
             # Start task
@@ -93,7 +104,7 @@ class DAGMemorySystem:
             # Execute task with just the content
             result = await handler(content)
             
-            # Complete task
+            # Create task result
             task_result = TaskResult(
                 success=True,
                 output=result,
@@ -102,7 +113,16 @@ class DAGMemorySystem:
                     'execution_time': str(datetime.now() - task.started_at)
                 }
             )
+            
+            # Complete task
             task.complete(task_result)
+            
+            # Store task execution in episodic memory
+            await self.memory_integration.store_task_execution(task, graph, {
+                'result': result,
+                'success': True,
+                'execution_time': str(datetime.now() - task.started_at)
+            })
             
         except Exception as e:
             # Handle failure
@@ -119,6 +139,12 @@ class DAGMemorySystem:
                 }
             )
             task.complete(task_result)
+            
+            # Store failed task execution
+            await self.memory_integration.store_task_execution(task, graph, {
+                'error': error_msg,
+                'success': False
+            })
     
     async def process_interaction(self, content: str, context: Dict[str, Any] = None) -> str:
         """Process an interaction using DAG-based execution."""
@@ -168,10 +194,21 @@ class DAGMemorySystem:
             
             # Get final response
             execution_task = graph.tasks["execute_response"]
+            response = None
             if execution_task.status == TaskStatus.COMPLETED and execution_task.result:
                 response = execution_task.result.output
             else:
                 response = "Failed to generate response"
+            
+            # Store graph execution in episodic memory
+            await self.memory_integration.store_graph_execution(graph, {
+                'response': response,
+                'success': execution_task.status == TaskStatus.COMPLETED,
+                'importance': 1.0 if "artificial intelligence" in content.lower() else 0.5
+            })
+            
+            # Consolidate memories
+            await self.memory_integration.consolidate_memories(graph)
             
             # Mark graph as completed
             self.task_planner.complete_graph(graph_id)
