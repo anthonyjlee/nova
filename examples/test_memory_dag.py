@@ -31,6 +31,11 @@ class DAGMemorySystem:
         """Initialize system."""
         # Initialize memory system
         self.memory_system = MemorySystem()
+    
+    async def initialize(self):
+        """Initialize system asynchronously."""
+        # Initialize memory system
+        await self.memory_system.initialize()
         
         # Get agents
         self.meta_agent = self.memory_system.meta_agent
@@ -175,7 +180,7 @@ class DAGMemorySystem:
         except Exception as e:
             error_msg = f"Failed to process interaction: {str(e)}"
             print(f"Error: {error_msg}")
-            if graph_id:
+            if 'graph_id' in locals():
                 self.task_planner.fail_graph(graph_id)
             return error_msg
 
@@ -183,6 +188,7 @@ async def main():
     """Run the example."""
     # Initialize system
     system = DAGMemorySystem()
+    await system.initialize()
     
     # Test interactions
     interactions = [
