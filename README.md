@@ -29,6 +29,31 @@ A modular system for building intelligent agents with memory, reasoning, and lea
   - Error recovery
   - Context management
 
+## Prerequisites
+
+1. Python 3.9 or higher
+2. Docker and Docker Compose
+3. Git
+
+## Installation
+
+1. Clone this repository:
+```bash
+git clone https://github.com/yourusername/nia.git
+cd nia
+```
+
+2. Run the setup script:
+```bash
+python scripts/setup.py
+```
+
+This will:
+- Install Python dependencies
+- Set up Neo4j using Docker
+- Create necessary directories
+- Configure environment variables
+
 ## Memory Architecture
 
 The system uses Neo4j to create a rich, interconnected memory graph:
@@ -67,118 +92,21 @@ Relationship Types:
 - INFLUENCES/AFFECTS/MODIFIES: State changes
 ```
 
-### Memory Organization
-
-1. **Episodic Layer** (Experience Nodes)
-   - Interaction memories
-   - Task executions
-   - Event sequences
-   - Temporal context
-   ```cypher
-   // Example: Find recent interactions
-   MATCH (m:Memory {type: 'interaction'})
-   WHERE m.timestamp > datetime() - duration('P1D')
-   RETURN m ORDER BY m.timestamp DESC;
-   ```
-
-2. **Semantic Layer** (Knowledge Nodes)
-   - Concepts
-   - Beliefs
-   - Patterns
-   - Relationships
-   ```cypher
-   // Example: Find related concepts
-   MATCH (c1:Concept)-[:RELATED_TO]->(c2:Concept)
-   WHERE c1.type = 'belief'
-   RETURN c1, c2;
-   ```
-
-3. **State Layer** (System State)
-   - Belief states
-   - Emotional states
-   - Desire states
-   ```cypher
-   // Example: Track state changes
-   MATCH (t:Task)-[:AFFECTS]->(s:EmotionalState)
-   RETURN t, s ORDER BY t.timestamp;
-   ```
-
-### Memory Operations
-
-1. **Storage**
-   ```python
-   # Store interaction memory
-   memory_id = await store.store_memory(
-       memory_type="interaction",
-       content={
-           'input': user_input,
-           'response': system_response,
-           'timestamp': datetime.now()
-       }
-   )
-   ```
-
-2. **Retrieval**
-   ```python
-   # Get related memories
-   memories = await store.get_related_memories(
-       content="user query",
-       memory_type="interaction",
-       limit=5
-   )
-   ```
-
-3. **Concept Extraction**
-   ```python
-   # Extract and store concepts
-   await store.extract_concepts(
-       memory_id=memory_id,
-       content={
-           'beliefs': extracted_beliefs,
-           'patterns': identified_patterns
-       }
-   )
-   ```
-
-4. **Graph Traversal**
-   ```python
-   # Get memory graph
-   graph = await store.get_memory_graph(
-       memory_id=memory_id,
-       depth=2
-   )
-   ```
-
-## Installation
-
-1. Install Python 3.9 or higher
-2. Clone this repository
-3. Run the setup script:
-
-```bash
-python scripts/setup.py
-```
-
-This will:
-- Install Python dependencies
-- Install and configure Neo4j
-- Set up environment variables
-- Create necessary directories
-
 ## Neo4j Setup
+
+The system uses Docker to run Neo4j, making it easy to set up and manage:
 
 1. Start Neo4j:
 ```bash
-brew services start neo4j  # macOS
-sudo systemctl start neo4j  # Linux
+docker compose up -d
 ```
 
-2. Open Neo4j Browser:
+2. Access Neo4j Browser:
 - Visit http://localhost:7474
 - Connect using:
   - URL: bolt://localhost:7687
   - Username: neo4j
-  - Password: password (or as configured)
+  - Password: password (change in production)
 
 3. Example Queries:
 
@@ -198,6 +126,52 @@ RETURN t1, t2;
 // Analyze state changes
 MATCH (t:Task)-[:AFFECTS]->(s:State)
 RETURN t, s ORDER BY t.timestamp;
+```
+
+## Memory Operations
+
+1. **Storage**
+```python
+# Store interaction memory
+memory_id = await store.store_memory(
+    memory_type="interaction",
+    content={
+        'input': user_input,
+        'response': system_response,
+        'timestamp': datetime.now()
+    }
+)
+```
+
+2. **Retrieval**
+```python
+# Get related memories
+memories = await store.get_related_memories(
+    content="user query",
+    memory_type="interaction",
+    limit=5
+)
+```
+
+3. **Concept Extraction**
+```python
+# Extract and store concepts
+await store.extract_concepts(
+    memory_id=memory_id,
+    content={
+        'beliefs': extracted_beliefs,
+        'patterns': identified_patterns
+    }
+)
+```
+
+4. **Graph Traversal**
+```python
+# Get memory graph
+graph = await store.get_memory_graph(
+    memory_id=memory_id,
+    depth=2
+)
 ```
 
 ## Examples
@@ -229,6 +203,29 @@ pytest
 ruff check .
 black .
 mypy .
+```
+
+## Docker Commands
+
+1. Start Neo4j:
+```bash
+docker compose up -d
+```
+
+2. Stop Neo4j:
+```bash
+docker compose down
+```
+
+3. View logs:
+```bash
+docker compose logs -f neo4j
+```
+
+4. Reset data:
+```bash
+docker compose down -v
+docker compose up -d
 ```
 
 ## Contributing

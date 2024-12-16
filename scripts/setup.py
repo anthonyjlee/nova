@@ -1,5 +1,5 @@
 """
-Setup script for NIA with Neo4j support.
+Setup script for NIA with Neo4j support using Docker.
 """
 
 import subprocess
@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import platform
 import time
+import json
 
 def check_python_version():
     """Check Python version."""
@@ -27,38 +28,38 @@ def install_dependencies():
         print(f"Error installing dependencies: {e}")
         sys.exit(1)
 
-def check_neo4j():
-    """Check Neo4j installation."""
-    print("\nChecking Neo4j installation...")
+def check_docker():
+    """Check Docker installation."""
+    print("\nChecking Docker installation...")
+    try:
+        subprocess.run(["docker", "--version"], check=True, capture_output=True)
+        print("Docker is installed")
+    except FileNotFoundError:
+        print("Docker not found. Please install Docker first:")
+        print("Visit: https://docs.docker.com/get-docker/")
+        sys.exit(1)
     
-    system = platform.system().lower()
-    if system == "darwin":  # macOS
-        try:
-            result = subprocess.run(["brew", "list", "neo4j"], capture_output=True, text=True)
-            if result.returncode != 0:
-                print("Neo4j not found, installing via Homebrew...")
-                subprocess.run(["brew", "install", "neo4j"], check=True)
-                print("Neo4j installed successfully")
-            else:
-                print("Neo4j already installed")
-        except subprocess.CalledProcessError as e:
-            print(f"Error managing Neo4j installation: {e}")
-            sys.exit(1)
-    elif system == "linux":
-        # Add Linux-specific installation steps
-        print("Please install Neo4j using your distribution's package manager")
-        print("For Ubuntu: sudo apt install neo4j")
-        print("For other distributions, visit: https://neo4j.com/docs/operations-manual/current/installation/")
-    elif system == "windows":
-        # Add Windows-specific installation steps
-        print("Please download and install Neo4j from: https://neo4j.com/download/")
-    else:
-        print(f"Unsupported operating system: {system}")
+    print("\nChecking Docker Compose installation...")
+    try:
+        subprocess.run(["docker", "compose", "version"], check=True, capture_output=True)
+        print("Docker Compose is installed")
+    except subprocess.CalledProcessError:
+        print("Docker Compose not found. Please install Docker Compose first:")
+        print("Visit: https://docs.docker.com/compose/install/")
         sys.exit(1)
 
 def setup_neo4j():
-    """Set up Neo4j configuration."""
+    """Set up Neo4j using Docker."""
     print("\nSetting up Neo4j...")
+    
+    # Create data and logs directories
+    data_dir = Path("data/neo4j")
+    logs_dir = Path("logs/neo4j")
+    
+    data_dir.mkdir(parents=True, exist_ok=True)
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    
+    print("Created data and logs directories")
     
     # Create .env file with Neo4j credentials
     env_path = Path(".env")
@@ -74,32 +75,40 @@ NEO4J_PASSWORD=password  # Change this in production
     else:
         print(".env file already exists")
     
-    # Start Neo4j service
-    system = platform.system().lower()
-    if system == "darwin":  # macOS
-        try:
-            print("Starting Neo4j service...")
-            subprocess.run(["brew", "services", "start", "neo4j"], check=True)
-            
-            # Wait for Neo4j to start
-            print("Waiting for Neo4j to start...")
-            time.sleep(10)
-            
-            # Set initial password
+    # Start Neo4j container
+    print("\nStarting Neo4j container...")
+    try:
+        subprocess.run(["docker", "compose", "up", "-d"], check=True)
+        print("Neo4j container started")
+        
+        # Wait for Neo4j to be ready
+        print("Waiting for Neo4j to be ready...")
+        max_retries = 30
+        retry = 0
+        while retry < max_retries:
             try:
-                subprocess.run(["neo4j-admin", "set-initial-password", "password"], check=True)
-                print("Neo4j password set")
-            except subprocess.CalledProcessError:
-                print("Password might already be set (this is okay)")
+                result = subprocess.run(
+                    ["docker", "compose", "ps", "--format", "json"],
+                    check=True,
+                    capture_output=True,
+                    text=True
+                )
+                services = json.loads(result.stdout)
+                if any(s["State"] == "running" and "neo4j" in s["Service"] for s in services):
+                    print("Neo4j is ready!")
+                    break
+            except:
+                pass
             
-            print("Neo4j service started")
-        except subprocess.CalledProcessError as e:
-            print(f"Error starting Neo4j service: {e}")
-            sys.exit(1)
-    else:
-        print("Please start Neo4j service manually:")
-        print("- Linux: sudo systemctl start neo4j")
-        print("- Windows: Start Neo4j Desktop application")
+            retry += 1
+            time.sleep(1)
+            
+        if retry == max_retries:
+            print("Warning: Neo4j container might not be ready yet")
+    
+    except subprocess.CalledProcessError as e:
+        print(f"Error starting Neo4j container: {e}")
+        sys.exit(1)
 
 def create_directories():
     """Create necessary directories."""
@@ -124,20 +133,22 @@ def main():
     
     check_python_version()
     install_dependencies()
-    check_neo4j()
+    check_docker()
     setup_neo4j()
     create_directories()
     
-    print("\nSetup complete! You can now run the examples:")
-    print("1. python examples/test_neo4j_memory.py")
-    print("2. python examples/test_memory_dag.py")
-    
-    print("\nTo view the Neo4j browser interface:")
-    print("1. Open http://localhost:7474 in your web browser")
+    print("\nSetup complete! You can now:")
+    print("1. Access Neo4j browser at http://localhost:7474")
     print("2. Connect using:")
     print("   - URL: bolt://localhost:7687")
     print("   - Username: neo4j")
-    print("   - Password: password (or the one you set)")
+    print("   - Password: password")
+    print("\n3. Run the examples:")
+    print("   python examples/test_neo4j_memory.py")
+    print("   python examples/test_memory_dag.py")
+    
+    print("\nTo stop Neo4j:")
+    print("docker compose down")
 
 if __name__ == "__main__":
     main()
