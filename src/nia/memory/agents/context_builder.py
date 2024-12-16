@@ -58,53 +58,23 @@ class ContextBuilder:
         
         return lines
     
-    async def build_interaction_context(self, content: str, limit: int = 10) -> List[str]:
-        """Build context from similar interactions."""
-        similar_interactions = await self.memory_store.search_similar_memories(
-            content=content,
-            limit=limit,
-            filter_dict={'memory_type': 'interaction'},
-            prioritize_temporal=True
-        )
-        
-        context_lines = []
-        for memory in similar_interactions:
-            context_lines.extend(self.format_interaction(memory))
-        
-        return context_lines
-    
-    async def build_belief_context(self, content: str, limit: int = 5) -> List[str]:
-        """Build context from similar beliefs."""
-        similar_beliefs = await self.memory_store.search_similar_memories(
-            content=content,
-            limit=limit,
-            filter_dict={'memory_type': 'belief'},
-            prioritize_temporal=True
-        )
-        
-        context_lines = []
-        for memory in similar_beliefs:
-            context_lines.extend(self.format_belief(memory))
-        
-        return context_lines
-    
     def format_current_context(self, context: Dict[str, Any]) -> List[str]:
         """Format current context into readable lines."""
         context_lines = []
         
         if 'beliefs' in context:
             context_lines.append("Current Beliefs:")
-            for belief in context['beliefs'][-3:]:
+            for belief in context['beliefs'][-3:]:  # Last 3 beliefs
                 context_lines.append(f"- {belief}")
         
         if 'insights' in context:
             context_lines.append("Recent Insights:")
-            for insight in context['insights'][-3:]:
+            for insight in context['insights'][-2:]:  # Last 2 insights
                 context_lines.append(f"- {insight}")
         
         if 'findings' in context:
             context_lines.append("Recent Findings:")
-            for finding in context['findings'][-3:]:
+            for finding in context['findings'][-2:]:  # Last 2 findings
                 context_lines.append(f"- {finding}")
         
         return context_lines
@@ -112,25 +82,68 @@ class ContextBuilder:
     async def build_full_context(self, content: str) -> str:
         """Build complete context including interactions, beliefs, and current state."""
         try:
-            # Get interaction context
-            interaction_lines = await self.build_interaction_context(content)
+            # Get interaction memories
+            similar_interactions = await self.memory_store.search_similar_memories(
+                content=content,
+                limit=10,
+                filter_dict={'memory_type': 'interaction'},
+                prioritize_temporal=True
+            )
             
-            # Get belief context
-            belief_lines = await self.build_belief_context(content)
+            # Deduplicate interactions by input content
+            seen_inputs = set()
+            unique_interactions = []
+            for memory in similar_interactions:
+                memory_content = memory.get('content', {})
+                if isinstance(memory_content, dict):
+                    input_content = memory_content.get('input', '')
+                    if input_content and input_content not in seen_inputs:
+                        seen_inputs.add(input_content)
+                        unique_interactions.append(memory)
             
-            # Get current context
-            current_context = self.memory_store.get_current_context()
-            current_lines = self.format_current_context(current_context)
+            # Get belief memories
+            similar_beliefs = await self.memory_store.search_similar_memories(
+                content=content,
+                limit=5,
+                filter_dict={'memory_type': 'belief'},
+                prioritize_temporal=True
+            )
             
-            # Combine all context sections
+            # Deduplicate beliefs by core belief
+            seen_beliefs = set()
+            unique_beliefs = []
+            for memory in similar_beliefs:
+                memory_content = memory.get('content', {})
+                if isinstance(memory_content, dict) and 'beliefs' in memory_content:
+                    beliefs = memory_content['beliefs']
+                    if isinstance(beliefs, dict):
+                        core_belief = beliefs.get('core_belief', '')
+                        if core_belief and core_belief not in seen_beliefs:
+                            seen_beliefs.add(core_belief)
+                            unique_beliefs.append(memory)
+            
+            # Format context sections
             context_sections = []
             
-            if interaction_lines:
-                context_sections.append("Previous Interactions:\n" + "\n".join(interaction_lines))
+            # Add interaction context (limit to 5 most recent)
+            if unique_interactions:
+                interaction_lines = []
+                interaction_lines.append("Previous Interactions:")
+                for memory in unique_interactions[:5]:  # Limit to 5 interactions
+                    interaction_lines.extend(self.format_interaction(memory))
+                context_sections.append("\n".join(interaction_lines))
             
-            if belief_lines:
-                context_sections.append("Related Beliefs:\n" + "\n".join(belief_lines))
+            # Add belief context (limit to 3 most recent)
+            if unique_beliefs:
+                belief_lines = []
+                belief_lines.append("Related Beliefs:")
+                for memory in unique_beliefs[:3]:  # Limit to 3 beliefs
+                    belief_lines.extend(self.format_belief(memory))
+                context_sections.append("\n".join(belief_lines))
             
+            # Add current context
+            current_context = self.memory_store.get_current_context()
+            current_lines = self.format_current_context(current_context)
             if current_lines:
                 context_sections.append("Current Context:\n" + "\n".join(current_lines))
             
