@@ -234,9 +234,9 @@ class InteractiveSystem:
         try:
             print(f"\n{Colors.HEADER}=== Memory System ==={Colors.ENDC}\n")
             
-            # Initialize vector store with recreation to ensure correct dimensions
+            # Initialize vector store without recreation to preserve memories
             print(f"{Colors.CYAN}Initializing vector store...{Colors.ENDC}")
-            await self.memory_system.initialize(reset=False, recreate_vectors=True)
+            await self.memory_system.initialize(reset=False, recreate_vectors=False)
             print(f"{Colors.GREEN}Vector store initialized{Colors.ENDC}")
             
             # Inject LLM completion method

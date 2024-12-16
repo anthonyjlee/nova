@@ -41,6 +41,7 @@ Thumbs.db
 *.log
 logs/
 .qdrant/
+agent_responses.log
 
 # Local development
 *.db
