@@ -104,6 +104,25 @@ class Neo4jMemoryStore:
                 nia_capabilities=NIA.capabilities
             )
     
+    async def extract_concepts(self, content: str) -> List[Dict[str, Any]]:
+        """Extract concepts from content using LLM."""
+        prompt = """Extract key concepts from the following content. For each concept include:
+        1. Name of the concept
+        2. Type (e.g., technology, capability, system, idea)
+        3. Description
+        4. Related concepts
+        
+        Content: {content}
+        
+        Respond in JSON format with a list of concepts."""
+        
+        try:
+            response = await self.llm.get_structured_completion(prompt.format(content=content))
+            return response.analysis.get("concepts", [])
+        except Exception as e:
+            logger.error(f"Error extracting concepts: {str(e)}")
+            return []
+    
     async def store_memory(
         self,
         memory_type: str,
@@ -117,8 +136,12 @@ class Neo4jMemoryStore:
         content_str = json.dumps(content, default=str)
         metadata_str = json.dumps(metadata or {}, default=str)
         
-        # Create memory query
+        # Extract concepts
+        concepts = await self.extract_concepts(content_str)
+        
+        # Create memory and concept nodes
         query = """
+        // Create memory node
         CREATE (m:Memory {
             id: $memory_id,
             type: $memory_type,
@@ -126,12 +149,36 @@ class Neo4jMemoryStore:
             metadata: $metadata,
             created_at: datetime()
         })
-        WITH m
         
+        // Link to Nova
+        WITH m
         MATCH (nova:AISystem {name: 'Nova'})
         CREATE (m)-[:CREATED_BY {
             created_at: datetime()
         }]->(nova)
+        
+        // Create concepts and relationships
+        WITH m
+        UNWIND $concepts as concept
+        MERGE (c:Concept {
+            id: concept.name,
+            type: concept.type
+        })
+        SET c.description = concept.description
+        CREATE (m)-[:HAS_CONCEPT {
+            confidence: 1.0,
+            created_at: datetime()
+        }]->(c)
+        
+        // Create relationships between concepts
+        WITH m, c, concept
+        UNWIND concept.related as related
+        MERGE (r:Concept {id: related})
+        CREATE (c)-[:RELATED_TO {
+            created_at: datetime()
+        }]->(r)
+        
+        // Return memory ID
         RETURN m.id as memory_id
         """
         
@@ -142,14 +189,15 @@ class Neo4jMemoryStore:
                     memory_id=memory_id,
                     memory_type=memory_type,
                     content=content_str,
-                    metadata=metadata_str
+                    metadata=metadata_str,
+                    concepts=concepts
                 )
                 
                 record = result.single()
                 if record is None:
                     raise ValueError("Failed to create memory node")
                 
-                # Create similarity relationships in a separate query
+                # Create similarity relationships
                 similarity_query = """
                 MATCH (m:Memory {id: $memory_id})
                 MATCH (prev:Memory)
@@ -170,6 +218,26 @@ class Neo4jMemoryStore:
                     session.run(similarity_query, memory_id=memory_id)
                 except Exception as e:
                     logger.warning(f"Error creating similarity relationships: {str(e)}")
+                
+                # Create topic nodes and relationships
+                if metadata and metadata.get('topics'):
+                    topic_query = """
+                    MATCH (m:Memory {id: $memory_id})
+                    UNWIND $topics as topic
+                    MERGE (t:Topic {id: topic})
+                    CREATE (m)-[:HAS_TOPIC {
+                        created_at: datetime()
+                    }]->(t)
+                    """
+                    
+                    try:
+                        session.run(
+                            topic_query,
+                            memory_id=memory_id,
+                            topics=metadata['topics']
+                        )
+                    except Exception as e:
+                        logger.warning(f"Error creating topic relationships: {str(e)}")
                 
                 return record["memory_id"]
                 
@@ -278,20 +346,37 @@ class Neo4jMemoryStore:
             WITH m
             ORDER BY m.created_at DESC
             LIMIT $limit
+            
+            // Get direct relationships
             OPTIONAL MATCH (m)-[r]->(n)
             WITH m, collect({{
                 type: type(r),
                 target_type: head(labels(n)),
                 target_id: n.id,
                 properties: properties(r)
-            }}) as rels
+            }}) as direct_rels
+            
+            // Get concepts
+            OPTIONAL MATCH (m)-[:HAS_CONCEPT]->(c:Concept)
+            WITH m, direct_rels, collect({{
+                id: c.id,
+                type: c.type,
+                description: c.description
+            }}) as concepts
+            
+            // Get topics
+            OPTIONAL MATCH (m)-[:HAS_TOPIC]->(t:Topic)
+            WITH m, direct_rels, concepts, collect(t.id) as topics
+            
             RETURN {{
                 id: m.id,
                 type: m.type,
                 content: m.content,
                 metadata: m.metadata,
                 created_at: toString(m.created_at),
-                relationships: rels
+                relationships: direct_rels,
+                concepts: concepts,
+                topics: topics
             }} as memory
             """
             
