@@ -85,7 +85,8 @@ class BaseAgent(ABC):
             # Create agent response
             response = AgentResponse(
                 response=f"I've identified {len(llm_response.concepts)} key concepts in your message.",
-                concepts=llm_response.concepts
+                concepts=llm_response.concepts,
+                timestamp=datetime.now()
             )
             
             # Enrich with knowledge graph info
@@ -126,7 +127,7 @@ class BaseAgent(ABC):
                         'agent_response': serialize_datetime(response.dict()),
                         'agent_type': self.agent_type,
                         'concepts': llm_response.concepts,
-                        'timestamp': metadata.get('timestamp') if metadata else None
+                        'timestamp': datetime.now().isoformat()
                     }),
                     metadata=serialize_datetime(metadata),
                     layer="semantic"
@@ -139,7 +140,12 @@ class BaseAgent(ABC):
             
         except Exception as e:
             logger.error(f"Error in {self.agent_type} agent: {str(e)}")
-            raise
+            # Return basic response on error
+            return AgentResponse(
+                response="I encountered an error processing your message.",
+                concepts=[],
+                timestamp=datetime.now()
+            )
     
     async def get_system_info(self, name: str) -> Optional[Dict]:
         """Get information about an AI system."""

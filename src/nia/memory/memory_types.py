@@ -29,7 +29,8 @@ class AgentResponse:
         return serialize_datetime({
             "response": self.response,
             "concepts": self.concepts,
-            "timestamp": self.timestamp
+            "timestamp": self.timestamp,
+            "type": "agent_response"  # Add explicit type information
         })
 
     @classmethod

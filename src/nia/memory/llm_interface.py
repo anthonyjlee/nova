@@ -1,162 +1,208 @@
-"""LLM interface for structured completions."""
+"""
+LLM interface implementation.
+"""
 
 import logging
 import json
-import aiohttp
 from typing import Dict, List, Any, Optional
 from datetime import datetime
-import re
+import aiohttp
+from .memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
-class LLMResponse:
-    """Structured LLM response."""
+def serialize_datetime(obj: Any) -> Any:
+    """Serialize datetime objects to ISO format strings."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {k: serialize_datetime(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [serialize_datetime(item) for item in obj]
+    return obj
+
+def extract_json_from_response(text: str) -> str:
+    """Extract JSON content from response, handling code blocks."""
+    # Remove code block markers if present
+    text = text.replace("```json", "").replace("```", "").strip()
     
-    def __init__(
-        self,
-        concepts: List[Dict[str, str]]
-    ):
-        """Initialize response."""
-        self.concepts = concepts
+    # Find start of JSON array
+    start = text.find("[")
+    if start == -1:
+        raise ValueError("No JSON array found in response")
     
-    def dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "concepts": self.concepts
-        }
+    # Find end of JSON array
+    end = text.rfind("]")
+    if end == -1:
+        raise ValueError("Unclosed JSON array in response")
+    
+    return text[start:end+1]
 
 class LLMInterface:
-    """Interface for LLM interactions."""
+    """Interface to LLM API."""
     
     def __init__(
         self,
-        api_url: str = "http://localhost:1234/v1/chat/completions",
-        api_key: Optional[str] = None
+        api_url: str = "http://localhost:1234",
+        model: str = "text-embedding-nomic-embed-text-v1.5@q8_0"
     ):
         """Initialize LLM interface."""
-        self.api_url = api_url
-        self.api_key = api_key
+        self.api_url = api_url.rstrip("/")
+        self.model = model
+        self.session = None
     
-    def _extract_json(self, text: str) -> Dict[str, Any]:
-        """Extract JSON content from text."""
+    async def get_completion(self, prompt: str) -> str:
+        """Get raw text completion."""
         try:
-            # Remove code block markers and any text before/after JSON array
-            text = text.replace("```", "").strip()
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.api_url}/v1/chat/completions",
+                    json={
+                        "messages": [
+                            {"role": "system", "content": "You are a helpful AI assistant."},
+                            {"role": "user", "content": prompt}
+                        ]
+                    }
+                ) as response:
+                    result = await response.json()
+                    return result["choices"][0]["message"]["content"]
+                    
+        except Exception as e:
+            logger.error(f"Error getting completion: {str(e)}")
+            return ""
+    
+    async def get_structured_completion(self, prompt: str) -> AgentResponse:
+        """Get structured completion with concepts."""
+        try:
+            # Get raw completion
+            completion = await self.get_completion(prompt)
             
-            # Find JSON array between [ and ]
-            matches = re.findall(r'\[(.*?)\]', text, re.DOTALL)
-            if not matches:
-                raise ValueError("No JSON array found")
+            # Extract concepts list from completion
+            try:
+                # Extract and parse JSON content
+                concepts_json = extract_json_from_response(completion)
+                concepts = json.loads(concepts_json)
+                
+                # Convert concepts to standard format
+                formatted_concepts = []
+                for concept in concepts:
+                    # Handle both name/CONCEPT formats
+                    name = concept.get("name", concept.get("CONCEPT", ""))
+                    type_str = concept.get("type", concept.get("TYPE", ""))
+                    desc = concept.get("description", concept.get("DESC", ""))
+                    related = concept.get("related_concepts", concept.get("RELATED", "").split())
+                    
+                    # Ensure related is a list
+                    if isinstance(related, str):
+                        related = related.split()
+                    
+                    formatted_concepts.append({
+                        "name": name,
+                        "type": type_str,
+                        "description": desc,
+                        "related": related
+                    })
+                
+                # Create response
+                return AgentResponse(
+                    response=completion,
+                    concepts=formatted_concepts,
+                    timestamp=datetime.now()
+                )
+                
+            except json.JSONDecodeError as e:
+                logger.error(f"Error parsing concepts JSON: {str(e)}")
+                logger.error(f"Raw JSON content: {concepts_json}")
+                # Return empty concepts on parse error
+                return AgentResponse(
+                    response=completion,
+                    concepts=[],
+                    timestamp=datetime.now()
+                )
+                
+        except Exception as e:
+            logger.error(f"Error getting structured completion: {str(e)}")
+            return AgentResponse(
+                response="Error getting completion",
+                concepts=[],
+                timestamp=datetime.now()
+            )
+    
+    async def get_embeddings(self, text: str) -> List[float]:
+        """Get embeddings for text."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.api_url}/v1/embeddings",
+                    json={
+                        "model": self.model,
+                        "input": text
+                    }
+                ) as response:
+                    result = await response.json()
+                    return result["data"][0]["embedding"]
+                    
+        except Exception as e:
+            logger.error(f"Error getting embeddings: {str(e)}")
+            # Return zero vector on error
+            return [0.0] * 384  # Default embedding size
+    
+    async def get_batch_embeddings(
+        self,
+        texts: List[str]
+    ) -> List[List[float]]:
+        """Get embeddings for multiple texts."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{self.api_url}/v1/embeddings",
+                    json={
+                        "model": self.model,
+                        "input": texts
+                    }
+                ) as response:
+                    result = await response.json()
+                    return [data["embedding"] for data in result["data"]]
+                    
+        except Exception as e:
+            logger.error(f"Error getting batch embeddings: {str(e)}")
+            # Return zero vectors on error
+            return [[0.0] * 384 for _ in texts]  # Default embedding size
+    
+    async def extract_concepts(
+        self,
+        text: str,
+        context: Optional[Dict] = None
+    ) -> List[Dict[str, Any]]:
+        """Extract concepts from text."""
+        try:
+            # Format prompt
+            prompt = """Extract key concepts from the text.
+            Include:
+            1. Name of concept
+            2. Type (technology, capability, system, idea)
+            3. Description
+            4. Related concepts
             
-            # Take the longest match (most likely the concepts array)
-            json_str = max(matches, key=len)
+            Text: {text}
             
-            # Wrap in array brackets
-            json_str = f"[{json_str}]"
+            Respond in JSON format with a list of concepts.
+            """.format(text=text)
             
-            # Fix missing commas between objects
-            json_str = re.sub(r'}\s*{', '},{', json_str)
+            if context:
+                prompt += "\nContext: " + json.dumps(context)
             
-            # Fix missing quotes around property names
-            json_str = re.sub(r'(\s*?)(\w+)(\s*?):', r'\1"\2"\3:', json_str)
+            # Get structured completion
+            response = await self.get_structured_completion(prompt)
             
-            # Fix missing commas after values
-            json_str = re.sub(r'"\s*{', '",{', json_str)
-            json_str = re.sub(r'}\s*"', '},"', json_str)
-            
-            # Parse JSON
-            data = json.loads(json_str)
-            logger.debug(f"Parsed JSON array: {json.dumps(data, indent=2)}")
-            return {"concepts": data}
+            # Return concepts
+            return response.concepts
             
         except Exception as e:
-            logger.error(f"Failed to extract JSON: {str(e)}")
-            logger.debug(f"Failed text: {text}")
-            return {"concepts": []}
+            logger.error(f"Error extracting concepts: {str(e)}")
+            return []
     
-    def _format_concepts(self, concepts: List[Dict[str, str]]) -> List[Dict[str, str]]:
-        """Format concepts into standard structure."""
-        formatted = []
-        for concept in concepts:
-            # Handle both CONCEPT/TYPE and name/type formats
-            name = concept.get("CONCEPT") or concept.get("name", "")
-            type_str = concept.get("TYPE") or concept.get("type", "Unknown")
-            desc = concept.get("DESC") or concept.get("description", "")
-            related = concept.get("RELATED") or concept.get("related", "")
-            
-            # Convert related to list if it's a string
-            if isinstance(related, str):
-                related = [r.strip() for r in related.split(",")]
-            
-            formatted.append({
-                "name": name,
-                "type": type_str,
-                "description": desc,
-                "related": related
-            })
-        return formatted
-    
-    async def get_structured_completion(
-        self,
-        prompt: str,
-        max_retries: int = 3
-    ) -> LLMResponse:
-        """Get structured completion from LLM."""
-        system_prompt = """You are Nova, an AI assistant focused on self-discovery and growth. 
-        Extract key concepts from the input using this exact format:
-        [
-          {
-            "CONCEPT": "Concept name",
-            "TYPE": "Concept type",
-            "DESC": "Clear description",
-            "RELATED": "Space separated list of related concepts"
-          }
-        ]
-        
-        Focus on extracting clear concepts and their relationships.
-        IMPORTANT: Ensure the response starts with the JSON array and contains proper JSON formatting with commas between objects."""
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
-        ]
-
-        for attempt in range(max_retries):
-            try:
-                async with aiohttp.ClientSession() as session:
-                    async with session.post(
-                        self.api_url,
-                        json={
-                            "messages": messages,
-                            "temperature": 0.7,
-                            "max_tokens": 1000,
-                            "stream": False
-                        }
-                    ) as response:
-                        if response.status != 200:
-                            raise ValueError(f"API request failed: {response.status}")
-                        
-                        result = await response.json()
-                        logger.debug(f"Raw API response: {json.dumps(result, indent=2)}")
-                        
-                        if not result.get("choices"):
-                            raise ValueError("No choices in response")
-                        
-                        # Get content from response
-                        content = result["choices"][0]["message"]["content"]
-                        logger.debug(f"Raw content: {content}")
-                        
-                        # Extract and parse JSON
-                        data = self._extract_json(content)
-                        
-                        # Format concepts
-                        concepts = self._format_concepts(data.get("concepts", []))
-                        logger.debug(f"Formatted concepts: {json.dumps(concepts, indent=2)}")
-                        
-                        return LLMResponse(concepts=concepts)
-                
-            except Exception as e:
-                logger.warning(f"LLM request failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                if attempt == max_retries - 1:
-                    logger.error("All LLM requests failed")
-                    raise
+    def close(self) -> None:
+        """Close LLM interface."""
+        if self.session:
+            self.session.close()

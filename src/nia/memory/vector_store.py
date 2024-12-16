@@ -6,6 +6,7 @@ import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import json
+import uuid
 import numpy as np
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
@@ -69,8 +70,8 @@ class VectorStore:
     ) -> str:
         """Store vector in collection."""
         try:
-            # Generate vector ID
-            vector_id = f"{layer}_{datetime.now().isoformat()}"
+            # Generate UUID for point ID
+            point_id = str(uuid.uuid4())
             
             # Serialize datetime objects in content and metadata
             content = serialize_datetime(content)
@@ -79,7 +80,8 @@ class VectorStore:
             # Add layer and timestamp to metadata
             metadata.update({
                 "layer": layer,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "id": point_id  # Store original ID in metadata
             })
             
             # Convert content to JSON string
@@ -93,7 +95,7 @@ class VectorStore:
                 collection_name=self.collection_name,
                 points=[
                     models.PointStruct(
-                        id=vector_id,
+                        id=point_id,  # Use UUID string as ID
                         vector=temp_vector,  # Required vector field
                         payload={
                             "content": content_str,
@@ -103,7 +105,7 @@ class VectorStore:
                 ]
             )
             
-            return vector_id
+            return point_id
             
         except Exception as e:
             logger.error(f"Error storing vector: {str(e)}")
@@ -132,7 +134,7 @@ class VectorStore:
             if filter:
                 search_filter.update(filter)
             if layer:
-                search_filter["layer"] = layer
+                search_filter["metadata.layer"] = layer
             
             # Search in Qdrant
             results = self.client.search(
@@ -157,7 +159,7 @@ class VectorStore:
                     content = json.loads(result.payload["content"])
                     metadata = result.payload.get("metadata", {})
                     memories.append({
-                        "id": result.id,
+                        "id": metadata.get("id", result.id),  # Use original ID from metadata
                         "content": content,
                         "metadata": metadata,
                         "score": result.score

@@ -6,6 +6,7 @@ import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import json
+import uuid
 
 from .llm_interface import LLMInterface
 from .neo4j_store import Neo4jMemoryStore
@@ -61,10 +62,18 @@ class MemorySystem:
     ) -> AgentResponse:
         """Process an interaction through the memory system."""
         try:
+            # Generate UUID for memory ID
+            memory_id = str(uuid.uuid4())
+            
             # Store in episodic memory (raw interaction)
-            episodic_id = await self.vector_store.store_vector(
+            await self.vector_store.store_vector(
                 content=serialize_datetime({'content': content}),
-                metadata=serialize_datetime(metadata),
+                metadata=serialize_datetime({
+                    'id': memory_id,
+                    'type': 'interaction',
+                    'layer': 'episodic',
+                    **(metadata or {})
+                }),
                 layer="episodic"
             )
             
@@ -112,7 +121,7 @@ class MemorySystem:
                 context=serialize_datetime({
                     'original_content': content_dict,
                     'metadata': metadata,
-                    'episodic_id': episodic_id,
+                    'memory_id': memory_id,
                     'similar_memories': similar_memories
                 })
             )
@@ -122,7 +131,7 @@ class MemorySystem:
                 content=serialize_datetime({
                     'original_content': content_dict,
                     'metadata': metadata,
-                    'episodic_id': episodic_id,
+                    'memory_id': memory_id,
                     'similar_memories': similar_memories,
                     'final_response': serialize_datetime(response.dict()),
                     'agent_responses': {
@@ -133,7 +142,11 @@ class MemorySystem:
                         'research': serialize_datetime(research_response.dict())
                     }
                 }),
-                metadata={'type': 'synthesized_response'},
+                metadata=serialize_datetime({
+                    'id': str(uuid.uuid4()),
+                    'type': 'synthesized_response',
+                    'original_memory_id': memory_id
+                }),
                 layer="semantic"
             )
             
