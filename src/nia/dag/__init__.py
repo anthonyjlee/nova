@@ -15,6 +15,7 @@ from .task_graph import (
     CyclicDependencyError,
     TaskNotFoundError
 )
+from .task_planner import TaskPlanner
 
 __all__ = [
     'TaskStatus',
@@ -24,6 +25,7 @@ __all__ = [
     'TaskContext',
     'TaskNode',
     'TaskGraph',
+    'TaskPlanner',
     'CyclicDependencyError',
     'TaskNotFoundError'
 ]
