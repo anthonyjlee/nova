@@ -1,39 +1,41 @@
 """
-Base agent class with time awareness.
+Base agent class with time awareness and memory capabilities.
 """
 
-from typing import Dict, List, Optional, Tuple, Any
-from datetime import datetime
 import logging
-import traceback
-import numpy as np
+from typing import Dict, List, Optional, Any, Tuple
+from datetime import datetime
 
 from ..error_handling import ErrorHandler
 from ..feedback import FeedbackSystem
 from ..persistence import MemoryStore
+from ..llm_interface import LLMInterface
 
 logger = logging.getLogger(__name__)
 
 class TimeAwareAgent:
-    """Base class for time-aware agents."""
+    """Base class for time-aware agents with memory capabilities."""
     
-    def __init__(self, name: str, memory_store: MemoryStore, error_handler: ErrorHandler,
-                 feedback_system: FeedbackSystem):
+    def __init__(
+        self,
+        agent_name: str,
+        memory_store: MemoryStore,
+        error_handler: ErrorHandler,
+        feedback_system: FeedbackSystem,
+        llm_interface: LLMInterface
+    ):
         """Initialize agent."""
-        self.name = name
+        self.name = agent_name
         self.memory_store = memory_store
         self.error_handler = error_handler
         self.feedback_system = feedback_system
+        self.llm_interface = llm_interface
         
-        # Track state vectors (768-dimensional to match embedding model)
-        self.state_vectors: Dict[str, np.ndarray] = {}
+        # State tracking
+        self.state_vectors: Dict[str, List[float]] = {}
+        self.last_update: Dict[str, datetime] = {}
         
-        # Log initialization
-        logger.info(f"Initialized {name} with prompt length: {len(self._get_base_prompt())}")
-    
-    def _get_base_prompt(self) -> str:
-        """Get base prompt for agent."""
-        return """You are a helpful AI assistant."""
+        logger.info(f"Initialized {agent_name}")
     
     def _safe_str(self, value: Any, default: str = "") -> str:
         """Safely convert value to string."""
@@ -57,79 +59,45 @@ class TimeAwareAgent:
         except:
             return []
     
-    def _extract_context(self, content: str) -> Tuple[str, Dict]:
-        """Extract context from content."""
+    def _extract_context(self, content: str) -> Tuple[str, Dict[str, Any]]:
+        """Extract context from content if present."""
         # Default implementation just returns content and empty context
         return content, {}
     
     async def get_completion(self, prompt: str) -> str:
         """Get completion from LLM."""
-        # This should be overridden by the interactive system
-        return "LLM completion not implemented"
-    
-    async def get_state_similarity(self, vector_type: str, content: str) -> float:
-        """Get similarity between content and current state vector."""
         try:
-            # Get embedding for content
-            embedding = await self.memory_store.embedding_service.get_embedding(content)
-            
-            # Get current state vector or zero vector if none exists
-            current_vector = self.state_vectors.get(vector_type, np.zeros(768))
-            
-            # Calculate magnitudes
-            embedding_norm = np.linalg.norm(embedding)
-            current_norm = np.linalg.norm(current_vector)
-            
-            # Handle zero magnitude vectors
-            if embedding_norm == 0 or current_norm == 0:
-                return 0.0
-            
-            # Calculate cosine similarity
-            similarity = float(np.dot(embedding, current_vector) / (embedding_norm * current_norm))
-            
-            # Ensure similarity is within [-1, 1]
-            return max(min(similarity, 1.0), -1.0)
-            
+            return await self.llm_interface.get_completion(prompt)
         except Exception as e:
-            error_msg = f"Error calculating state similarity: {str(e)}"
-            logger.error(error_msg)
-            await self.error_handler.report_error(
-                error_type="state_similarity_error",
-                source_agent=self.name,
-                details={"error": error_msg, "vector_type": vector_type},
-                severity=2,
-                context={"activity": "get_state_similarity"}
-            )
-            return 0.0
+            logger.error(f"Error getting completion: {str(e)}")
+            raise
     
-    async def update_state_vector(self, vector_type: str, content: str) -> None:
-        """Update state vector with new content."""
+    async def get_json_completion(
+        self,
+        prompt: str,
+        retries: int = 3,
+        default_response: Optional[Dict] = None
+    ) -> Dict[str, Any]:
+        """Get JSON completion from LLM."""
         try:
-            # Get embedding for content
-            embedding = await self.memory_store.embedding_service.get_embedding(content)
-            
-            # Ensure embedding is not zero vector
-            if np.linalg.norm(embedding) == 0:
-                logger.warning(f"Got zero embedding for content in {self.name}")
-                return
-            
-            # Update state vector (simple replacement for now)
-            self.state_vectors[vector_type] = embedding
-            
-        except Exception as e:
-            error_msg = f"Error updating state vector: {str(e)}"
-            logger.error(error_msg)
-            await self.error_handler.report_error(
-                error_type="state_vector_update_error",
-                source_agent=self.name,
-                details={"error": error_msg, "vector_type": vector_type},
-                severity=2,
-                context={"activity": "update_state_vector"}
+            return await self.llm_interface.get_json_completion(
+                prompt=prompt,
+                retries=retries,
+                default_response=default_response
             )
+        except Exception as e:
+            logger.error(f"Error getting JSON completion: {str(e)}")
+            if default_response is not None:
+                return default_response
+            raise
     
-    async def store_memory(self, memory_type: str, content: Dict[str, Any],
-                          metadata: Optional[Dict] = None) -> None:
-        """Store memory in persistence layer."""
+    async def store_memory(
+        self,
+        memory_type: str,
+        content: Dict[str, Any],
+        metadata: Optional[Dict] = None
+    ) -> None:
+        """Store a memory."""
         try:
             await self.memory_store.store_memory(
                 agent_name=self.name,
@@ -137,23 +105,47 @@ class TimeAwareAgent:
                 content=content,
                 metadata=metadata
             )
-            logger.info(f"Stored {memory_type} memory for {self.name}")
+        except Exception as e:
+            logger.error(f"Error storing memory: {str(e)}")
+            raise
+    
+    async def get_state_similarity(self, state_type: str, content: str) -> float:
+        """Get similarity between content and current state."""
+        try:
+            if state_type not in self.state_vectors:
+                return 0.0
+            
+            # Get embedding for content
+            content_embedding = await self.memory_store.embedding_service.get_embedding(content)
+            
+            # Get current state vector
+            state_vector = self.state_vectors[state_type]
+            
+            # Calculate similarity
+            similarity = float(sum(a * b for a, b in zip(content_embedding, state_vector)) /
+                            (sum(a * a for a in content_embedding) ** 0.5 *
+                             sum(b * b for b in state_vector) ** 0.5))
+            
+            return similarity
             
         except Exception as e:
-            error_msg = f"Error storing memory: {str(e)}\n{traceback.format_exc()}"
-            logger.error(error_msg)
-            await self.error_handler.report_error(
-                error_type="memory_storage_error",
-                source_agent=self.name,
-                details={"error": error_msg, "memory_type": memory_type},
-                severity=2,
-                context={"activity": "store_memory"}
-            )
+            logger.error(f"Error getting state similarity: {str(e)}")
+            return 0.0
+    
+    async def update_state_vector(self, state_type: str, content: str) -> None:
+        """Update state vector with new content."""
+        try:
+            # Get embedding for content
+            embedding = await self.memory_store.embedding_service.get_embedding(content)
+            
+            # Update state vector
+            self.state_vectors[state_type] = embedding
+            self.last_update[state_type] = datetime.now()
+            
+        except Exception as e:
+            logger.error(f"Error updating state vector: {str(e)}")
+            raise
     
     async def process_interaction(self, content: str) -> str:
-        """Process interaction and return response."""
+        """Process an interaction."""
         raise NotImplementedError("Subclasses must implement process_interaction")
-    
-    async def reflect(self) -> Dict:
-        """Reflect on agent state."""
-        raise NotImplementedError("Subclasses must implement reflect")

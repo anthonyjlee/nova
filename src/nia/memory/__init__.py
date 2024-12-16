@@ -8,6 +8,7 @@ from typing import Dict, Optional
 from .persistence import MemoryStore
 from .error_handling import ErrorHandler
 from .feedback import FeedbackSystem
+from .llm_interface import LLMInterface
 from .agents import (
     MetaAgent,
     BeliefAgent,
@@ -22,18 +23,19 @@ logger = logging.getLogger(__name__)
 class MemorySystem:
     """Main memory system."""
     
-    def __init__(self):
+    def __init__(self, llm_url: Optional[str] = None):
         """Initialize memory system."""
         # Initialize core components in correct dependency order
-        self._init_core_components()
+        self._init_core_components(llm_url)
         
         # Initialize agents
         self._init_agents()
     
-    def _init_core_components(self):
+    def _init_core_components(self, llm_url: Optional[str] = None):
         """Initialize core system components in dependency order."""
         # First level - no dependencies
         self.memory_store = MemoryStore()
+        self.llm_interface = LLMInterface(api_url=llm_url) if llm_url else LLMInterface()
         
         # Second level - depends on memory_store
         self.error_handler = ErrorHandler(self.memory_store)
@@ -46,41 +48,47 @@ class MemorySystem:
     
     def _init_agents(self):
         """Initialize and register agents."""
-        # Initialize agents
+        # Initialize agents with all core components
         self.meta_agent = MetaAgent(
             self.memory_store,
             self.error_handler,
-            self.feedback_system
+            self.feedback_system,
+            self.llm_interface
         )
         
         self.belief_agent = BeliefAgent(
             self.memory_store,
             self.error_handler,
-            self.feedback_system
+            self.feedback_system,
+            self.llm_interface
         )
         
         self.desire_agent = DesireAgent(
             self.memory_store,
             self.error_handler,
-            self.feedback_system
+            self.feedback_system,
+            self.llm_interface
         )
         
         self.emotion_agent = EmotionAgent(
             self.memory_store,
             self.error_handler,
-            self.feedback_system
+            self.feedback_system,
+            self.llm_interface
         )
         
         self.reflection_agent = ReflectionAgent(
             self.memory_store,
             self.error_handler,
-            self.feedback_system
+            self.feedback_system,
+            self.llm_interface
         )
         
         self.research_agent = ResearchAgent(
             self.memory_store,
             self.error_handler,
-            self.feedback_system
+            self.feedback_system,
+            self.llm_interface
         )
         
         # Register agents with meta agent
