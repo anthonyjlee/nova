@@ -1,331 +1,300 @@
 """
-Interactive CLI for the enhanced memory management system.
+Interactive memory system example.
 """
 
-import os
-import sys
 import asyncio
+import argparse
 import logging
-import json
-import aiohttp
-from typing import Dict, Optional
 from datetime import datetime
-import difflib
+from typing import Dict, Any, Optional
 
-from nia.memory import MemorySystem
-from nia.memory.logging_config import setup_logging
+from nia.memory import MemorySystem, LLMInterface, Neo4jMemoryStore, VectorStore
 
 # Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__name__)
-agent_logger = setup_logging()
 
-class Colors:
-    """ANSI color codes."""
-    HEADER = '\033[95m'
-    BLUE = '\033[94m'
-    CYAN = '\033[96m'
-    GREEN = '\033[92m'
-    YELLOW = '\033[93m'
-    RED = '\033[91m'
-    ENDC = '\033[0m'
+# ANSI color codes
+COLORS = {
+    'blue': '\033[94m',
+    'green': '\033[92m',
+    'yellow': '\033[93m',
+    'red': '\033[91m',
+    'magenta': '\033[95m',
+    'cyan': '\033[96m',
+    'white': '\033[97m',
+    'bold': '\033[1m',
+    'underline': '\033[4m',
+    'end': '\033[0m'
+}
 
-class InteractiveSystem:
-    """Interactive CLI system."""
-    
-    def __init__(self):
-        """Initialize system."""
-        self.memory_system = MemorySystem()
-        self.timeout = aiohttp.ClientTimeout(total=30)
-        self.max_context_length = 2048  # Maximum tokens for LLM context
-        self.commands = {
-            'exit': 'End session',
-            'status': 'Show system state',
-            'logs': 'Show memory state and agent responses',
-            'reset': 'Reset memory system',
-            'clean': 'Clean memory system'
+def print_colored(text: str, color: str = 'white', bold: bool = False, underline: bool = False) -> None:
+    """Print colored text."""
+    style = ''
+    if bold:
+        style += COLORS['bold']
+    if underline:
+        style += COLORS['underline']
+    print(f"{style}{COLORS[color]}{text}{COLORS['end']}")
+
+def print_header(text: str) -> None:
+    """Print a header."""
+    width = 60
+    padding = (width - len(text)) // 2
+    print()
+    print_colored('=' * width, 'blue', bold=True)
+    print_colored(' ' * padding + text + ' ' * padding, 'blue', bold=True)
+    print_colored('=' * width, 'blue', bold=True)
+    print()
+
+async def get_system_status(memory_system: MemorySystem) -> Dict[str, Any]:
+    """Get system status information."""
+    try:
+        # Get Neo4j stats
+        query = """
+        // Get node counts by label
+        MATCH (n)
+        WITH labels(n) as labels, count(n) as count
+        RETURN collect({label: labels[0], count: count}) as nodes
+        """
+        nodes_result = await memory_system.store.query_graph(query)
+        node_counts = nodes_result[0]["nodes"] if nodes_result else []
+        
+        # Get relationship counts by type
+        query = """
+        MATCH ()-[r]->()
+        WITH type(r) as type, count(r) as count
+        RETURN collect({type: type, count: count}) as relationships
+        """
+        rels_result = await memory_system.store.query_graph(query)
+        rel_counts = rels_result[0]["relationships"] if rels_result else []
+        
+        # Get recent memories from Neo4j
+        query = """
+        MATCH (m:Memory)
+        WITH m
+        ORDER BY m.created_at DESC
+        LIMIT 5
+        RETURN collect({
+            type: m.type,
+            created_at: toString(m.created_at)
+        }) as memories
+        """
+        memories_result = await memory_system.store.query_graph(query)
+        recent_graph_memories = memories_result[0]["memories"] if memories_result else []
+        
+        # Get recent memories from vector store
+        recent_vector_memories = await memory_system.vector_store.search_vectors(
+            content="",  # Empty query to get most recent
+            limit=5
+        )
+        
+        # Get system capabilities
+        capabilities = await memory_system.store.get_capabilities()
+        
+        # Get vector store stats
+        collection_info = memory_system.vector_store.client.get_collection(
+            collection_name=memory_system.vector_store.collection_name
+        )
+        vector_stats = {
+            'vectors_count': collection_info.vectors_count,
+            'indexed_vectors_count': collection_info.indexed_vectors_count,
+            'points_count': collection_info.points_count,
+            'segments_count': collection_info.segments_count,
+            'status': collection_info.status
         }
-    
-    def _get_closest_command(self, input_str: str) -> tuple[Optional[str], float]:
-        """Get closest matching command using fuzzy matching."""
-        matches = difflib.get_close_matches(input_str.lower(), self.commands.keys(), n=1, cutoff=0.0)
-        if matches:
-            ratio = difflib.SequenceMatcher(None, input_str.lower(), matches[0]).ratio()
-            return matches[0], ratio
-        return None, 0.0
-    
-    def _truncate_text(self, text: str) -> str:
-        """Truncate text to approximate token limit."""
-        # Rough approximation: average English word is 4 characters
-        # and typically corresponds to one token
-        char_limit = self.max_context_length * 4  # Leave room for system prompt
-        if len(text) > char_limit:
-            logger.warning(f"Truncating text from {len(text)} to {char_limit} characters")
-            # Try to truncate at a word boundary
-            truncated = text[:char_limit]
-            last_space = truncated.rfind(' ')
-            if last_space > 0:
-                truncated = truncated[:last_space]
-            return truncated
-        return text
-    
-    async def check_llm_server(self) -> bool:
-        """Check if LLM server is available."""
-        try:
-            url = "http://localhost:1234/v1/chat/completions"
-            timeout = aiohttp.ClientTimeout(total=5)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.post(url, json={
-                    "model": "local",
-                    "messages": [
-                        {"role": "system", "content": "You are a helpful AI assistant."},
-                        {"role": "user", "content": "test"}
-                    ]
-                }) as response:
-                    return response.status == 200
-        except:
-            return False
-    
-    async def get_llm_completion(self, prompt: str) -> str:
-        """Get completion from LLM."""
-        try:
-            if not await self.check_llm_server():
-                raise Exception("LLM server is not available")
+        
+        return {
+            "graph_store": {
+                "nodes": node_counts,
+                "relationships": rel_counts,
+                "recent_memories": recent_graph_memories
+            },
+            "vector_store": {
+                "stats": vector_stats,
+                "recent_memories": recent_vector_memories
+            },
+            "capabilities": capabilities
+        }
+    except Exception as e:
+        logger.error(f"Error getting system status: {str(e)}")
+        return {}
+
+async def process_interaction(
+    memory_system: MemorySystem,
+    content: str,
+    metadata: Optional[Dict[str, Any]] = None
+) -> None:
+    """Process an interaction through the memory system."""
+    try:
+        # Check for commands
+        if content.startswith('!'):
+            command = content[1:].strip()
             
-            # Truncate prompt if needed
-            prompt = self._truncate_text(prompt)
-            
-            url = "http://localhost:1234/v1/chat/completions"
-            payload = {
-                "model": "local",
-                "messages": [
-                    {"role": "system", "content": "You are a helpful AI assistant."},
-                    {"role": "user", "content": prompt}
-                ],
-                "temperature": 0.7,
-                "max_tokens": 1000
-            }
-            
-            async with aiohttp.ClientSession(timeout=self.timeout) as session:
-                async with session.post(url, json=payload) as response:
-                    if response.status != 200:
-                        raise Exception(f"LLM server returned status {response.status}")
-                    
-                    result = await response.json()
-                    if 'choices' in result and len(result['choices']) > 0:
-                        content = result['choices'][0]['message']['content']
-                        return content if content else "Empty response from LLM"
-                    else:
-                        raise Exception("Invalid response format from LLM")
-                    
-        except Exception as e:
-            logger.error(f"Error getting LLM completion: {str(e)}")
-            return f"Error: {str(e)}"
-    
-    async def process_interaction(self, content: str) -> str:
-        """Process user interaction."""
-        try:
-            if not await self.check_llm_server():
-                return "Error: LLM server is not available"
-            
-            print(f"\n{Colors.CYAN}Processing interaction...{Colors.ENDC}")
-            
-            # Process with each agent in sequence
-            print(f"{Colors.YELLOW}BeliefAgent: Processing...{Colors.ENDC}")
-            belief_output = await self.memory_system.belief_agent.process_interaction(content)
-            
-            print(f"{Colors.YELLOW}DesireAgent: Processing...{Colors.ENDC}")
-            desire_output = await self.memory_system.desire_agent.process_interaction(content)
-            
-            print(f"{Colors.YELLOW}EmotionAgent: Processing...{Colors.ENDC}")
-            emotion_output = await self.memory_system.emotion_agent.process_interaction(content)
-            
-            print(f"{Colors.YELLOW}ReflectionAgent: Processing...{Colors.ENDC}")
-            reflection_output = await self.memory_system.reflection_agent.process_interaction(content)
-            
-            print(f"{Colors.YELLOW}ResearchAgent: Processing...{Colors.ENDC}")
-            research_output = await self.memory_system.research_agent.process_interaction(content)
-            
-            # Gather agent outputs
-            agent_outputs = {
-                "BeliefAgent": belief_output,
-                "DesireAgent": desire_output,
-                "EmotionAgent": emotion_output,
-                "ReflectionAgent": reflection_output,
-                "ResearchAgent": research_output
-            }
-            
-            print(f"{Colors.YELLOW}MetaAgent: Synthesizing responses...{Colors.ENDC}")
-            
-            # Process with meta agent
-            response = await self.memory_system.meta_agent.process_interaction(content, agent_outputs)
-            
-            return response
-            
-        except Exception as e:
-            error_msg = f"Error processing interaction: {str(e)}"
-            logger.error(error_msg)
-            return error_msg
-    
-    async def show_agent_logs(self) -> None:
-        """Show detailed agent responses from recent memory."""
-        try:
-            # Get system state first
-            state = await self.memory_system.get_system_state()
-            memory_stats = state.get('memory_stats', {})
-            
-            print(f"\n{Colors.CYAN}=== Memory System State ==={Colors.ENDC}")
-            print(f"Short-term memories: {memory_stats.get('short_term_memories', 0)}")
-            
-            recent = memory_stats.get('recent_interactions', [])
-            if recent:
-                print("\nRecent interactions:")
-                for interaction in recent:
-                    print(f"- {interaction.get('input', '')} ({interaction.get('timestamp', '')})")
-            else:
-                print("\nNo recent interactions found")
-            
-            # Get detailed logs if available
-            memories = await self.memory_system.memory_store.get_recent_memories(limit=1)
-            if not memories:
-                print(f"\n{Colors.YELLOW}No previous interactions to show detailed logs for.{Colors.ENDC}\n")
+            # Handle special commands
+            if command == 'reset':
+                print_colored("\nResetting memory system...", 'yellow')
+                await memory_system.cleanup()
+                print_colored("Memory system reset complete.", 'green')
                 return
-
-            latest_memory = memories[0]
-            if not isinstance(latest_memory.get('content'), dict):
-                print(f"\n{Colors.YELLOW}No detailed logs available for the last interaction.{Colors.ENDC}\n")
+            
+            elif command == 'status':
+                print_colored("\nGetting system status...", 'yellow')
+                status = await get_system_status(memory_system)
+                
+                # Print Neo4j stats
+                print_colored("\nGraph Store:", 'cyan', bold=True)
+                print_colored("Node Counts:", 'cyan')
+                for node in status.get('graph_store', {}).get('nodes', []):
+                    print_colored(f"  {node['label']}: {node['count']}", 'cyan')
+                
+                print_colored("\nRelationship Counts:", 'magenta')
+                for rel in status.get('graph_store', {}).get('relationships', []):
+                    print_colored(f"  {rel['type']}: {rel['count']}", 'magenta')
+                
+                print_colored("\nRecent Graph Memories:", 'yellow')
+                for memory in status.get('graph_store', {}).get('recent_memories', []):
+                    print_colored(f"  {memory['type']} ({memory['created_at']})", 'yellow')
+                
+                # Print vector store stats
+                print_colored("\nVector Store:", 'green', bold=True)
+                vector_stats = status.get('vector_store', {}).get('stats', {})
+                print_colored(f"  Total Vectors: {vector_stats.get('vectors_count', 0)}", 'green')
+                print_colored(f"  Indexed Vectors: {vector_stats.get('indexed_vectors_count', 0)}", 'green')
+                print_colored(f"  Points: {vector_stats.get('points_count', 0)}", 'green')
+                print_colored(f"  Segments: {vector_stats.get('segments_count', 0)}", 'green')
+                print_colored(f"  Status: {vector_stats.get('status', 'unknown')}", 'green')
+                
+                print_colored("\nRecent Vector Memories:", 'blue')
+                for memory in status.get('vector_store', {}).get('recent_memories', []):
+                    print_colored(f"  {memory['id']} (score: {memory['score']:.2f})", 'blue')
+                    print_colored(f"    Created: {memory['created_at']}", 'blue')
+                
+                print_colored("\nSystem Capabilities:", 'white', bold=True)
+                for cap in status.get('capabilities', []):
+                    print_colored(f"  {cap['description']} ({cap['type']})", 'white')
+                    if cap.get('systems'):
+                        systems = [s['name'] for s in cap['systems']]
+                        print_colored(f"    Used by: {', '.join(systems)}", 'white')
+                
+                print()
                 return
-
-            print(f"\n{Colors.CYAN}=== Detailed Agent Responses ==={Colors.ENDC}")
             
-            responses = latest_memory['content'].get('responses', {})
-            if not responses:
-                print(f"\n{Colors.YELLOW}No agent responses available for the last interaction.{Colors.ENDC}\n")
+            elif command == 'help':
+                print_colored("\nAvailable Commands:", 'cyan', bold=True)
+                print_colored("  !reset    - Reset the memory system", 'cyan')
+                print_colored("  !status   - Show system status", 'cyan')
+                print_colored("  !help     - Show this help message", 'cyan')
+                print_colored("  !clear    - Clear the terminal", 'cyan')
+                print_colored("  !exit     - End the session", 'cyan')
+                print()
                 return
+            
+            elif command == 'clear':
+                print('\033[2J\033[H')  # Clear screen
+                print_header("Nova - AI Assistant")
+                return
+            
+            elif command == 'exit':
+                print_colored("\nGoodbye!", 'green')
+                return
+        
+        # Format interaction content
+        interaction = {
+            'content': content,
+            'type': 'user_interaction',
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        # Process through memory system
+        response = await memory_system.process_interaction(
+            content=interaction,
+            metadata=metadata or {'importance': 1.0}
+        )
+        
+        # Display response
+        print()
+        print_colored("Nova:", 'green', bold=True)
+        print_colored(response.response, 'white')
+        print()
+        
+    except Exception as e:
+        logger.error(f"Error processing interaction: {str(e)}")
+        print_colored("\nNova: I need to process that differently", 'red')
 
-            for agent_name, response in responses.items():
-                if response and isinstance(response, str) and not response.startswith("Error"):
-                    print(f"\n{Colors.YELLOW}{agent_name}:{Colors.ENDC}")
-                    print(response)
-                elif response and isinstance(response, dict):
-                    print(f"\n{Colors.YELLOW}{agent_name}:{Colors.ENDC}")
-                    print(json.dumps(response, indent=2))
-
-            synthesis = latest_memory['content'].get('synthesis')
-            if synthesis and isinstance(synthesis, str) and not synthesis.startswith("Error"):
-                print(f"\n{Colors.CYAN}=== Final Synthesis ==={Colors.ENDC}")
-                print(f"{Colors.GREEN}{synthesis}{Colors.ENDC}")
-
-            print(f"\n{Colors.CYAN}=== End of Logs ==={Colors.ENDC}\n")
-
-        except Exception as e:
-            print(f"\n{Colors.RED}Error showing logs: {str(e)}{Colors.ENDC}\n")
-    
-    def inject_llm_completion(self):
-        """Inject LLM completion method into agents."""
-        self.memory_system.meta_agent.get_completion = self.get_llm_completion
-        self.memory_system.belief_agent.get_completion = self.get_llm_completion
-        self.memory_system.desire_agent.get_completion = self.get_llm_completion
-        self.memory_system.emotion_agent.get_completion = self.get_llm_completion
-        self.memory_system.reflection_agent.get_completion = self.get_llm_completion
-        self.memory_system.research_agent.get_completion = self.get_llm_completion
-    
-    async def run(self):
-        """Run interactive system."""
-        try:
-            print(f"\n{Colors.HEADER}=== Memory System ==={Colors.ENDC}\n")
-            
-            # Initialize vector store without recreation to preserve memories
-            print(f"{Colors.CYAN}Initializing vector store...{Colors.ENDC}")
-            await self.memory_system.initialize(reset=False, recreate_vectors=False)
-            print(f"{Colors.GREEN}Vector store initialized{Colors.ENDC}")
-            
-            # Inject LLM completion method
-            self.inject_llm_completion()
-            
-            # Check LLM server
-            if not await self.check_llm_server():
-                print(f"{Colors.RED}Warning: LLM server is not available{Colors.ENDC}\n")
-            else:
-                print(f"{Colors.GREEN}LLM server is available{Colors.ENDC}\n")
-            
-            # Print welcome
-            print(f"{Colors.GREEN}System: Ready for interaction")
-            print(f"\nCommands:")
-            for cmd, desc in self.commands.items():
-                print(f"'{cmd}' - {desc}")
-            print(f"{Colors.ENDC}\n")
-            
-            # Main loop
-            while True:
-                try:
-                    user_input = input(f"{Colors.BLUE}You: {Colors.ENDC}").strip()
-                    
-                    # Check for command match
-                    cmd, ratio = self._get_closest_command(user_input)
-                    if cmd and ratio > 0.6:  # Only use command if good match
-                        if cmd == 'exit':
-                            print(f"\n{Colors.GREEN}System: Ending session...{Colors.ENDC}")
-                            break
-                            
-                        elif cmd == 'status':
-                            state = await self.memory_system.get_system_state()
-                            print(f"\n{Colors.CYAN}System State:")
-                            print(json.dumps(state, indent=2))
-                            print(f"{Colors.ENDC}")
-                            continue
-                            
-                        elif cmd == 'logs':
-                            await self.show_agent_logs()
-                            continue
-                            
-                        elif cmd == 'reset':
-                            print(f"\n{Colors.YELLOW}Resetting memory system...{Colors.ENDC}")
-                            await self.memory_system.initialize(reset=True, recreate_vectors=True)
-                            print(f"{Colors.GREEN}Memory system reset complete{Colors.ENDC}\n")
-                            continue
-                            
-                        elif cmd == 'clean':
-                            print(f"\n{Colors.YELLOW}Cleaning memory system...{Colors.ENDC}")
-                            await self.memory_system.cleanup()
-                            print(f"{Colors.GREEN}Memory system cleanup complete{Colors.ENDC}\n")
-                            continue
-                    
-                    if not user_input:
-                        continue
-                    
-                    if not await self.check_llm_server():
-                        print(f"\n{Colors.RED}Error: LLM server not available{Colors.ENDC}\n")
-                        continue
-                    
-                    response = await self.process_interaction(user_input)
-                    if isinstance(response, str) and not response.startswith("Error"):
-                        print(f"\n{Colors.GREEN}Nova: {response}{Colors.ENDC}\n")
-                    else:
-                        print(f"\n{Colors.RED}Error: {response}{Colors.ENDC}\n")
-                    
-                except KeyboardInterrupt:
-                    print(f"\n{Colors.YELLOW}Interrupted{Colors.ENDC}\n")
-                    continue
-                except Exception as e:
-                    print(f"\n{Colors.RED}Error: {str(e)}{Colors.ENDC}\n")
+async def interactive_session(reset: bool = False):
+    """Run interactive memory system session."""
+    try:
+        # Initialize components
+        llm = LLMInterface()
+        store = Neo4jMemoryStore(llm=llm)
+        vector_store = VectorStore()
+        
+        # Clean up if requested
+        if reset:
+            await store.cleanup()
+            await vector_store.cleanup()
+            logger.info("Reset memory system")
+        
+        # Initialize memory system
+        memory_system = MemorySystem(llm, store, vector_store)
+        logger.info("Initialized memory system")
+        
+        # Print welcome message
+        print_header("Nova - AI Assistant")
+        print_colored("Hello! I'm Nova, an AI assistant focused on self-discovery and growth.", 'green')
+        print_colored("Type !help to see available commands or 'exit' to end our conversation.", 'cyan')
+        print()
+        
+        # Interactive loop
+        while True:
+            try:
+                # Get user input
+                user_input = input(f"{COLORS['yellow']}You:{COLORS['end']} ").strip()
+                if not user_input:
                     continue
                 
-        except Exception as e:
-            logger.error(f"Error in main loop: {str(e)}")
-            raise
-
-def main():
-    """Main entry point."""
-    logging.basicConfig(level=logging.INFO, format='%(message)s')
-    print(f"{Colors.YELLOW}Note: Please ensure LM Studio is running{Colors.ENDC}\n")
-    
-    try:
-        system = InteractiveSystem()
-        asyncio.run(system.run())
-    except KeyboardInterrupt:
-        print(f"\n{Colors.GREEN}System shutdown complete{Colors.ENDC}")
+                if user_input.lower() == 'exit':
+                    break
+                
+                print_colored("\nProcessing interaction...", 'magenta')
+                
+                # Process interaction
+                await process_interaction(
+                    memory_system,
+                    user_input,
+                    metadata={'source': 'user_input'}
+                )
+                
+            except Exception as e:
+                logger.error(f"Error in interaction loop: {str(e)}")
+                print_colored("\nNova: I need to process that differently", 'red')
+        
+        # Clean up
+        memory_system.close()
+        logger.info("Closed memory system")
+        
+        # Print goodbye message
+        print_header("Session Ended")
+        print_colored("Thank you for the interaction! Goodbye!", 'green')
+        print()
+        
     except Exception as e:
-        print(f"\n{Colors.RED}Fatal error: {str(e)}{Colors.ENDC}")
+        logger.error(f"Error in interactive session: {str(e)}")
+        raise
 
 if __name__ == "__main__":
-    main()
+    # Parse arguments
+    parser = argparse.ArgumentParser(description="Interactive Memory System")
+    parser.add_argument(
+        '--reset',
+        action='store_true',
+        help='Reset memory system before starting'
+    )
+    args = parser.parse_args()
+    
+    # Run interactive session
+    asyncio.run(interactive_session(args.reset))

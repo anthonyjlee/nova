@@ -1,389 +1,214 @@
 """
-Vector storage and retrieval using Qdrant.
+Vector store implementation using Qdrant and sentence-transformers.
 """
 
 import logging
-import numpy as np
-import aiohttp
 import json
-from typing import List, Dict, Optional, Union, Any
+from typing import Dict, List, Any, Optional
 from datetime import datetime
-import uuid
-from dateutil import parser
-from dateutil.relativedelta import relativedelta
+import torch
+from qdrant_client import QdrantClient
+from qdrant_client.http import models
+from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
 class VectorStore:
-    """Manages vector storage and retrieval using Qdrant."""
+    """Vector store for semantic memory search."""
     
-    def __init__(self, api_base: str = "http://localhost:6333", 
-                 api_key: str = None,  # Made API key optional
-                 collection_name: str = "memory_vectors",
-                 decay_factor: float = 0.995,
-                 vector_size: int = 768):  # Match embedding model dimension
+    def __init__(
+        self,
+        collection_name: str = "memory_vectors",
+        model_name: str = "all-MiniLM-L6-v2",
+        host: str = "localhost",
+        port: int = 6333,
+        device: Optional[str] = None
+    ):
         """Initialize vector store."""
-        self.api_base = api_base
-        self.api_key = api_key
         self.collection_name = collection_name
-        self.decay_factor = decay_factor
-        self.vector_size = vector_size
-        self.headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            self.headers["api-key"] = self.api_key
-        self.timeout = aiohttp.ClientTimeout(total=30)
+        self._vector_id_counter = 0
+        
+        # Set up PyTorch device
+        if device is None:
+            device = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
+        self.device = device
+        logger.info(f"Using PyTorch device: {device}")
+        
+        # Initialize sentence transformer model
+        self.model = SentenceTransformer(model_name)
+        self.model.to(device)
+        logger.info(f"Loaded model: {model_name}")
+        
+        # Initialize Qdrant client
+        self.client = QdrantClient(host=host, port=port)
+        self._initialize_collection()
     
-    async def create_collection(self) -> bool:
-        """Create collection with schema."""
+    def _initialize_collection(self) -> None:
+        """Initialize vector collection."""
         try:
-            url = f"{self.api_base}/collections/{self.collection_name}"
-            payload = {
-                "vectors": {
-                    "size": self.vector_size,
-                    "distance": "Cosine"
-                },
-                "shard_number": 1,
-                "replication_factor": 1,
-                "write_consistency_factor": 1,
-                "on_disk_payload": True,
-                "hnsw_config": {
-                    "m": 16,
-                    "ef_construct": 100,
-                    "full_scan_threshold": 10000
-                },
-                "optimizers_config": {
-                    "deleted_threshold": 0.2,
-                    "vacuum_min_vector_number": 1000,
-                    "default_segment_number": 2,
-                    "indexing_threshold": 20000,
-                    "flush_interval_sec": 5,
-                    "max_optimization_threads": 1
-                },
-                "wal_config": {
-                    "wal_capacity_mb": 32,
-                    "wal_segments_ahead": 0
-                }
-            }
-            
-            # First create the collection
-            async with aiohttp.ClientSession(headers=self.headers, timeout=self.timeout) as session:
-                async with session.put(url, json=payload) as response:
-                    response_text = await response.text()
-                    if response.status != 200:
-                        logger.warning(f"Failed to create collection: {response_text}")
-                        return False
-                    
-                    logger.info(f"Created collection: {response_text}")
-                    
-                    # Now create the payload indexes
-                    index_url = f"{url}/index"
-                    
-                    # Create memory_type index
-                    memory_type_payload = {
-                        "field_name": "memory_type",
-                        "field_type": "keyword"
-                    }
-                    async with session.put(index_url, json=memory_type_payload) as index_response:
-                        index_text = await index_response.text()
-                        logger.info(f"Memory type index response: {index_text}")
-                        if index_response.status != 200:
-                            logger.warning(f"Failed to create memory_type index: {index_text}")
-                            return False
-                    
-                    # Create timestamp index
-                    timestamp_payload = {
-                        "field_name": "timestamp",
-                        "field_type": "keyword"
-                    }
-                    async with session.put(index_url, json=timestamp_payload) as index_response:
-                        index_text = await index_response.text()
-                        logger.info(f"Timestamp index response: {index_text}")
-                        if index_response.status != 200:
-                            logger.warning(f"Failed to create timestamp index: {index_text}")
-                            return False
-                    
-                    # Create importance index
-                    importance_payload = {
-                        "field_name": "importance",
-                        "field_type": "float"
-                    }
-                    async with session.put(index_url, json=importance_payload) as index_response:
-                        index_text = await index_response.text()
-                        logger.info(f"Importance index response: {index_text}")
-                        if index_response.status != 200:
-                            logger.warning(f"Failed to create importance index: {index_text}")
-                            return False
-                    
-                    logger.info("Created all payload indexes")
-                    return True
-            
-        except Exception as e:
-            logger.error(f"Error creating collection: {str(e)}")
-            return False
-    
-    async def delete_collection(self) -> None:
-        """Delete the collection if it exists."""
-        try:
-            url = f"{self.api_base}/collections/{self.collection_name}"
-            
-            async with aiohttp.ClientSession(headers=self.headers, timeout=self.timeout) as session:
-                async with session.delete(url) as response:
-                    response_text = await response.text()
-                    if response.status == 200:
-                        logger.info(f"Deleted collection {self.collection_name}")
-                    elif response.status != 404:  # 404 means collection didn't exist
-                        logger.warning(f"Failed to delete collection: {response_text}")
-                        
-        except Exception as e:
-            logger.error(f"Error deleting collection: {str(e)}")
-            raise
-    
-    async def init_collection(self, recreate: bool = False) -> None:
-        """Initialize or verify collection."""
-        try:
-            # Delete collection if recreate is True
-            if recreate:
-                await self.delete_collection()
-            
-            url = f"{self.api_base}/collections/{self.collection_name}"
-            
             # Check if collection exists
-            async with aiohttp.ClientSession(headers=self.headers, timeout=self.timeout) as session:
-                async with session.get(url) as response:
-                    response_text = await response.text()
-                    logger.info(f"Collection check response: {response_text}")
-                    
-                    if response.status == 404 or recreate:
-                        # Create collection with schema
-                        if not await self.create_collection():
-                            logger.error("Failed to create collection with schema")
-                            return
-                                
-                    elif response.status == 200:
-                        # Check vector size of existing collection
-                        result = json.loads(response_text)
-                        existing_size = result.get('result', {}).get('config', {}).get('params', {}).get('vectors', {}).get('size')
-                        if existing_size and existing_size != self.vector_size:
-                            logger.warning(f"Collection exists with different vector size ({existing_size}). Recreating...")
-                            await self.init_collection(recreate=True)
-                        else:
-                            logger.info(f"Using existing collection {self.collection_name}")
-                    else:
-                        logger.error(f"Failed to check collection: {response_text}")
-                        
+            collections = self.client.get_collections()
+            exists = any(c.name == self.collection_name for c in collections.collections)
+            
+            if not exists:
+                # Create collection
+                self.client.create_collection(
+                    collection_name=self.collection_name,
+                    vectors_config=models.VectorParams(
+                        size=self.model.get_sentence_embedding_dimension(),
+                        distance=models.Distance.COSINE
+                    )
+                )
+                logger.info(f"Created collection: {self.collection_name}")
+            
+            # Reset counter
+            self._vector_id_counter = 0
+            
         except Exception as e:
             logger.error(f"Error initializing collection: {str(e)}")
             raise
     
-    async def add_vectors(self, vectors: Union[np.ndarray, List[List[float]]], 
-                         metadata_list: List[Dict]) -> None:
-        """Add vectors with metadata to store."""
+    async def store_vector(
+        self,
+        content: Dict[str, Any],
+        metadata: Optional[Dict] = None
+    ) -> int:
+        """Store content vector."""
         try:
-            if len(vectors) != len(metadata_list):
-                raise ValueError("Number of vectors must match number of metadata entries")
+            # Get next vector ID
+            vector_id = self._vector_id_counter
+            self._vector_id_counter += 1
             
-            # Convert vectors and metadata to JSON serializable format
-            vectors = [self._pad_vector(v) for v in vectors]  # Ensure correct dimension
-            metadata_list = self._convert_to_json_serializable(metadata_list)
+            # Convert content to string for embedding
+            if isinstance(content, dict):
+                content_str = json.dumps(content)
+            else:
+                content_str = str(content)
             
-            # Prepare points
-            points = []
-            for i, (vector, metadata) in enumerate(zip(vectors, metadata_list)):
-                point_id = str(uuid.uuid4()).replace('-', '')  # Remove hyphens for Qdrant
-                metadata['timestamp'] = datetime.now().isoformat()
-                metadata['importance'] = metadata.get('importance', 0.5)  # Default importance
-                points.append({
-                    "id": point_id,
-                    "vector": vector,
-                    "payload": metadata
-                })
+            # Generate embedding
+            with torch.no_grad():
+                vector = self.model.encode(
+                    content_str,
+                    convert_to_tensor=True,
+                    device=self.device
+                ).cpu().numpy().tolist()
             
-            # Add points in batches
-            batch_size = 100
-            for i in range(0, len(points), batch_size):
-                batch = points[i:i + batch_size]
-                url = f"{self.api_base}/collections/{self.collection_name}/points"
-                payload = {
-                    "points": batch
-                }
-                
-                async with aiohttp.ClientSession(headers=self.headers, timeout=self.timeout) as session:
-                    async with session.put(url, json=payload) as response:
-                        response_text = await response.text()
-                        if response.status != 200:
-                            raise Exception(f"Failed to add vectors: {response_text}")
+            # Store vector with payload
+            self.client.upsert(
+                collection_name=self.collection_name,
+                points=[
+                    models.PointStruct(
+                        id=vector_id,
+                        vector=vector,
+                        payload={
+                            'content': content,
+                            'metadata': metadata or {},
+                            'created_at': datetime.now().isoformat()
+                        }
+                    )
+                ]
+            )
             
-            logger.info(f"Added {len(vectors)} vectors to collection {self.collection_name}")
+            logger.info(f"Stored vector: {vector_id}")
+            return vector_id
             
         except Exception as e:
-            logger.error(f"Error adding vectors: {str(e)}")
+            logger.error(f"Error storing vector: {str(e)}")
             raise
     
-    def _convert_to_json_serializable(self, obj: Any) -> Any:
-        """Convert numpy arrays and other non-serializable types to JSON serializable types."""
-        if isinstance(obj, np.ndarray):
-            return obj.tolist()
-        elif isinstance(obj, (np.int8, np.int16, np.int32, np.int64,
-                            np.uint8, np.uint16, np.uint32, np.uint64)):
-            return int(obj)
-        elif isinstance(obj, (np.float16, np.float32, np.float64)):
-            return float(obj)
-        elif isinstance(obj, np.bool_):
-            return bool(obj)
-        elif isinstance(obj, dict):
-            return {k: self._convert_to_json_serializable(v) for k, v in obj.items()}
-        elif isinstance(obj, list):
-            return [self._convert_to_json_serializable(v) for v in obj]
-        return obj
-    
-    def _calculate_decay_score(self, timestamp: str) -> float:
-        """Calculate exponential decay score based on time difference."""
+    async def search_vectors(
+        self,
+        content: Dict[str, Any],
+        limit: int = 10,
+        score_threshold: float = 0.7
+    ) -> List[Dict[str, Any]]:
+        """Search for similar vectors."""
         try:
-            memory_time = parser.parse(timestamp)
-            now = datetime.now()
-            time_diff = (now - memory_time).total_seconds() / 3600  # Hours
-            return pow(self.decay_factor, time_diff)
-        except Exception as e:
-            logger.error(f"Error calculating decay score: {str(e)}")
-            return 0.0
-    
-    def _pad_vector(self, vector: Union[List[float], np.ndarray]) -> List[float]:
-        """Pad or truncate vector to match expected dimension."""
-        vector = np.array(vector)
-        current_dim = len(vector)
-        
-        if current_dim == self.vector_size:
-            return vector.tolist()
-        elif current_dim < self.vector_size:
-            # Pad with zeros
-            padding = np.zeros(self.vector_size - current_dim)
-            return np.concatenate([vector, padding]).tolist()
-        else:
-            # Truncate
-            return vector[:self.vector_size].tolist()
-    
-    async def search_vectors(self, query_vector: Union[np.ndarray, List[float]], 
-                           k: int = 5, filter_dict: Optional[Dict] = None) -> List[Dict]:
-        """Search for similar vectors with decay-based scoring."""
-        try:
-            # Ensure query vector has correct dimension
-            query_vector = self._pad_vector(query_vector)
+            # Convert content to string for embedding
+            if isinstance(content, dict):
+                content_str = json.dumps(content)
+            else:
+                content_str = str(content)
             
-            url = f"{self.api_base}/collections/{self.collection_name}/points/search"
-            payload = {
-                "vector": query_vector,
-                "limit": k * 2,  # Get more results to account for decay filtering
-                "with_payload": True,
-                "with_vector": False
-            }
+            # Generate query vector
+            with torch.no_grad():
+                query_vector = self.model.encode(
+                    content_str,
+                    convert_to_tensor=True,
+                    device=self.device
+                ).cpu().numpy().tolist()
             
-            # Add filter if provided
-            if filter_dict:
-                payload["filter"] = {
-                    "must": [
-                        {
-                            "key": k,
-                            "match": {
-                                "value": v
-                            }
-                        }
-                        for k, v in filter_dict.items()
-                    ]
+            # Search vectors
+            results = self.client.search(
+                collection_name=self.collection_name,
+                query_vector=query_vector,
+                limit=limit,
+                score_threshold=score_threshold
+            )
+            
+            # Format results
+            memories = []
+            for result in results:
+                memory = {
+                    'id': result.id,
+                    'score': result.score,
+                    'content': result.payload['content'],
+                    'metadata': result.payload['metadata'],
+                    'created_at': result.payload['created_at']
                 }
+                memories.append(memory)
             
-            async with aiohttp.ClientSession(headers=self.headers, timeout=self.timeout) as session:
-                async with session.post(url, json=payload) as response:
-                    response_text = await response.text()
-                    if response.status != 200:
-                        raise Exception(f"Failed to search vectors: {response_text}")
-                    
-                    result = json.loads(response_text)
-                    
-                    # Format results with decay scoring
-                    results = []
-                    for match in result.get("result", []):
-                        # Calculate decay score
-                        timestamp = match["payload"].get("timestamp", datetime.now().isoformat())
-                        decay_score = self._calculate_decay_score(timestamp)
-                        
-                        # Get importance score
-                        importance = float(match["payload"].get("importance", 0.5))
-                        
-                        # Combine scores
-                        # You can adjust these weights based on your needs
-                        similarity_weight = 0.4
-                        decay_weight = 0.3
-                        importance_weight = 0.3
-                        
-                        combined_score = (
-                            similarity_weight * match["score"] +
-                            decay_weight * decay_score +
-                            importance_weight * importance
-                        )
-                        
-                        results.append({
-                            "id": match["id"],
-                            "score": combined_score,
-                            "similarity": match["score"],
-                            "decay": decay_score,
-                            "importance": importance,
-                            "metadata": match["payload"]
-                        })
-                    
-                    # Sort by combined score and limit to k results
-                    results.sort(key=lambda x: x["score"], reverse=True)
-                    return results[:k]
+            return memories
             
         except Exception as e:
             logger.error(f"Error searching vectors: {str(e)}")
             return []
     
-    async def delete_vectors(self, filter_dict: Dict) -> None:
-        """Delete vectors matching filter."""
+    async def get_vector(self, vector_id: int) -> Optional[Dict[str, Any]]:
+        """Get vector by ID."""
         try:
-            url = f"{self.api_base}/collections/{self.collection_name}/points/delete"
-            payload = {
-                "filter": {
-                    "must": [
-                        {
-                            "key": k,
-                            "match": {
-                                "value": v
-                            }
-                        }
-                        for k, v in filter_dict.items()
-                    ]
+            result = self.client.retrieve(
+                collection_name=self.collection_name,
+                ids=[vector_id]
+            )
+            
+            if result:
+                point = result[0]
+                return {
+                    'id': point.id,
+                    'content': point.payload['content'],
+                    'metadata': point.payload['metadata'],
+                    'created_at': point.payload['created_at']
                 }
-            }
             
-            async with aiohttp.ClientSession(headers=self.headers, timeout=self.timeout) as session:
-                async with session.post(url, json=payload) as response:
-                    response_text = await response.text()
-                    if response.status != 200:
-                        raise Exception(f"Failed to delete vectors: {response_text}")
-            
-            logger.info(f"Deleted vectors matching filter: {filter_dict}")
+            return None
             
         except Exception as e:
-            logger.error(f"Error deleting vectors: {str(e)}")
+            logger.error(f"Error getting vector: {str(e)}")
+            return None
+    
+    async def cleanup(self) -> None:
+        """Clean up vector store."""
+        try:
+            # Delete collection
+            self.client.delete_collection(
+                collection_name=self.collection_name
+            )
+            logger.info(f"Deleted collection: {self.collection_name}")
+            
+            # Recreate collection
+            self._initialize_collection()
+            logger.info("Re-initialized vector store")
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up vector store: {str(e)}")
             raise
     
-    async def clear_collection(self) -> None:
-        """Clear all vectors from collection."""
+    def close(self) -> None:
+        """Close vector store connection."""
         try:
-            url = f"{self.api_base}/collections/{self.collection_name}/points/delete"
-            payload = {
-                "filter": {}  # Empty filter matches all points
-            }
-            
-            async with aiohttp.ClientSession(headers=self.headers, timeout=self.timeout) as session:
-                async with session.post(url, json=payload) as response:
-                    response_text = await response.text()
-                    if response.status != 200:
-                        raise Exception(f"Failed to clear collection: {response_text}")
-            
-            logger.info(f"Cleared collection {self.collection_name}")
-            
+            self.client.close()
+            logger.info("Closed vector store connection")
         except Exception as e:
-            logger.error(f"Error clearing collection: {str(e)}")
+            logger.error(f"Error closing vector store connection: {str(e)}")
             raise

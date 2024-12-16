@@ -1,234 +1,195 @@
 """
-Memory integration layer for DAG and two-layer memory system.
+Memory system integration.
 """
 
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 
-from .persistence import MemoryStore
-from ..dag import TaskGraph, TaskNode, TaskType, TaskStatus
+from .llm_interface import LLMInterface
+from .neo4j_store import Neo4jMemoryStore
+from .vector_store import VectorStore
+from .agents import (
+    BeliefAgent,
+    DesireAgent,
+    EmotionAgent,
+    ReflectionAgent,
+    ResearchAgent,
+    MetaAgent
+)
 
 logger = logging.getLogger(__name__)
 
-class MemoryIntegration:
-    """Integrates DAG execution with two-layer memory system."""
+class MemorySystem:
+    """Integrated memory system."""
     
-    def __init__(self, memory_store: MemoryStore):
-        """Initialize memory integration."""
-        self.memory_store = memory_store
-    
-    async def store_task_execution(
+    def __init__(
         self,
-        task: TaskNode,
-        graph: TaskGraph,
-        result: Optional[Dict] = None
-    ) -> None:
-        """Store task execution in episodic memory."""
+        llm: LLMInterface,
+        store: Neo4jMemoryStore,
+        vector_store: Optional[VectorStore] = None
+    ):
+        """Initialize memory system."""
+        self.llm = llm
+        self.store = store
+        self.vector_store = vector_store or VectorStore()
+        
+        # Initialize agents
+        self.belief_agent = BeliefAgent(llm, store)
+        self.desire_agent = DesireAgent(llm, store)
+        self.emotion_agent = EmotionAgent(llm, store)
+        self.reflection_agent = ReflectionAgent(llm, store)
+        self.research_agent = ResearchAgent(llm, store)
+        self.meta_agent = MetaAgent(llm, store)
+    
+    async def process_interaction(
+        self,
+        content: Dict[str, Any],
+        metadata: Optional[Dict] = None
+    ) -> Any:
+        """Process an interaction through the memory system."""
         try:
-            # Store task execution trace
-            await self.memory_store.store_memory(
-                memory_type="episodic",
-                content={
-                    'task_id': task.task_id,
-                    'task_type': task.task_type.name,
-                    'description': task.description,
-                    'status': task.status.name,
-                    'started_at': task.started_at.isoformat() if task.started_at else None,
-                    'completed_at': task.completed_at.isoformat() if task.completed_at else None,
-                    'result': result,
-                    'graph_context': {
-                        'graph_id': graph.name,
-                        'dependencies': list(task.dependencies),
-                        'dependents': list(task.dependents)
-                    },
-                    'timestamp': datetime.now().isoformat()
+            # Store in vector store for semantic search
+            vector_id = await self.vector_store.store_vector(
+                content=content,
+                metadata=metadata
+            )
+            
+            # Find similar memories
+            similar_memories = await self.vector_store.search_vectors(
+                content=content,
+                limit=5
+            )
+            
+            # Add similar memories to content
+            if similar_memories:
+                content['similar_memories'] = similar_memories
+            
+            # Process through belief system
+            belief_response = await self.belief_agent.process(content, metadata)
+            logger.info("BeliefAgent processed interaction")
+            
+            # Process through desire system
+            desire_response = await self.desire_agent.process(content, metadata)
+            logger.info("DesireAgent processed interaction")
+            
+            # Process through emotion system
+            emotion_response = await self.emotion_agent.process(content, metadata)
+            logger.info("EmotionAgent processed interaction")
+            
+            # Process through reflection system
+            reflection_response = await self.reflection_agent.process(content, metadata)
+            logger.info("ReflectionAgent processed interaction")
+            
+            # Process through research system
+            research_response = await self.research_agent.process(content, metadata)
+            logger.info("ResearchAgent processed interaction")
+            
+            # Synthesize responses
+            response = await self.meta_agent.synthesize_responses(
+                responses={
+                    'belief': belief_response,
+                    'desire': desire_response,
+                    'emotion': emotion_response,
+                    'reflection': reflection_response,
+                    'research': research_response
                 },
-                metadata={
-                    'task_type': task.task_type.name,
-                    'agent_type': task.agent_type.name,
-                    'status': task.status.name,
-                    'importance': 1.0 if task.task_type in [TaskType.ANALYSIS, TaskType.SYNTHESIS] else 0.5
+                context={
+                    'original_content': content,
+                    'metadata': metadata,
+                    'vector_id': vector_id,
+                    'similar_memories': similar_memories
                 }
             )
             
-        except Exception as e:
-            logger.error(f"Error storing task execution: {str(e)}")
-    
-    async def store_graph_execution(
-        self,
-        graph: TaskGraph,
-        final_result: Optional[Dict] = None
-    ) -> None:
-        """Store graph execution in episodic memory."""
-        try:
-            # Get task execution order
-            execution_order = [
-                task_id for task_id in graph.execution_order
-                if graph.tasks[task_id].status == TaskStatus.COMPLETED
-            ]
-            
-            # Store graph execution trace
-            await self.memory_store.store_memory(
-                memory_type="episodic",
+            # Store final response
+            await self.store.store_memory(
+                memory_type="interaction",
                 content={
-                    'graph_id': graph.name,
-                    'description': graph.description,
-                    'execution_order': execution_order,
-                    'completed_tasks': list(graph.completed_tasks),
-                    'failed_tasks': list(graph.failed_tasks),
-                    'final_result': final_result,
-                    'timestamp': datetime.now().isoformat()
-                },
-                metadata={
-                    'graph_type': "interaction",
-                    'success': len(graph.failed_tasks) == 0,
-                    'importance': 1.0 if final_result and final_result.get('importance', 0.5) > 0.5 else 0.5
+                    'original_content': str(content),
+                    'metadata': str(metadata) if metadata else "",
+                    'vector_id': str(vector_id),
+                    'similar_memories': str(similar_memories),
+                    'final_response': str(response.dict())
                 }
             )
             
-        except Exception as e:
-            logger.error(f"Error storing graph execution: {str(e)}")
-    
-    async def extract_semantic_knowledge(
-        self,
-        graph: TaskGraph,
-        final_result: Optional[Dict] = None
-    ) -> None:
-        """Extract and store semantic knowledge from graph execution."""
-        try:
-            # Collect insights from reflection tasks
-            insights = []
-            patterns = []
-            beliefs = []
-            
-            for task_id, task in graph.tasks.items():
-                if task.status == TaskStatus.COMPLETED and task.result:
-                    result = task.result.output
-                    if isinstance(result, dict):
-                        # Collect insights from reflection tasks
-                        if task.task_type == TaskType.REFLECTION:
-                            if 'key_insights' in result:
-                                insights.extend(result['key_insights'])
-                            if 'patterns' in result:
-                                patterns.extend(result['patterns'])
-                        
-                        # Collect beliefs from belief tasks
-                        elif task.task_type == TaskType.ANALYSIS and task.agent_type == AgentType.BELIEF:
-                            if 'core_belief' in result:
-                                beliefs.append(result['core_belief'])
-            
-            # Store semantic knowledge
-            if insights or patterns or beliefs:
-                await self.memory_store.store_memory(
-                    memory_type="semantic",
-                    content={
-                        'insights': insights,
-                        'patterns': patterns,
-                        'beliefs': beliefs,
-                        'source_graph': graph.name,
-                        'timestamp': datetime.now().isoformat()
-                    },
-                    metadata={
-                        'knowledge_type': "learned_concepts",
-                        'importance': 1.0 if final_result and final_result.get('importance', 0.5) > 0.5 else 0.5
-                    }
-                )
+            return response
             
         except Exception as e:
-            logger.error(f"Error extracting semantic knowledge: {str(e)}")
+            logger.error(f"Error processing interaction: {str(e)}")
+            raise
     
-    async def get_relevant_memories(
+    async def search_memories(
         self,
-        task: TaskNode,
-        limit: int = 5
-    ) -> Dict[str, List[Dict]]:
-        """Get relevant memories for a task."""
+        query: str,
+        limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Search memories using both vector and graph stores."""
         try:
-            # Get task-specific memory filters
-            episodic_filter = {'task_type': task.task_type.name}
-            semantic_filter = {'knowledge_type': "learned_concepts"}
-            
-            # Search both memory layers
-            episodic_memories = await self.memory_store.search_similar_memories(
-                content=task.description,
-                limit=limit,
-                filter_dict=episodic_filter,
-                memory_type="episodic"
+            # Search vector store
+            vector_results = await self.vector_store.search_vectors(
+                content=query,
+                limit=limit
             )
             
-            semantic_memories = await self.memory_store.search_similar_memories(
-                content=task.description,
-                limit=limit,
-                filter_dict=semantic_filter,
-                memory_type="semantic"
+            # Search graph store
+            graph_results = await self.store.search_memories(
+                content_pattern=query,
+                limit=limit
             )
             
-            return {
-                'episodic': episodic_memories,
-                'semantic': semantic_memories
-            }
+            # Combine and deduplicate results
+            combined_results = []
+            seen_ids = set()
+            
+            for result in vector_results:
+                if result['id'] not in seen_ids:
+                    seen_ids.add(result['id'])
+                    combined_results.append({
+                        'source': 'vector',
+                        'score': result.get('score', 0.0),
+                        **result
+                    })
+            
+            for result in graph_results:
+                if result['id'] not in seen_ids:
+                    seen_ids.add(result['id'])
+                    combined_results.append({
+                        'source': 'graph',
+                        'score': 1.0,  # Graph results are exact matches
+                        **result
+                    })
+            
+            # Sort by score and limit
+            combined_results.sort(key=lambda x: x['score'], reverse=True)
+            return combined_results[:limit]
             
         except Exception as e:
-            logger.error(f"Error getting relevant memories: {str(e)}")
-            return {
-                'episodic': [],
-                'semantic': []
-            }
+            logger.error(f"Error searching memories: {str(e)}")
+            return []
     
-    async def update_semantic_knowledge(
-        self,
-        task_results: List[Dict],
-        graph: TaskGraph
-    ) -> None:
-        """Update semantic knowledge based on task results."""
+    async def cleanup(self) -> None:
+        """Clean up memory system."""
         try:
-            # Collect all insights and patterns
-            all_insights = []
-            all_patterns = []
+            # Clean up vector store
+            await self.vector_store.cleanup()
+            logger.info("Cleaned up vector store")
             
-            for result in task_results:
-                if isinstance(result, dict):
-                    if 'insights' in result:
-                        all_insights.extend(result['insights'])
-                    if 'patterns' in result:
-                        all_patterns.extend(result['patterns'])
-            
-            if all_insights or all_patterns:
-                # Store updated semantic knowledge
-                await self.memory_store.store_memory(
-                    memory_type="semantic",
-                    content={
-                        'insights': all_insights,
-                        'patterns': all_patterns,
-                        'source_graph': graph.name,
-                        'update_type': "knowledge_refinement",
-                        'timestamp': datetime.now().isoformat()
-                    },
-                    metadata={
-                        'knowledge_type': "refined_concepts",
-                        'importance': 0.8  # Slightly lower than new knowledge
-                    }
-                )
+            # Clean up graph store
+            await self.store.cleanup()
+            logger.info("Cleaned up graph store")
             
         except Exception as e:
-            logger.error(f"Error updating semantic knowledge: {str(e)}")
+            logger.error(f"Error cleaning up memory system: {str(e)}")
+            raise
     
-    async def consolidate_memories(self, graph: TaskGraph) -> None:
-        """Consolidate memories after graph execution."""
+    def close(self) -> None:
+        """Close memory system."""
         try:
-            # Get all completed task results
-            task_results = []
-            for task_id in graph.completed_tasks:
-                task = graph.tasks[task_id]
-                if task.result and task.result.output:
-                    task_results.append(task.result.output)
-            
-            # Extract and store semantic knowledge
-            await self.extract_semantic_knowledge(graph)
-            
-            # Update existing semantic knowledge
-            await self.update_semantic_knowledge(task_results, graph)
-            
+            self.vector_store.close()
+            self.store.close()
+            logger.info("Closed memory system")
         except Exception as e:
-            logger.error(f"Error consolidating memories: {str(e)}")
+            logger.error(f"Error closing memory system: {str(e)}")
+            raise

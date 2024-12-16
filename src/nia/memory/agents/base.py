@@ -1,151 +1,221 @@
 """
-Base agent class with time awareness and memory capabilities.
+Base agent implementation.
 """
 
 import logging
-from typing import Dict, List, Optional, Any, Tuple
-from datetime import datetime
-
-from ..error_handling import ErrorHandler
-from ..feedback import FeedbackSystem
-from ..persistence import MemoryStore
+from typing import Dict, Any, Optional, List
+from abc import ABC, abstractmethod
 from ..llm_interface import LLMInterface
+from ..neo4j_store import Neo4jMemoryStore
+from ..memory_types import AgentResponse, RelationshipTypes as RT
 
 logger = logging.getLogger(__name__)
 
-class TimeAwareAgent:
-    """Base class for time-aware agents with memory capabilities."""
+class BaseAgent(ABC):
+    """Base agent class."""
     
     def __init__(
         self,
-        agent_name: str,
-        memory_store: MemoryStore,
-        error_handler: ErrorHandler,
-        feedback_system: FeedbackSystem,
-        llm_interface: LLMInterface
+        llm: LLMInterface,
+        store: Neo4jMemoryStore,
+        agent_type: str = "base"
     ):
         """Initialize agent."""
-        self.name = agent_name
-        self.memory_store = memory_store
-        self.error_handler = error_handler
-        self.feedback_system = feedback_system
-        self.llm_interface = llm_interface
-        
-        # State tracking
-        self.state_vectors: Dict[str, List[float]] = {}
-        self.last_update: Dict[str, datetime] = {}
-        
-        logger.info(f"Initialized {agent_name}")
+        self.llm = llm
+        self.store = store
+        self.agent_type = agent_type
     
-    def _safe_str(self, value: Any, default: str = "") -> str:
-        """Safely convert value to string."""
-        try:
-            if value is None:
-                return default
-            return str(value)
-        except:
-            return default
-    
-    def _safe_list(self, value: Any) -> List:
-        """Safely convert value to list."""
-        try:
-            if isinstance(value, list):
-                return value
-            elif isinstance(value, str):
-                return [value]
-            elif value is None:
-                return []
-            return list(value)
-        except:
-            return []
-    
-    def _extract_context(self, content: str) -> Tuple[str, Dict[str, Any]]:
-        """Extract context from content if present."""
-        # Default implementation just returns content and empty context
-        return content, {}
-    
-    async def get_completion(self, prompt: str) -> str:
-        """Get completion from LLM."""
-        try:
-            return await self.llm_interface.get_completion(prompt)
-        except Exception as e:
-            logger.error(f"Error getting completion: {str(e)}")
-            raise
-    
-    async def get_json_completion(
+    async def process(
         self,
-        prompt: str,
-        retries: int = 3,
-        default_response: Optional[Dict] = None
-    ) -> Dict[str, Any]:
-        """Get JSON completion from LLM."""
-        try:
-            return await self.llm_interface.get_json_completion(
-                prompt=prompt,
-                retries=retries,
-                default_response=default_response
-            )
-        except Exception as e:
-            logger.error(f"Error getting JSON completion: {str(e)}")
-            if default_response is not None:
-                return default_response
-            raise
-    
-    async def store_memory(
-        self,
-        memory_type: str,
         content: Dict[str, Any],
         metadata: Optional[Dict] = None
-    ) -> None:
-        """Store a memory."""
+    ) -> AgentResponse:
+        """Process content through agent lens."""
         try:
-            await self.memory_store.store_memory(
-                agent_name=self.name,
-                memory_type=memory_type,
-                content=content,
-                metadata=metadata
+            # Get LLM response first
+            response = await self.llm.get_structured_completion(
+                self._format_prompt(content)
             )
+            
+            # Then enrich content with graph information
+            try:
+                # Get system info if mentioned
+                systems_info = []
+                for system in ["Nova", "Nia", "Echo"]:
+                    if system.lower() in str(content).lower():
+                        system_info = await self.get_system_info(system)
+                        if system_info:
+                            relationships = await self.get_system_relationships(system)
+                            systems_info.append({
+                                "system": system_info,
+                                "relationships": relationships
+                            })
+                
+                if systems_info:
+                    content["systems_info"] = systems_info
+                
+                # Get capabilities if mentioned
+                if "capability" in str(content).lower():
+                    capabilities = await self.get_capabilities()
+                    if capabilities:
+                        content["capabilities_info"] = capabilities
+                
+                # Get related memories
+                memories = await self.search_memories(
+                    content_pattern=str(content),
+                    limit=5
+                )
+                if memories:
+                    content["related_memories"] = memories
+                
+                # Store agent's response with enriched content
+                await self.store.store_memory(
+                    memory_type=f"{self.agent_type}_response",
+                    content={
+                        'original_content': content,
+                        'agent_response': response.dict(),
+                        'agent_type': self.agent_type
+                    },
+                    metadata=metadata
+                )
+            except Exception as e:
+                logger.error(f"Failed to enrich/store {self.agent_type} memory: {str(e)}")
+                # Continue even if enrichment/storage fails
+            
+            return response
+            
         except Exception as e:
-            logger.error(f"Error storing memory: {str(e)}")
+            logger.error(f"Error in {self.agent_type} agent: {str(e)}")
             raise
     
-    async def get_state_similarity(self, state_type: str, content: str) -> float:
-        """Get similarity between content and current state."""
+    async def get_system_info(self, name: str) -> Optional[Dict]:
+        """Get information about an AI system."""
         try:
-            if state_type not in self.state_vectors:
-                return 0.0
+            query = f"""
+            MATCH (s:AISystem {{name: $name}})
+            OPTIONAL MATCH (s)-[:{RT.HAS_CAPABILITY}]->(c:Capability)
+            WITH s, collect(c) as capabilities
+            RETURN {{
+                id: s.id,
+                name: s.name,
+                type: s.type,
+                created_at: s.created_at,
+                capabilities: [cap in capabilities | {{
+                    id: cap.id,
+                    type: cap.type,
+                    description: cap.description,
+                    confidence: cap.confidence
+                }}]
+            }} as system
+            """
             
-            # Get embedding for content
-            content_embedding = await self.memory_store.embedding_service.get_embedding(content)
-            
-            # Get current state vector
-            state_vector = self.state_vectors[state_type]
-            
-            # Calculate similarity
-            similarity = float(sum(a * b for a, b in zip(content_embedding, state_vector)) /
-                            (sum(a * a for a in content_embedding) ** 0.5 *
-                             sum(b * b for b in state_vector) ** 0.5))
-            
-            return similarity
+            result = await self.store.query_graph(query, {"name": name})
+            return result[0]["system"] if result else None
             
         except Exception as e:
-            logger.error(f"Error getting state similarity: {str(e)}")
-            return 0.0
+            logger.error(f"Error getting system info: {str(e)}")
+            return None
     
-    async def update_state_vector(self, state_type: str, content: str) -> None:
-        """Update state vector with new content."""
+    async def get_system_relationships(self, name: str) -> List[Dict]:
+        """Get relationships for an AI system."""
         try:
-            # Get embedding for content
-            embedding = await self.memory_store.embedding_service.get_embedding(content)
+            query = f"""
+            MATCH (s:AISystem {{name: $name}})
+            OPTIONAL MATCH (s)-[r]->(other)
+            RETURN {{
+                relationship_type: type(r),
+                target_type: labels(other)[0],
+                target_name: other.name,
+                target_id: other.id,
+                properties: properties(r)
+            }} as relationship
+            """
             
-            # Update state vector
-            self.state_vectors[state_type] = embedding
-            self.last_update[state_type] = datetime.now()
+            result = await self.store.query_graph(query, {"name": name})
+            return [r["relationship"] for r in result]
             
         except Exception as e:
-            logger.error(f"Error updating state vector: {str(e)}")
-            raise
+            logger.error(f"Error getting system relationships: {str(e)}")
+            return []
     
-    async def process_interaction(self, content: str) -> str:
-        """Process an interaction."""
-        raise NotImplementedError("Subclasses must implement process_interaction")
+    async def get_capabilities(self) -> List[Dict]:
+        """Get all capabilities in the system."""
+        try:
+            query = """
+            MATCH (c:Capability)
+            OPTIONAL MATCH (s:AISystem)-[r:HAS_CAPABILITY]->(c)
+            RETURN {
+                id: c.id,
+                type: c.type,
+                description: c.description,
+                confidence: c.confidence,
+                systems: collect({
+                    name: s.name,
+                    type: s.type,
+                    confidence: r.confidence
+                })
+            } as capability
+            """
+            
+            result = await self.store.query_graph(query)
+            return [r["capability"] for r in result]
+            
+        except Exception as e:
+            logger.error(f"Error getting capabilities: {str(e)}")
+            return []
+    
+    async def search_memories(
+        self,
+        content_pattern: Optional[str] = None,
+        memory_type: Optional[str] = None,
+        limit: int = 10
+    ) -> List[Dict]:
+        """Search memories in the graph."""
+        try:
+            conditions = []
+            params = {}
+            
+            if content_pattern:
+                conditions.append("m.content CONTAINS $content")
+                params["content"] = content_pattern
+            
+            if memory_type:
+                conditions.append("m.type = $type")
+                params["type"] = memory_type
+            
+            where_clause = " AND ".join(conditions) if conditions else "true"
+            
+            query = f"""
+            MATCH (m:Memory)
+            WHERE {where_clause}
+            WITH m
+            OPTIONAL MATCH (m)-[r]->(n)
+            RETURN {{
+                id: m.id,
+                type: m.type,
+                content: m.content,
+                metadata: m.metadata,
+                created_at: m.created_at,
+                relationships: collect({{
+                    type: type(r),
+                    target_type: labels(n)[0],
+                    target_id: n.id
+                }})
+            }} as memory
+            ORDER BY m.created_at DESC
+            LIMIT $limit
+            """
+            
+            params["limit"] = limit
+            
+            result = await self.store.query_graph(query, params)
+            return [r["memory"] for r in result]
+            
+        except Exception as e:
+            logger.error(f"Error searching memories: {str(e)}")
+            return []
+    
+    @abstractmethod
+    def _format_prompt(self, content: Dict[str, Any]) -> str:
+        """Format prompt for LLM."""
+        pass

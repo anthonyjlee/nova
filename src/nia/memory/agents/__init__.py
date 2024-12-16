@@ -1,21 +1,21 @@
 """
-Memory management system agents.
+Agent module initialization.
 """
 
-from .base import TimeAwareAgent
-from .meta_agent import MetaAgent
+from .base import BaseAgent
 from .belief_agent import BeliefAgent
 from .desire_agent import DesireAgent
 from .emotion_agent import EmotionAgent
 from .reflection_agent import ReflectionAgent
 from .research_agent import ResearchAgent
+from .meta_agent import MetaAgent
 
 __all__ = [
-    'TimeAwareAgent',
-    'MetaAgent',
+    'BaseAgent',
     'BeliefAgent',
     'DesireAgent',
     'EmotionAgent',
     'ReflectionAgent',
-    'ResearchAgent'
+    'ResearchAgent',
+    'MetaAgent'
 ]

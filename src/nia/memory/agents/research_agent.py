@@ -1,209 +1,154 @@
 """
-Agent for research and information gathering.
+Research agent for analyzing and retrieving information.
 """
 
-from typing import Dict, List, Optional, Any
-from datetime import datetime
 import logging
-import traceback
-
-from .base import TimeAwareAgent
-from ..error_handling import ErrorHandler
-from ..feedback import FeedbackSystem
-from ..persistence import MemoryStore
+from typing import Dict, Any, Optional, List
+from .base import BaseAgent
 from ..llm_interface import LLMInterface
+from ..neo4j_store import Neo4jMemoryStore
+from ..prompts import RESEARCH_PROMPT
+from ..memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
-class ResearchAgent(TimeAwareAgent):
-    """Manages research and information gathering."""
+class ResearchAgent(BaseAgent):
+    """Agent for researching and retrieving information."""
     
     def __init__(
         self,
-        memory_store: MemoryStore,
-        error_handler: ErrorHandler,
-        feedback_system: FeedbackSystem,
-        llm_interface: LLMInterface
+        llm: LLMInterface,
+        store: Neo4jMemoryStore
     ):
         """Initialize research agent."""
-        super().__init__(
-            "ResearchAgent",
-            memory_store,
-            error_handler,
-            feedback_system,
-            llm_interface
+        super().__init__(llm, store, "research")
+    
+    def _format_prompt(self, content: Dict[str, Any]) -> str:
+        """Format prompt for research analysis."""
+        # Format content for prompt
+        formatted_content = []
+        
+        # Add original content
+        if isinstance(content.get('content'), str):
+            formatted_content.append(f"Content: {content['content']}")
+        
+        # Add any command results
+        if content.get('command_result'):
+            result = content['command_result']
+            formatted_content.append("Command Result:")
+            formatted_content.append(f"Success: {result.get('success', False)}")
+            if result.get('output'):
+                formatted_content.append(f"Output: {result['output']}")
+            if result.get('error'):
+                formatted_content.append(f"Error: {result['error']}")
+        
+        # Add any system info
+        if content.get('systems_info'):
+            formatted_content.append("Systems Information:")
+            for info in content['systems_info']:
+                system = info['system']
+                formatted_content.append(f"- {system['name']} ({system['type']})")
+                formatted_content.append(f"  Created: {system['created_at']}")
+                if system.get('capabilities'):
+                    formatted_content.append("  Capabilities:")
+                    for cap in system['capabilities']:
+                        formatted_content.append(f"  - {cap['description']} ({cap['type']})")
+                if info.get('relationships'):
+                    formatted_content.append("  Relationships:")
+                    for rel in info['relationships']:
+                        formatted_content.append(f"  - {rel['relationship_type']} -> {rel['target_name']}")
+        
+        # Add any capabilities info
+        if content.get('capabilities_info'):
+            formatted_content.append("Capabilities Information:")
+            for cap in content['capabilities_info']:
+                formatted_content.append(f"- {cap['description']} ({cap['type']})")
+                if cap.get('systems'):
+                    formatted_content.append("  Used by: " + ", ".join(s['name'] for s in cap['systems']))
+        
+        # Add any related memories
+        if content.get('related_memories'):
+            formatted_content.append("Related Memories:")
+            for memory in content['related_memories']:
+                formatted_content.append(f"- {memory['type']} ({memory['created_at']})")
+                if isinstance(memory.get('content'), str):
+                    formatted_content.append(f"  Content: {memory['content'][:100]}...")
+                if memory.get('relationships'):
+                    formatted_content.append("  Relationships:")
+                    for rel in memory['relationships']:
+                        formatted_content.append(f"  - {rel['type']} -> {rel['target_type']}")
+        
+        # Format final prompt with focus on pragmatic capabilities
+        formatted_content.append("\nFocus on identifying:")
+        formatted_content.append("1. Concrete, implementable capabilities")
+        formatted_content.append("2. Technical requirements and dependencies")
+        formatted_content.append("3. Development timeline and complexity")
+        formatted_content.append("4. Integration with existing capabilities")
+        
+        # Format final prompt
+        return RESEARCH_PROMPT.format(
+            content="\n".join(formatted_content)
         )
     
-    async def _analyze_research(self, content: str, context: Dict) -> Dict:
-        """Analyze research needs and findings."""
+    async def process(
+        self,
+        content: Dict[str, Any],
+        metadata: Optional[Dict] = None
+    ) -> AgentResponse:
+        """Process content through research lens."""
         try:
-            # Get similarity with current research state
-            research_similarity = await self.get_state_similarity('research', content)
+            # Get system info if mentioned
+            systems_info = []
+            for system in ["Nova", "Nia", "Echo"]:
+                if system.lower() in str(content).lower():
+                    system_info = await self.get_system_info(system)
+                    if system_info:
+                        relationships = await self.get_system_relationships(system)
+                        systems_info.append({
+                            "system": system_info,
+                            "relationships": relationships
+                        })
             
-            # Search for similar research memories
-            similar_research = await self.memory_store.search_similar_memories(
-                content=content,
-                limit=5,
-                filter_dict={'memory_type': 'research'},
-                prioritize_temporal=True
+            if systems_info:
+                content["systems_info"] = systems_info
+            
+            # Get capabilities if mentioned
+            if "capability" in str(content).lower():
+                capabilities = await self.get_capabilities()
+                if capabilities:
+                    content["capabilities_info"] = capabilities
+            
+            # Get related memories
+            memories = await self.search_memories(
+                content_pattern=str(content),
+                limit=5
+            )
+            if memories:
+                content["related_memories"] = memories
+            
+            # Get LLM response
+            response = await self.llm.get_structured_completion(
+                self._format_prompt(content)
             )
             
-            # Format similar memories for context
-            memory_context = []
-            for memory in similar_research:
-                memory_content = memory.get('content', {})
-                if isinstance(memory_content, dict) and 'research' in memory_content:
-                    research = memory_content['research']
-                    if isinstance(research, dict):
-                        memory_context.append(f"Previous research ({memory['time_ago']}):")
-                        if research.get('findings'):
-                            findings = research['findings']
-                            if isinstance(findings, list):
-                                memory_context.append("- Findings:")
-                                for finding in findings[:2]:
-                                    memory_context.append(f"  * {finding}")
-                        if research.get('sources'):
-                            sources = research['sources']
-                            if isinstance(sources, list):
-                                memory_context.append("- Sources:")
-                                for source in sources[:2]:
-                                    memory_context.append(f"  * {source}")
+            # Store research findings
+            try:
+                await self.store.store_memory(
+                    memory_type="research",
+                    content={
+                        'original_content': content,
+                        'research_findings': response.dict(),
+                        'systems_analyzed': [s["system"]["name"] for s in systems_info],
+                        'memories_found': len(memories) if memories else 0
+                    },
+                    metadata=metadata
+                )
+            except Exception as e:
+                logger.error(f"Failed to store research memory: {str(e)}")
+                # Continue even if memory storage fails
             
-            # Get current context
-            current_context = self.memory_store.get_current_context()
-            
-            # Format context sections
-            context_sections = []
-            if memory_context:
-                context_sections.append("Similar Past Research:\n" + "\n".join(memory_context))
-            if current_context:
-                if 'beliefs' in current_context:
-                    context_sections.append("Current Beliefs:\n- " + "\n- ".join(current_context['beliefs'][-3:]))
-                if 'insights' in current_context:
-                    context_sections.append("Recent Insights:\n- " + "\n".join(current_context['insights'][-3:]))
-            
-            context_str = "\n\n".join(context_sections) if context_sections else "No prior context available"
-            
-            prompt = f"""You are part of Nova, an AI assistant. Analyze research needs and findings from the current interaction:
-
-Input: {content}
-
-Memory Context:
-{context_str}
-
-Current State:
-- Research similarity: {research_similarity:.2f}
-
-Important Guidelines:
-- Identify key research areas
-- Evaluate information needs
-- Consider existing knowledge
-- Look for knowledge gaps
-- Prioritize research topics
-- Plan information gathering
-- Maintain research focus
-- Consider reliability of sources
-
-Return ONLY a JSON object in this EXACT format (no other text):
-{{
-    "research_topics": ["list of topics to research"],
-    "findings": ["list of current findings"],
-    "knowledge_gaps": ["list of identified gaps"],
-    "state_update": "string - how knowledge has evolved",
-    "sources": ["list of potential sources"],
-    "priorities": ["list of research priorities"],
-    "next_steps": ["list of research actions"],
-    "reliability": "string - assessment of information reliability"
-}}"""
-
-            # Get research analysis with retries and default response
-            default_response = {
-                'research_topics': ["Unable to analyze research needs"],
-                'findings': ["analysis failed"],
-                'knowledge_gaps': ["error in processing"],
-                'state_update': "no significant change",
-                'sources': [],
-                'priorities': [],
-                'next_steps': [],
-                'reliability': "unknown"
-            }
-            
-            data = await self.get_json_completion(
-                prompt=prompt,
-                retries=3,
-                default_response=default_response
-            )
-            
-            # Clean and validate data
-            research_data = {
-                'research_topics': self._safe_list(data.get('research_topics')),
-                'findings': self._safe_list(data.get('findings')),
-                'knowledge_gaps': self._safe_list(data.get('knowledge_gaps')),
-                'state_update': self._safe_str(data.get('state_update'), "no significant change"),
-                'sources': self._safe_list(data.get('sources')),
-                'priorities': self._safe_list(data.get('priorities')),
-                'next_steps': self._safe_list(data.get('next_steps')),
-                'reliability': self._safe_str(data.get('reliability'), "unknown"),
-                'timestamp': datetime.now().isoformat()
-            }
-            
-            # Update research state vector
-            await self.update_state_vector('research',
-                f"{' '.join(research_data['research_topics'])} {research_data['state_update']}")
-            
-            return research_data
+            return response
             
         except Exception as e:
-            logger.error(f"Error analyzing research: {str(e)}")
-            return {
-                'research_topics': ["error in analysis"],
-                'findings': ["analysis failed"],
-                'knowledge_gaps': ["error in processing"],
-                'state_update': "no significant change",
-                'sources': [],
-                'priorities': [],
-                'next_steps': [],
-                'reliability': "unknown",
-                'timestamp': datetime.now().isoformat()
-            }
-    
-    async def process_interaction(self, content: str) -> str:
-        """Process interaction and update research state."""
-        try:
-            # Extract context
-            content, context = self._extract_context(content)
-            
-            # Analyze research
-            research = await self._analyze_research(content, context)
-            
-            # Store memory with enhanced metadata
-            await self.store_memory(
-                memory_type="research",
-                content={
-                    'research': research,
-                    'timestamp': datetime.now().isoformat()
-                },
-                metadata={
-                    'importance': 1.0 if any(marker.lower() in content.lower() 
-                                          for marker in ['nia', 'echo', 'predecessor']) 
-                              else 0.5  # Boost importance for key topics
-                }
-            )
-            
-            # Build response parts
-            topics = "; ".join(research['research_topics'][:2]) if research['research_topics'] else "none identified"
-            findings = "; ".join(research['findings'][:2]) if research['findings'] else "none found"
-            key_findings = f"Key capabilities: {topics} | Recent developments: {findings}"
-            
-            # Add impact if available
-            impact = ""
-            if research['knowledge_gaps']:
-                impact = f" - Impact: {research['knowledge_gaps'][0]}"
-            
-            # Combine all parts
-            return f"{key_findings}{impact}"
-            
-        except Exception as e:
-            error_msg = f"Error in research processing: {str(e)}\n{traceback.format_exc()}"
-            logger.error(error_msg)
-            return "Unable to process research at this time"
+            logger.error(f"Error in research agent: {str(e)}")
+            raise
