@@ -5,10 +5,11 @@ Meta agent for coordinating other agents and synthesizing responses.
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import logging
-import json
 import traceback
 
 from .base import TimeAwareAgent
+from .response_processor import ResponseProcessor
+from .context_builder import ContextBuilder
 from ..error_handling import ErrorHandler
 from ..feedback import FeedbackSystem
 from ..persistence import MemoryStore
@@ -23,6 +24,8 @@ class MetaAgent(TimeAwareAgent):
         """Initialize meta agent."""
         super().__init__("MetaAgent", memory_store, error_handler, feedback_system)
         self.registered_agents = {}
+        self.response_processor = ResponseProcessor()
+        self.context_builder = ContextBuilder(memory_store)
     
     def register_agent(self, name: str, agent: TimeAwareAgent) -> None:
         """Register an agent for coordination."""
@@ -32,53 +35,13 @@ class MetaAgent(TimeAwareAgent):
     async def _synthesize_response(self, content: str, agent_outputs: Dict[str, str]) -> Dict:
         """Synthesize a response from agent outputs."""
         try:
-            # First, search for similar interactions with higher limit
-            similar_interactions = await self.memory_store.search_similar_memories(
-                content=content,
-                limit=10,  # Increased limit to get more context
-                filter_dict={'memory_type': 'interaction'},  # Focus on interactions
-                prioritize_temporal=True  # Boost recent memories
-            )
+            # Build context from memories
+            context_str = await self.context_builder.build_full_context(content)
             
-            # Format similar interactions for context
-            interaction_context = []
-            for memory in similar_interactions:
-                memory_content = memory.get('content', {})
-                if isinstance(memory_content, dict):
-                    if 'input' in memory_content:
-                        interaction_context.append(f"Previous interaction ({memory['time_ago']}):")
-                        interaction_context.append(f"- Input: {memory_content['input']}")
-                        if 'synthesis' in memory_content:
-                            synthesis = memory_content['synthesis']
-                            if isinstance(synthesis, dict):
-                                if synthesis.get('response'):
-                                    interaction_context.append(f"- Response: {synthesis['response']}")
-                                if synthesis.get('key_points'):
-                                    interaction_context.append("- Key points:")
-                                    for point in synthesis['key_points']:
-                                        interaction_context.append(f"  * {point}")
-            
-            # Get current context
-            current_context = self.memory_store.get_current_context()
-            
-            # Format agent outputs for prompt
+            # Format agent outputs
             formatted_outputs = "\n".join([
                 f"{name}: {output}" for name, output in agent_outputs.items()
             ])
-            
-            # Format context sections
-            context_sections = []
-            if interaction_context:
-                context_sections.append("Previous Interactions:\n" + "\n".join(interaction_context))
-            if current_context:
-                if 'beliefs' in current_context:
-                    context_sections.append("Current Beliefs:\n- " + "\n- ".join(current_context['beliefs'][-3:]))
-                if 'insights' in current_context:
-                    context_sections.append("Recent Insights:\n- " + "\n- ".join(current_context['insights'][-3:]))
-                if 'findings' in current_context:
-                    context_sections.append("Recent Findings:\n- " + "\n- ".join(current_context['findings'][-3:]))
-            
-            context_str = "\n\n".join(context_sections) if context_sections else "No prior context available"
             
             prompt = f"""You are Nova, an AI assistant. Synthesize a response that integrates emotional state, desires, and beliefs, while considering similar past interactions.
 
@@ -136,35 +99,13 @@ You must respond with a valid JSON object in this exact format (no other text, n
     "continuity_markers": ["connection 1", "connection 2", "etc"]
 }}"""
 
-            # Get synthesis
+            # Get synthesis from LLM
             synthesis = await self.get_completion(prompt)
             
-            # Parse JSON
-            try:
-                # Remove any non-JSON text
-                json_start = synthesis.find('{')
-                json_end = synthesis.rfind('}') + 1
-                if json_start >= 0 and json_end > json_start:
-                    synthesis = synthesis[json_start:json_end]
-                    # Clean up common formatting issues
-                    synthesis = synthesis.replace('\n', ' ').replace('\r', ' ')
-                    synthesis = synthesis.replace('```json', '').replace('```', '')
-                data = json.loads(synthesis)
-            except json.JSONDecodeError:
-                logger.error("Failed to parse synthesis JSON")
-                raise ValueError("Invalid JSON format in synthesis")
+            # Process response
+            synthesis_data = self.response_processor.process_llm_response(synthesis)
             
-            # Clean and validate data
-            synthesis_data = {
-                'response': self._safe_str(data.get('response'), "I apologize, but I need to process that differently."),
-                'key_points': self._safe_list(data.get('key_points')),
-                'state_update': self._safe_str(data.get('state_update'), "no significant change"),
-                'memory_influence': self._safe_str(data.get('memory_influence'), "no clear memory influence"),
-                'continuity_markers': self._safe_list(data.get('continuity_markers')),
-                'timestamp': datetime.now().isoformat()
-            }
-            
-            # Update meta state vector with richer context
+            # Update meta state vector
             await self.update_state_vector('memories', 
                 f"{synthesis_data['response']} {synthesis_data['state_update']} {synthesis_data['memory_influence']}")
             
