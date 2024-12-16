@@ -45,11 +45,14 @@ class LLMInterface:
     def _fix_json(self, text: str) -> str:
         """Fix common JSON formatting issues."""
         try:
-            # Remove any text before the first {
-            text = text[text.find("{"):]
+            # Find JSON content
+            start = text.find("{")
+            end = text.rfind("}") + 1
+            if start == -1 or end == 0:
+                raise ValueError("No JSON content found")
             
-            # Remove any text after the last }
-            text = text[:text.rfind("}") + 1]
+            # Extract JSON part
+            text = text[start:end]
             
             # Fix missing quotes around property names
             text = re.sub(r'(\s*?)(\w+)(\s*?):', r'\1"\2"\3:', text)
@@ -187,12 +190,15 @@ class LLMInterface:
                             raise ValueError("No choices in response")
                         
                         content = result["choices"][0]["message"]["content"]
+                        logger.debug(f"Raw content: {content}")
                         
                         # Parse response
                         try:
                             data = json.loads(content)
                         except:
-                            data = json.loads(self._fix_json(content))
+                            # Try to fix JSON formatting
+                            fixed_content = self._fix_json(content)
+                            data = json.loads(fixed_content)
                         
                         # Format response
                         data = self._format_response(data)

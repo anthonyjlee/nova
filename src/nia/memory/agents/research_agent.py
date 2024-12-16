@@ -8,7 +8,7 @@ from .base import BaseAgent
 from ..llm_interface import LLMInterface
 from ..neo4j_store import Neo4jMemoryStore
 from ..prompts import RESEARCH_PROMPT
-from ..memory_types import AgentResponse
+from ..memory_types import AgentResponse, Analysis
 
 logger = logging.getLogger(__name__)
 
@@ -127,8 +127,18 @@ class ResearchAgent(BaseAgent):
                 content["related_memories"] = memories
             
             # Get LLM response
-            response = await self.llm.get_structured_completion(
+            llm_response = await self.llm.get_structured_completion(
                 self._format_prompt(content)
+            )
+            
+            # Convert to AgentResponse
+            response = AgentResponse(
+                response=llm_response.response,
+                analysis=Analysis(
+                    key_points=llm_response.analysis["key_points"],
+                    confidence=llm_response.analysis["confidence"],
+                    state_update=llm_response.analysis["state_update"]
+                )
             )
             
             # Store research findings
