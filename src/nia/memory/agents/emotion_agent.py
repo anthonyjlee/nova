@@ -1,119 +1,167 @@
 """
-Agent for managing emotional state and responses.
+Agent for managing and updating emotional state.
 """
 
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import logging
-import json
 import traceback
 
 from .base import TimeAwareAgent
 from ..error_handling import ErrorHandler
 from ..feedback import FeedbackSystem
 from ..persistence import MemoryStore
+from ..llm_interface import LLMInterface
 
 logger = logging.getLogger(__name__)
 
 class EmotionAgent(TimeAwareAgent):
-    """Manages emotional state and responses."""
+    """Manages and updates emotional state."""
     
-    def __init__(self, memory_store: MemoryStore, error_handler: ErrorHandler,
-                 feedback_system: FeedbackSystem):
+    def __init__(
+        self,
+        memory_store: MemoryStore,
+        error_handler: ErrorHandler,
+        feedback_system: FeedbackSystem,
+        llm_interface: LLMInterface
+    ):
         """Initialize emotion agent."""
-        super().__init__("EmotionAgent", memory_store, error_handler, feedback_system)
+        super().__init__(
+            "EmotionAgent",
+            memory_store,
+            error_handler,
+            feedback_system,
+            llm_interface
+        )
     
     async def _analyze_emotions(self, content: str, context: Dict) -> Dict:
         """Analyze and update emotional state."""
-        # Get similarity with current emotional state
-        emotion_similarity = await self.get_state_similarity('emotions', content)
-        
-        # Get current context
-        current_context = self.memory_store.get_current_context()
-        
-        # Format context for prompt
-        context_str = ""
-        if current_context:
+        try:
+            # Get similarity with current emotional state
+            emotion_similarity = await self.get_state_similarity('emotions', content)
+            
+            # Search for similar emotion memories
+            similar_emotions = await self.memory_store.search_similar_memories(
+                content=content,
+                limit=5,
+                filter_dict={'memory_type': 'emotion'},
+                prioritize_temporal=True
+            )
+            
+            # Format similar memories for context
+            memory_context = []
+            for memory in similar_emotions:
+                memory_content = memory.get('content', {})
+                if isinstance(memory_content, dict) and 'emotions' in memory_content:
+                    emotions = memory_content['emotions']
+                    if isinstance(emotions, dict):
+                        memory_context.append(f"Previous emotional state ({memory['time_ago']}):")
+                        if emotions.get('current_emotion'):
+                            memory_context.append(f"- State: {emotions['current_emotion']}")
+                        if emotions.get('intensity'):
+                            memory_context.append(f"- Intensity: {emotions['intensity']}")
+                        if emotions.get('triggers'):
+                            triggers = emotions['triggers']
+                            if isinstance(triggers, list):
+                                memory_context.append("- Triggers:")
+                                for trigger in triggers[:2]:
+                                    memory_context.append(f"  * {trigger}")
+            
+            # Get current context
+            current_context = self.memory_store.get_current_context()
+            
+            # Format context sections
             context_sections = []
-            if 'beliefs' in current_context:
-                context_sections.append("Current Beliefs:\n- " + "\n- ".join(current_context['beliefs'][-3:]))
-            if 'insights' in current_context:
-                context_sections.append("Recent Insights:\n- " + "\n- ".join(current_context['insights'][-3:]))
-            context_str = "\n\n".join(context_sections)
-        
-        prompt = f"""You are part of Nova, an AI assistant. Analyze emotional state and responses:
+            if memory_context:
+                context_sections.append("Similar Past Emotions:\n" + "\n".join(memory_context))
+            if current_context:
+                if 'beliefs' in current_context:
+                    context_sections.append("Current Beliefs:\n- " + "\n- ".join(current_context['beliefs'][-3:]))
+                if 'insights' in current_context:
+                    context_sections.append("Recent Insights:\n- " + "\n".join(current_context['insights'][-3:]))
+            
+            context_str = "\n\n".join(context_sections) if context_sections else "No prior context available"
+            
+            prompt = f"""You are part of Nova, an AI assistant. Analyze emotional state based on the current interaction:
 
 Input: {content}
 
-Context:
-{context_str if context_str else "No prior context available"}
+Memory Context:
+{context_str}
 
 Current State:
 - Emotion similarity: {emotion_similarity:.2f}
 
 Important Guidelines:
-- Focus on genuine emotional responses
-- Show appropriate curiosity about stories and history
-- Express authentic interest in learning
-- Maintain appropriate emotional boundaries
-- Be honest about emotional responses
-- Show respect for historical context
-- Express appreciation for shared experiences
+- Express emotions authentically
+- Maintain appropriate boundaries
+- Show emotional intelligence
+- Be aware of emotional context
+- Consider emotional continuity
+- Acknowledge emotional changes
+- Express appropriate intensity
+- Stay grounded in current context
 
 Return ONLY a JSON object in this EXACT format (no other text):
 {{
-    "primary_emotion": "string - main emotional response",
-    "intensity": "float - 0.0 to 1.0",
+    "current_emotion": "string - primary emotion",
+    "intensity": "string - high/medium/low",
     "triggers": ["list of emotional triggers"],
-    "nuances": ["list of emotional nuances"],
-    "evolution": "string - how emotion is changing",
-    "state_update": "string - description of emotional evolution",
-    "timestamp": "string - current time"
-}}
-"""
+    "state_update": "string - how emotional state has changed",
+    "trend": "string - increasing/stable/decreasing",
+    "regulation": "string - how to regulate this emotion",
+    "expression": "string - how to express this emotion",
+    "impact_factors": ["list of factors affecting emotional state"]
+}}"""
 
-        try:
-            # Get emotion analysis
-            analysis = await self.get_completion(prompt)
+            # Get emotion analysis with retries and default response
+            default_response = {
+                'current_emotion': "Unable to analyze emotions",
+                'intensity': "low",
+                'triggers': ["analysis failed"],
+                'state_update': "error in processing",
+                'trend': "stable",
+                'regulation': "maintain current state",
+                'expression': "error during analysis",
+                'impact_factors': []
+            }
             
-            # Parse JSON
-            try:
-                # Remove any non-JSON text
-                json_start = analysis.find('{')
-                json_end = analysis.rfind('}') + 1
-                if json_start >= 0 and json_end > json_start:
-                    analysis = analysis[json_start:json_end]
-                data = json.loads(analysis)
-            except json.JSONDecodeError:
-                logger.error("Failed to parse emotion analysis JSON")
-                raise ValueError("Invalid JSON format in emotion analysis")
+            data = await self.get_json_completion(
+                prompt=prompt,
+                retries=3,
+                default_response=default_response
+            )
             
             # Clean and validate data
             emotion_data = {
-                'primary_emotion': self._safe_str(data.get('primary_emotion'), ""),
-                'intensity': float(data.get('intensity', 0.0)),
+                'current_emotion': self._safe_str(data.get('current_emotion'), "emotion unclear"),
+                'intensity': self._safe_str(data.get('intensity'), "low"),
                 'triggers': self._safe_list(data.get('triggers')),
-                'nuances': self._safe_list(data.get('nuances')),
-                'evolution': self._safe_str(data.get('evolution'), "continuity"),
-                'state_update': self._safe_str(data.get('state_update'), "initial interaction"),
+                'state_update': self._safe_str(data.get('state_update'), "no significant change"),
+                'trend': self._safe_str(data.get('trend'), "stable"),
+                'regulation': self._safe_str(data.get('regulation'), "maintain current state"),
+                'expression': self._safe_str(data.get('expression'), "unclear expression"),
+                'impact_factors': self._safe_list(data.get('impact_factors')),
                 'timestamp': datetime.now().isoformat()
             }
             
-            # Update emotion state vector
-            await self.update_state_vector('emotions', 
-                f"{emotion_data['primary_emotion']} {emotion_data['state_update']}")
+            # Update emotional state vector
+            await self.update_state_vector('emotions',
+                f"{emotion_data['current_emotion']} {emotion_data['state_update']} {emotion_data['trend']}")
             
             return emotion_data
             
         except Exception as e:
             logger.error(f"Error analyzing emotions: {str(e)}")
             return {
-                'primary_emotion': "",
-                'intensity': 0.0,
-                'triggers': [],
-                'nuances': ["uncertain", "neutral"],
-                'evolution': "continuity",
+                'current_emotion': "error in analysis",
+                'intensity': "low",
+                'triggers': ["analysis failed"],
                 'state_update': "error in processing",
+                'trend': "stable",
+                'regulation': "maintain current state",
+                'expression': "error during analysis",
+                'impact_factors': [],
                 'timestamp': datetime.now().isoformat()
             }
     
@@ -126,70 +174,38 @@ Return ONLY a JSON object in this EXACT format (no other text):
             # Analyze emotions
             emotions = await self._analyze_emotions(content, context)
             
-            # Store memory
+            # Store memory with enhanced metadata
             await self.store_memory(
                 memory_type="emotion",
                 content={
                     'emotions': emotions,
                     'timestamp': datetime.now().isoformat()
+                },
+                metadata={
+                    'importance': 1.0 if any(marker.lower() in content.lower() 
+                                          for marker in ['nia', 'echo', 'predecessor']) 
+                              else 0.5  # Boost importance for key topics
                 }
             )
             
-            # Return concise emotional state
-            nuances = '; '.join(emotions['nuances'][:2]) if emotions['nuances'] else ""
-            intensity_desc = "high" if emotions['intensity'] > 0.7 else "medium" if emotions['intensity'] > 0.3 else "low"
-            return f"Current emotional state: {emotions['primary_emotion']} (intensity: {intensity_desc}) {emotions['evolution']}"
+            # Build response parts
+            current = f"Current emotional state: {emotions['current_emotion']} (intensity: {emotions['intensity']})"
+            trend = f" {emotions['trend']}"
+            
+            # Add triggers if available
+            triggers = ""
+            if emotions['triggers']:
+                triggers = f" (Triggers: {'; '.join(str(t) for t in emotions['triggers'][:2])})"
+            
+            # Add impact factors if available
+            factors = ""
+            if emotions['impact_factors']:
+                factors = f" [Factors: {'; '.join(str(f) for f in emotions['impact_factors'])}]"
+            
+            # Combine all parts
+            return f"{current}{trend}{triggers}{factors}"
             
         except Exception as e:
             error_msg = f"Error in emotion processing: {str(e)}\n{traceback.format_exc()}"
             logger.error(error_msg)
-            return "Unable to process emotions at this time"
-    
-    async def reflect(self) -> Dict:
-        """Reflect on emotional development."""
-        try:
-            # Get recent memories
-            memories = await self.memory_store.get_recent_memories(
-                agent_name=self.name,
-                memory_type="emotion",
-                limit=3
-            )
-            
-            # Extract emotion patterns
-            emotions = []
-            triggers = []
-            evolutions = []
-            
-            for memory in memories:
-                if isinstance(memory.get('content'), dict):
-                    emotion_data = memory['content'].get('emotions', {})
-                    if isinstance(emotion_data, dict):
-                        if emotion_data.get('primary_emotion'):
-                            emotions.append(emotion_data['primary_emotion'])
-                        if emotion_data.get('triggers'):
-                            triggers.extend(emotion_data['triggers'])
-                        if emotion_data.get('evolution'):
-                            evolutions.append(emotion_data['evolution'])
-            
-            # Limit to most recent unique items
-            emotions = list(dict.fromkeys(emotions))[-3:]
-            triggers = list(dict.fromkeys(triggers))[-3:]
-            evolutions = list(dict.fromkeys(evolutions))[-3:]
-            
-            return {
-                'emotion_pattern': ', '.join(emotions) if emotions else 'no clear emotions',
-                'trigger_trend': ', '.join(triggers) if triggers else 'no clear triggers',
-                'evolution_pattern': ', '.join(evolutions) if evolutions else 'no clear evolution',
-                'timestamp': datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            error_msg = f"Error in emotion reflection: {str(e)}\n{traceback.format_exc()}"
-            logger.error(error_msg)
-            return {
-                'error': error_msg,
-                'emotion_pattern': 'no clear emotions',
-                'trigger_trend': 'no clear triggers',
-                'evolution_pattern': 'no clear evolution',
-                'timestamp': datetime.now().isoformat()
-            }
+            return "Unable to process emotional state at this time"
