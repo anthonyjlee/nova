@@ -24,13 +24,25 @@ class MemorySystem:
     
     def __init__(self):
         """Initialize memory system."""
-        # Initialize core components in correct order
-        self.memory_store = MemoryStore()
-        self.error_handler = ErrorHandler(self.memory_store)
-        self.feedback_system = FeedbackSystem(self.memory_store)
+        # Initialize core components in correct dependency order
+        self._init_core_components()
         
         # Initialize agents
         self._init_agents()
+    
+    def _init_core_components(self):
+        """Initialize core system components in dependency order."""
+        # First level - no dependencies
+        self.memory_store = MemoryStore()
+        
+        # Second level - depends on memory_store
+        self.error_handler = ErrorHandler(self.memory_store)
+        
+        # Third level - depends on memory_store and error_handler
+        self.feedback_system = FeedbackSystem(
+            memory_store=self.memory_store,
+            error_handler=self.error_handler
+        )
     
     def _init_agents(self):
         """Initialize and register agents."""
