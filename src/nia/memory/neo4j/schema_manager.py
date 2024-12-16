@@ -35,6 +35,10 @@ class Neo4jSchemaManager:
     def cleanup_schema(self) -> None:
         """Clean up schema by dropping all constraints."""
         try:
+            # First clean up any Memory nodes that might exist from before
+            self.session.run("MATCH (m:Memory) DETACH DELETE m")
+            
+            # Drop constraints
             constraints = self.session.run("SHOW CONSTRAINTS")
             for constraint in constraints:
                 name = constraint.get('name', '')

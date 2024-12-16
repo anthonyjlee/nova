@@ -50,64 +50,19 @@ class Neo4jMemoryStore:
         memory_type: str,
         content: Dict[str, Any],
         metadata: Optional[Dict] = None
-    ) -> str:
+    ) -> None:
         """Extract concepts from memory and store in knowledge graph."""
         with self.driver.session() as session:
             try:
-                # Extract concepts
+                # Extract and store concepts
                 concept_manager = Neo4jConceptManager(session, self.llm)
                 concepts = await concept_manager.extract_concepts(str(content))
-                
-                # Store each concept
                 for concept in concepts:
-                    concept_manager.create_concept("", concept)  # Empty memory_id since we don't store memories
-                
-                # Return empty string since we don't create memory nodes
-                return ""
+                    concept_manager.create_concept(concept)
                 
             except Exception as e:
                 logger.error(f"Error storing concepts: {str(e)}")
                 raise
-    
-    async def search_memories(
-        self,
-        content_pattern: Optional[str] = None,
-        memory_type: Optional[str] = None,
-        limit: int = 10
-    ) -> List[Dict[str, Any]]:
-        """Search concepts in the graph."""
-        with self.driver.session() as session:
-            try:
-                query = """
-                MATCH (c:Concept)
-                WHERE c.description CONTAINS $pattern
-                WITH c
-                OPTIONAL MATCH (c)-[r:RELATED_TO]->(related:Concept)
-                WITH c, collect({
-                    id: related.id,
-                    type: related.type,
-                    description: related.description
-                }) as related_concepts
-                RETURN {
-                    id: c.id,
-                    type: c.type,
-                    description: c.description,
-                    related_concepts: related_concepts
-                } as concept
-                LIMIT $limit
-                """
-                
-                result = session.run(
-                    query,
-                    pattern=content_pattern or "",
-                    limit=limit
-                )
-                
-                return [dict(record["concept"]) for record in result]
-                
-            except Exception as e:
-                logger.error(f"Error searching concepts: {str(e)}")
-                return []
     
     async def get_capabilities(self) -> List[Dict[str, Any]]:
         """Get all capabilities in the system."""

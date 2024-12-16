@@ -84,29 +84,6 @@ class Neo4jConceptManager:
         except Exception as e:
             logger.warning(f"Error creating concept {concept['name']}: {str(e)}")
     
-    def get_concept(self, concept_id: str) -> Optional[Dict[str, Any]]:
-        """Get a concept and its relationships."""
-        try:
-            query = """
-            MATCH (c:Concept {id: $concept_id})
-            OPTIONAL MATCH (c)-[:RELATED_TO]->(r:Concept)
-            WITH c, collect(r.id) as related
-            RETURN {
-                id: c.id,
-                type: c.type,
-                description: c.description,
-                related: related
-            } as concept
-            """
-            
-            result = self.session.run(query, concept_id=concept_id)
-            record = result.single()
-            return dict(record["concept"]) if record else None
-            
-        except Exception as e:
-            logger.error(f"Error getting concept: {str(e)}")
-            return None
-    
     def search_concepts(
         self,
         pattern: str,
