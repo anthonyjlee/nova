@@ -1,35 +1,65 @@
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
-
 [project]
 name = "nia"
 version = "0.1.0"
-description = "A self-reflective, adaptive, and evolving multi-agent system"
-readme = "README.md"
-requires-python = ">=3.8"
-license = "MIT"
+description = "Neural Intelligence Architecture"
+authors = [
+    {name = "Your Name", email = "your.email@example.com"},
+]
 dependencies = [
-    "qdrant-client",  # For vector storage
-    "numpy",
-    "openai",  # For embeddings
-    "aiohttp",  # For async HTTP
-    "pydantic",  # For data validation
+    "neo4j>=5.14.0",           # Neo4j driver for graph database
+    "aiohttp>=3.9.1",          # Async HTTP client/server
+    "numpy>=1.24.0",           # Numerical computing
+    "scikit-learn>=1.3.0",     # Machine learning utilities
+    "sentence-transformers>=2.2.2",  # Text embeddings
+    "networkx>=3.2.1",         # Network/graph manipulation
+    "python-dotenv>=1.0.0",    # Environment variable management
+    "pydantic>=2.5.2",         # Data validation
+    "fastapi>=0.105.0",        # API framework (optional)
+    "uvicorn>=0.24.0",         # ASGI server (optional)
+]
+requires-python = ">=3.9"
+readme = "README.md"
+license = {text = "MIT"}
+
+[build-system]
+requires = ["pdm-backend"]
+build-backend = "pdm.backend"
+
+[tool.pdm]
+package-type = "library"
+
+[tool.pdm.dev-dependencies]
+test = [
+    "pytest>=7.4.3",
+    "pytest-asyncio>=0.23.2",
+    "pytest-cov>=4.1.0",
+]
+lint = [
+    "ruff>=0.1.6",
+    "black>=23.11.0",
+    "mypy>=1.7.1",
+]
+docs = [
+    "sphinx>=7.2.6",
+    "sphinx-rtd-theme>=1.3.0",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest",
-    "pytest-asyncio",
-    "black",
-    "isort",
-    "mypy",
-]
+[tool.ruff]
+line-length = 100
+target-version = "py39"
 
 [tool.black]
-line-length = 88
-target-version = ['py38']
+line-length = 100
+target-version = ["py39"]
 
-[tool.isort]
-profile = "black"
-multi_line_output = 3
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --cov=nia --cov-report=term-missing"
