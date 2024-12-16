@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from ..llm_interface import LLMInterface
 from ..neo4j_store import Neo4jMemoryStore
 from ..vector_store import VectorStore
-from ..memory_types import AgentResponse, Analysis, RelationshipTypes as RT
+from ..memory_types import AgentResponse, Analysis
 
 logger = logging.getLogger(__name__)
 
@@ -19,13 +19,13 @@ class BaseAgent(ABC):
         self,
         llm: LLMInterface,
         store: Neo4jMemoryStore,
-        vector_store: Optional[VectorStore] = None,
+        vector_store: VectorStore,
         agent_type: str = "base"
     ):
         """Initialize agent."""
         self.llm = llm
-        self.store = store  # Neo4j store for concepts/systems
-        self.vector_store = vector_store or VectorStore()  # Qdrant for memories
+        self.store = store  # Neo4j for concepts/knowledge
+        self.vector_store = vector_store  # Qdrant for memories
         self.agent_type = agent_type
     
     async def process(
@@ -103,27 +103,7 @@ class BaseAgent(ABC):
     async def get_system_info(self, name: str) -> Optional[Dict]:
         """Get information about an AI system."""
         try:
-            query = f"""
-            MATCH (s:AISystem {{name: $name}})
-            OPTIONAL MATCH (s)-[:{RT.HAS_CAPABILITY}]->(c:Capability)
-            WITH s, collect(c) as capabilities
-            RETURN {{
-                id: s.id,
-                name: s.name,
-                type: s.type,
-                created_at: s.created_at,
-                capabilities: [cap in capabilities | {{
-                    id: cap.id,
-                    type: cap.type,
-                    description: cap.description,
-                    confidence: cap.confidence
-                }}]
-            }} as system
-            """
-            
-            result = await self.store.query_graph(query, {"name": name})
-            return result[0]["system"] if result else None
-            
+            return await self.store.get_system_info(name)
         except Exception as e:
             logger.error(f"Error getting system info: {str(e)}")
             return None
@@ -131,21 +111,7 @@ class BaseAgent(ABC):
     async def get_system_relationships(self, name: str) -> List[Dict]:
         """Get relationships for an AI system."""
         try:
-            query = f"""
-            MATCH (s:AISystem {{name: $name}})
-            OPTIONAL MATCH (s)-[r]->(other)
-            RETURN {{
-                relationship_type: type(r),
-                target_type: labels(other)[0],
-                target_name: other.name,
-                target_id: other.id,
-                properties: properties(r)
-            }} as relationship
-            """
-            
-            result = await self.store.query_graph(query, {"name": name})
-            return [r["relationship"] for r in result]
-            
+            return await self.store.get_system_relationships(name)
         except Exception as e:
             logger.error(f"Error getting system relationships: {str(e)}")
             return []
@@ -153,26 +119,7 @@ class BaseAgent(ABC):
     async def get_capabilities(self) -> List[Dict]:
         """Get all capabilities in the system."""
         try:
-            query = """
-            MATCH (c:Capability)
-            OPTIONAL MATCH (s:AISystem)-[r:HAS_CAPABILITY]->(c)
-            WITH c, collect({
-                name: s.name,
-                type: s.type,
-                confidence: coalesce(r.confidence, 0.0)
-            }) as systems
-            RETURN {
-                id: c.id,
-                type: c.type,
-                description: c.description,
-                confidence: c.confidence,
-                systems: systems
-            } as capability
-            """
-            
-            result = await self.store.query_graph(query)
-            return [r["capability"] for r in result]
-            
+            return await self.store.get_capabilities()
         except Exception as e:
             logger.error(f"Error getting capabilities: {str(e)}")
             return []

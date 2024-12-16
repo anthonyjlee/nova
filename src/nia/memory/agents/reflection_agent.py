@@ -1,5 +1,5 @@
 """
-Reflection agent for analyzing patterns and growth.
+Reflection agent for system self-reflection.
 """
 
 import logging
@@ -7,20 +7,22 @@ from typing import Dict, Any
 from .base import BaseAgent
 from ..llm_interface import LLMInterface
 from ..neo4j_store import Neo4jMemoryStore
+from ..vector_store import VectorStore
 from ..prompts import REFLECTION_PROMPT
 
 logger = logging.getLogger(__name__)
 
 class ReflectionAgent(BaseAgent):
-    """Agent for analyzing patterns and tracking growth."""
+    """Agent for system self-reflection."""
     
     def __init__(
         self,
         llm: LLMInterface,
-        store: Neo4jMemoryStore
+        store: Neo4jMemoryStore,
+        vector_store: VectorStore
     ):
         """Initialize reflection agent."""
-        super().__init__(llm, store, "reflection")
+        super().__init__(llm, store, vector_store, "reflection")
     
     def _format_prompt(self, content: Dict[str, Any]) -> str:
         """Format prompt for reflection analysis."""
@@ -58,9 +60,9 @@ class ReflectionAgent(BaseAgent):
                         formatted_content.append(f"  - {rel['relationship_type']} -> {rel['target_name']}")
         
         # Add any related memories
-        if content.get('related_memories'):
-            formatted_content.append("Related Memories:")
-            for memory in content['related_memories']:
+        if content.get('similar_memories'):
+            formatted_content.append("Similar Memories:")
+            for memory in content['similar_memories']:
                 formatted_content.append(f"- {memory['type']} ({memory['created_at']})")
                 if isinstance(memory.get('content'), str):
                     formatted_content.append(f"  Content: {memory['content'][:100]}...")

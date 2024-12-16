@@ -1,5 +1,5 @@
 """
-Desire agent for tracking system aspirations.
+Desire agent for tracking system desires.
 """
 
 import logging
@@ -7,20 +7,22 @@ from typing import Dict, Any
 from .base import BaseAgent
 from ..llm_interface import LLMInterface
 from ..neo4j_store import Neo4jMemoryStore
+from ..vector_store import VectorStore
 from ..prompts import DESIRE_PROMPT
 
 logger = logging.getLogger(__name__)
 
 class DesireAgent(BaseAgent):
-    """Agent for tracking system desires and aspirations."""
+    """Agent for tracking system desires."""
     
     def __init__(
         self,
         llm: LLMInterface,
-        store: Neo4jMemoryStore
+        store: Neo4jMemoryStore,
+        vector_store: VectorStore
     ):
         """Initialize desire agent."""
-        super().__init__(llm, store, "desire")
+        super().__init__(llm, store, vector_store, "desire")
     
     def _format_prompt(self, content: Dict[str, Any]) -> str:
         """Format prompt for desire analysis."""
@@ -58,9 +60,9 @@ class DesireAgent(BaseAgent):
                         formatted_content.append(f"  - {rel['relationship_type']} -> {rel['target_name']}")
         
         # Add any related memories
-        if content.get('related_memories'):
-            formatted_content.append("Related Memories:")
-            for memory in content['related_memories']:
+        if content.get('similar_memories'):
+            formatted_content.append("Similar Memories:")
+            for memory in content['similar_memories']:
                 formatted_content.append(f"- {memory['type']} ({memory['created_at']})")
                 if isinstance(memory.get('content'), str):
                     formatted_content.append(f"  Content: {memory['content'][:100]}...")
