@@ -125,26 +125,33 @@ async def main():
     
     # Simulate execution
     print("\nSimulating execution...")
-    ready_tasks = graph.get_ready_tasks()
-    while ready_tasks:
+    execution_order = graph.get_task_order()
+    completed = set()
+    
+    while execution_order:
+        # Get ready tasks (those whose dependencies are all completed)
+        ready_tasks = [
+            task_id for task_id in execution_order
+            if all(dep in completed for dep in graph.tasks[task_id].dependencies)
+        ]
+        
+        if not ready_tasks:
+            break
+        
         # Execute ready tasks
         await asyncio.gather(*(
             simulate_task_execution(graph.tasks[task_id])
             for task_id in ready_tasks
         ))
         
-        # Update task states
-        for task_id in ready_tasks:
-            task = graph.tasks[task_id]
-            if task.status == TaskStatus.COMPLETED:
-                graph.completed_tasks.add(task_id)
-                # Remove completed task from dependencies
-                for dependent_id in task.dependents:
-                    dependent = graph.tasks[dependent_id]
-                    dependent.dependencies.remove(task_id)
+        # Update completed tasks
+        completed.update(ready_tasks)
         
-        # Get next ready tasks
-        ready_tasks = graph.get_task_order()
+        # Remove completed tasks from execution order
+        execution_order = [
+            task_id for task_id in execution_order
+            if task_id not in completed
+        ]
     
     # Show results
     print("\nExecution complete!")
