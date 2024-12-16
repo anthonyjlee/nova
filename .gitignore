@@ -41,3 +41,7 @@ Thumbs.db
 *.log
 logs/
 .qdrant/
+
+# Local development
+*.db
+*.sqlite3
