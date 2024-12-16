@@ -1,54 +1,91 @@
 """
-Neo4j-based knowledge graph implementation.
+Neo4j store implementation.
 """
 
 import logging
 from typing import Dict, List, Any, Optional
-from neo4j import GraphDatabase
-from .llm_interface import LLMInterface
-from .vector_store import VectorStore
-from .neo4j import (
-    Neo4jSchemaManager,
-    Neo4jConceptManager,
-    Neo4jSystemManager
-)
+from datetime import datetime
+from neo4j import AsyncGraphDatabase, AsyncDriver
 
 logger = logging.getLogger(__name__)
 
+def serialize_datetime(obj: Any) -> Any:
+    """Serialize datetime objects to ISO format strings."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {k: serialize_datetime(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [serialize_datetime(item) for item in obj]
+    return obj
+
 class Neo4jMemoryStore:
-    """Neo4j-based knowledge graph store."""
+    """Neo4j-based memory store."""
     
     def __init__(
         self,
         uri: str = "bolt://localhost:7687",
-        username: str = "neo4j",
-        password: str = "password",
-        llm: Optional[LLMInterface] = None,
-        vector_store: Optional[VectorStore] = None,
-        similarity_threshold: float = 0.85
+        user: str = "neo4j",
+        password: str = "password"
     ):
         """Initialize Neo4j connection."""
-        self.driver = GraphDatabase.driver(uri, auth=(username, password))
-        self.llm = llm or LLMInterface()
-        self.vector_store = vector_store or VectorStore()
-        self.similarity_threshold = similarity_threshold
-        
-        # Initialize database
-        self.initialize_database()
+        self.driver = AsyncGraphDatabase.driver(uri, auth=(user, password))
     
-    def initialize_database(self) -> None:
-        """Initialize Neo4j database schema and core nodes."""
-        with self.driver.session() as session:
-            # Initialize schema
-            schema_manager = Neo4jSchemaManager(session)
-            schema_manager.initialize_schema()
+    async def store_concept(
+        self,
+        name: str,
+        type: str,
+        description: str
+    ) -> None:
+        """Store concept in graph."""
+        try:
+            query = """
+                MERGE (c:Concept {
+                    id: $concept_name,
+                    type: $concept_type,
+                    description: $concept_desc
+                })
+                """
             
-            # Initialize core nodes
-            system_manager = Neo4jSystemManager(session)
-            system_manager.initialize_systems()
+            async with self.driver.session() as session:
+                await session.run(
+                    query,
+                    concept_name=name,
+                    concept_type=type,
+                    concept_desc=description
+                )
+                
+        except Exception as e:
+            logger.warning(f"Error creating concept {name}: {str(e)}")
+            raise
+    
+    async def store_concept_relationship(
+        self,
+        concept_name: str,
+        related_name: str
+    ) -> None:
+        """Store relationship between concepts."""
+        try:
+            query = """
+                    MATCH (c:Concept {id: $concept_name})
+                    MERGE (r:Concept {id: $related_name})
+                    MERGE (c)-[:RELATED_TO {
+                        created_at: datetime()
+                    }]->(r)
+                    """
             
-            # Verify initialization
-            schema_manager.verify_initialization()
+            async with self.driver.session() as session:
+                await session.run(
+                    query,
+                    concept_name=concept_name,
+                    related_name=related_name
+                )
+                
+        except Exception as e:
+            logger.warning(
+                f"Error creating relationship {concept_name}->{related_name}: {str(e)}"
+            )
+            raise
     
     async def store_memory(
         self,
@@ -56,87 +93,147 @@ class Neo4jMemoryStore:
         content: Dict[str, Any],
         metadata: Optional[Dict] = None
     ) -> None:
-        """Extract concepts from memory and store in knowledge graph."""
-        with self.driver.session() as session:
-            try:
-                # Extract and store concepts
-                concept_manager = Neo4jConceptManager(
-                    session,
-                    self.llm,
-                    self.vector_store,
-                    self.similarity_threshold
+        """Store memory in graph."""
+        try:
+            # Serialize datetime objects
+            content = serialize_datetime(content)
+            metadata = serialize_datetime(metadata) if metadata else {}
+            
+            # Create memory node
+            query = """
+                CREATE (m:Memory {
+                    type: $memory_type,
+                    content: $content,
+                    metadata: $metadata,
+                    created_at: datetime()
+                })
+                """
+            
+            async with self.driver.session() as session:
+                await session.run(
+                    query,
+                    memory_type=memory_type,
+                    content=str(content),
+                    metadata=str(metadata)
                 )
-                concepts = await concept_manager.extract_concepts(str(content))
-                for concept in concepts:
-                    await concept_manager.create_concept(concept)
                 
-            except Exception as e:
-                logger.error(f"Error storing concepts: {str(e)}")
-                raise
+        except Exception as e:
+            logger.error(f"Error storing memory: {str(e)}")
+            raise
     
-    async def search_concepts(
-        self,
-        query: str,
-        limit: int = 10
-    ) -> List[Dict[str, Any]]:
-        """Search concepts using vector similarity."""
-        with self.driver.session() as session:
-            try:
-                concept_manager = Neo4jConceptManager(
-                    session,
-                    self.llm,
-                    self.vector_store,
-                    self.similarity_threshold
-                )
-                return await concept_manager.search_concepts(query, limit)
-            except Exception as e:
-                logger.error(f"Error searching concepts: {str(e)}")
-                return []
-    
-    async def get_system_info(self, name: str) -> Optional[Dict[str, Any]]:
+    async def get_system_info(self, name: str) -> Optional[Dict]:
         """Get information about an AI system."""
-        with self.driver.session() as session:
-            system_manager = Neo4jSystemManager(session)
-            return system_manager.get_system_info(name)
+        try:
+            query = """
+            MATCH (s:AISystem {name: $name})
+            OPTIONAL MATCH (s)-[:HAS_CAPABILITY]->(c:Capability)
+            WITH s, collect(c) as capabilities
+            RETURN {
+                id: s.id,
+                name: s.name,
+                type: s.type,
+                created_at: toString(s.created_at),
+                capabilities: [cap in capabilities | {
+                    id: cap.id,
+                    type: cap.type,
+                    description: cap.description,
+                    confidence: cap.confidence
+                }]
+            } as system
+            """
+            
+            async with self.driver.session() as session:
+                result = await session.run(query, name=name)
+                record = await result.single()
+                return record["system"] if record else None
+                
+        except Exception as e:
+            logger.error(f"Error getting system info: {str(e)}")
+            raise
     
-    async def get_system_relationships(self, name: str) -> List[Dict[str, Any]]:
+    async def get_system_relationships(self, name: str) -> List[Dict]:
         """Get relationships for an AI system."""
-        with self.driver.session() as session:
-            system_manager = Neo4jSystemManager(session)
-            return system_manager.get_system_relationships(name)
+        try:
+            query = """
+            MATCH (s:AISystem {name: $name})
+            OPTIONAL MATCH (s)-[r]->(other)
+            RETURN {
+                relationship_type: type(r),
+                target_type: labels(other)[0],
+                target_name: other.name,
+                target_id: other.id,
+                properties: {
+                    transition_date: CASE 
+                        WHEN r.transition_date IS NOT NULL 
+                        THEN toString(r.transition_date) 
+                        ELSE null 
+                    END,
+                    confidence: r.confidence,
+                    context: r.context
+                }
+            } as relationship
+            """
+            
+            async with self.driver.session() as session:
+                result = await session.run(query, name=name)
+                records = await result.fetch()
+                return [r["relationship"] for r in records]
+                
+        except Exception as e:
+            logger.error(f"Error getting system relationships: {str(e)}")
+            raise
     
-    async def get_capabilities(self) -> List[Dict[str, Any]]:
+    async def get_capabilities(self) -> List[Dict]:
         """Get all capabilities in the system."""
-        with self.driver.session() as session:
-            system_manager = Neo4jSystemManager(session)
-            return system_manager.get_capabilities()
+        try:
+            query = """
+            MATCH (c:Capability)
+            RETURN {
+                id: c.id,
+                type: c.type,
+                description: c.description,
+                confidence: c.confidence
+            } as capability
+            """
+            
+            async with self.driver.session() as session:
+                result = await session.run(query)
+                records = await result.fetch()
+                return [r["capability"] for r in records]
+                
+        except Exception as e:
+            logger.error(f"Error getting capabilities: {str(e)}")
+            raise
     
     async def cleanup(self) -> None:
-        """Clean up database."""
-        with self.driver.session() as session:
-            try:
-                # Drop schema
-                schema_manager = Neo4jSchemaManager(session)
-                schema_manager.cleanup_schema()
-                
-                # Clean up nodes
-                concept_manager = Neo4jConceptManager(
-                    session,
-                    self.llm,
-                    self.vector_store,
-                    self.similarity_threshold
-                )
-                system_manager = Neo4jSystemManager(session)
-                
-                concept_manager.cleanup_concepts()
-                system_manager.cleanup_systems()
-                
-                # Re-initialize
-                self.initialize_database()
-                
-            except Exception as e:
-                logger.error(f"Error cleaning up database: {str(e)}")
-                raise
+        """Clean up graph store."""
+        try:
+            # Delete all memory nodes
+            query = "MATCH (m:Memory) DETACH DELETE m"
+            async with self.driver.session() as session:
+                await session.run(query)
+            
+            # Clean up concepts
+            query = "MATCH (c:Concept) DETACH DELETE c"
+            async with self.driver.session() as session:
+                await session.run(query)
+                logger.info("Cleaned up concept nodes and relationships")
+            
+            # Clean up systems
+            query = "MATCH (s:AISystem) DETACH DELETE s"
+            async with self.driver.session() as session:
+                await session.run(query)
+                logger.info("Cleaned up system nodes and relationships")
+            
+            # Clean up capabilities
+            query = "MATCH (c:Capability) DETACH DELETE c"
+            async with self.driver.session() as session:
+                await session.run(query)
+                logger.info("Cleaned up capability nodes and relationships")
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up graph store: {str(e)}")
+            raise
     
     def close(self) -> None:
         """Close Neo4j connection."""

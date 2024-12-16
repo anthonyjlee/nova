@@ -84,7 +84,7 @@ class BaseAgent(ABC):
             
             # Create agent response
             response = AgentResponse(
-                response=f"I've identified {len(llm_response.concepts)} key concepts in your message.",
+                response=f"From a {self.agent_type} perspective: I've identified {len(llm_response.concepts)} key concepts in your message.",
                 concepts=llm_response.concepts,
                 timestamp=datetime.now()
             )
@@ -132,6 +132,27 @@ class BaseAgent(ABC):
                     metadata=serialize_datetime(metadata),
                     layer="semantic"
                 )
+                
+                # Store concepts in Neo4j
+                for concept in llm_response.concepts:
+                    try:
+                        # Store concept
+                        await self.store.store_concept(
+                            name=concept["name"],
+                            type=concept["type"],
+                            description=concept["description"]
+                        )
+                        
+                        # Store relationships
+                        for related in concept["related"]:
+                            await self.store.store_concept_relationship(
+                                concept["name"],
+                                related
+                            )
+                    except Exception as e:
+                        logger.warning(f"Error storing concept {concept['name']}: {str(e)}")
+                        # Continue even if concept storage fails
+                
             except Exception as e:
                 logger.error(f"Failed to enrich/store memory: {str(e)}")
                 # Continue even if enrichment fails
@@ -142,7 +163,7 @@ class BaseAgent(ABC):
             logger.error(f"Error in {self.agent_type} agent: {str(e)}")
             # Return basic response on error
             return AgentResponse(
-                response="I encountered an error processing your message.",
+                response=f"From a {self.agent_type} perspective: I encountered an error processing your message.",
                 concepts=[],
                 timestamp=datetime.now()
             )
