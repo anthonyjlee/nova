@@ -76,11 +76,19 @@ class TimeAwareAgent:
             # Get current state vector or zero vector if none exists
             current_vector = self.state_vectors.get(vector_type, np.zeros(768))
             
-            # Calculate cosine similarity
-            similarity = float(np.dot(embedding, current_vector) / 
-                            (np.linalg.norm(embedding) * np.linalg.norm(current_vector)))
+            # Calculate magnitudes
+            embedding_norm = np.linalg.norm(embedding)
+            current_norm = np.linalg.norm(current_vector)
             
-            return similarity
+            # Handle zero magnitude vectors
+            if embedding_norm == 0 or current_norm == 0:
+                return 0.0
+            
+            # Calculate cosine similarity
+            similarity = float(np.dot(embedding, current_vector) / (embedding_norm * current_norm))
+            
+            # Ensure similarity is within [-1, 1]
+            return max(min(similarity, 1.0), -1.0)
             
         except Exception as e:
             error_msg = f"Error calculating state similarity: {str(e)}"
@@ -99,6 +107,11 @@ class TimeAwareAgent:
         try:
             # Get embedding for content
             embedding = await self.memory_store.embedding_service.get_embedding(content)
+            
+            # Ensure embedding is not zero vector
+            if np.linalg.norm(embedding) == 0:
+                logger.warning(f"Got zero embedding for content in {self.name}")
+                return
             
             # Update state vector (simple replacement for now)
             self.state_vectors[vector_type] = embedding

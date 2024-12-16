@@ -2,9 +2,11 @@
 Memory system initialization.
 """
 
+import logging
+import aiohttp
+import json
 from typing import Dict, List, Optional
 from datetime import datetime
-import logging
 
 from .persistence import MemoryStore
 from .agents.meta_agent import MetaAgent
@@ -131,6 +133,45 @@ class MemorySystem:
             )
             return f"I apologize, but I encountered an error processing that interaction. Could you try rephrasing or asking something else?"
     
+    async def get_vector_store_stats(self) -> Dict:
+        """Get statistics about the vector store."""
+        try:
+            # Get collection info from Qdrant
+            url = f"{self.memory_store.vector_store.api_base}/collections/{self.memory_store.vector_store.collection_name}"
+            async with aiohttp.ClientSession(headers=self.memory_store.vector_store.headers) as session:
+                async with session.get(url) as response:
+                    if response.status == 200:
+                        info = await response.json()
+                        logger.info(f"Collection info: {json.dumps(info, indent=2)}")
+                        
+                        # Extract indexed fields from payload schema
+                        payload_schema = info.get('result', {}).get('payload_schema', {})
+                        indexed_fields = list(payload_schema.keys()) if payload_schema else []
+                        
+                        return {
+                            'vector_count': info.get('result', {}).get('points_count', 0),
+                            'vector_size': info.get('result', {}).get('config', {}).get('params', {}).get('vectors', {}).get('size', 768),
+                            'collection_name': self.memory_store.vector_store.collection_name,
+                            'indexed_fields': indexed_fields
+                        }
+                    else:
+                        error_text = await response.text()
+                        logger.warning(f"Failed to get collection info: {error_text}")
+                        return {
+                            'vector_count': 0,
+                            'vector_size': 768,
+                            'collection_name': self.memory_store.vector_store.collection_name,
+                            'indexed_fields': []
+                        }
+        except Exception as e:
+            logger.error(f"Error getting vector store stats: {str(e)}")
+            return {
+                'vector_count': 0,
+                'vector_size': 768,
+                'collection_name': self.memory_store.vector_store.collection_name,
+                'indexed_fields': []
+            }
+    
     async def get_system_state(self) -> Dict:
         """Get current system state."""
         try:
@@ -161,6 +202,9 @@ class MemorySystem:
             # Sort by timestamp, most recent first
             recent_memories.sort(key=lambda x: x['timestamp'], reverse=True)
             
+            # Get vector store stats
+            vector_stats = await self.get_vector_store_stats()
+            
             return {
                 'system_info': {
                     'initialized_at': self.init_time,
@@ -169,7 +213,8 @@ class MemorySystem:
                 },
                 'memory_stats': {
                     'short_term_memories': len(self.seen_interactions),
-                    'recent_interactions': recent_memories[:5]  # Limit to 5 most recent
+                    'recent_interactions': recent_memories[:5],  # Limit to 5 most recent
+                    'vector_store': vector_stats
                 },
                 'error_stats': self.error_handler.get_stats(),
                 'feedback_stats': self.feedback_system.get_stats()
