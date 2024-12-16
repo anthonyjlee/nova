@@ -29,6 +29,126 @@ A modular system for building intelligent agents with memory, reasoning, and lea
   - Error recovery
   - Context management
 
+## Memory Architecture
+
+The system uses Neo4j to create a rich, interconnected memory graph:
+
+```
+Graph Structure:
+
+                                    [:SIMILAR_TO]
+                                   /           \
+(Task) -[:GENERATED]-> (Memory) <-             -> (Memory)
+   |                      |                         |
+   |                [:HAS_CONCEPT]            [:HAS_CONCEPT]
+   |                      |                         |
+   |                      v                         v
+   |                  (Concept) -[:RELATED_TO]-> (Concept)
+   |                      |
+[:DEPENDS_ON]        [:INFLUENCES]
+   |                      |
+   v                      v
+(Task) -[:UPDATES]-> (BeliefState)
+         [:AFFECTS]-> (EmotionalState)
+         [:MODIFIES]-> (DesireState)
+
+Node Types:
+- Task: Execution units with type, status, metadata
+- Memory: Episodic experiences or semantic knowledge
+- Concept: Extracted insights, patterns, beliefs
+- State: System states (beliefs, emotions, desires)
+
+Relationship Types:
+- GENERATED: Links tasks to their memory outputs
+- HAS_CONCEPT: Connects memories to extracted concepts
+- RELATED_TO: Shows concept relationships
+- SIMILAR_TO: Links similar memories
+- DEPENDS_ON: Shows task dependencies
+- INFLUENCES/AFFECTS/MODIFIES: State changes
+```
+
+### Memory Organization
+
+1. **Episodic Layer** (Experience Nodes)
+   - Interaction memories
+   - Task executions
+   - Event sequences
+   - Temporal context
+   ```cypher
+   // Example: Find recent interactions
+   MATCH (m:Memory {type: 'interaction'})
+   WHERE m.timestamp > datetime() - duration('P1D')
+   RETURN m ORDER BY m.timestamp DESC;
+   ```
+
+2. **Semantic Layer** (Knowledge Nodes)
+   - Concepts
+   - Beliefs
+   - Patterns
+   - Relationships
+   ```cypher
+   // Example: Find related concepts
+   MATCH (c1:Concept)-[:RELATED_TO]->(c2:Concept)
+   WHERE c1.type = 'belief'
+   RETURN c1, c2;
+   ```
+
+3. **State Layer** (System State)
+   - Belief states
+   - Emotional states
+   - Desire states
+   ```cypher
+   // Example: Track state changes
+   MATCH (t:Task)-[:AFFECTS]->(s:EmotionalState)
+   RETURN t, s ORDER BY t.timestamp;
+   ```
+
+### Memory Operations
+
+1. **Storage**
+   ```python
+   # Store interaction memory
+   memory_id = await store.store_memory(
+       memory_type="interaction",
+       content={
+           'input': user_input,
+           'response': system_response,
+           'timestamp': datetime.now()
+       }
+   )
+   ```
+
+2. **Retrieval**
+   ```python
+   # Get related memories
+   memories = await store.get_related_memories(
+       content="user query",
+       memory_type="interaction",
+       limit=5
+   )
+   ```
+
+3. **Concept Extraction**
+   ```python
+   # Extract and store concepts
+   await store.extract_concepts(
+       memory_id=memory_id,
+       content={
+           'beliefs': extracted_beliefs,
+           'patterns': identified_patterns
+       }
+   )
+   ```
+
+4. **Graph Traversal**
+   ```python
+   # Get memory graph
+   graph = await store.get_memory_graph(
+       memory_id=memory_id,
+       depth=2
+   )
+   ```
+
 ## Installation
 
 1. Install Python 3.9 or higher
@@ -45,29 +165,7 @@ This will:
 - Set up environment variables
 - Create necessary directories
 
-## Neo4j Memory System
-
-The system uses Neo4j for graph-based memory storage, offering:
-
-- **Rich Relationships**
-  - Task dependencies
-  - Memory connections
-  - Concept linking
-  - Temporal relationships
-
-- **Interactive Visualization**
-  - Memory graphs
-  - Task execution flows
-  - Knowledge networks
-  - Concept maps
-
-- **Powerful Querying**
-  - Pattern matching
-  - Path finding
-  - Similarity search
-  - Temporal queries
-
-### Using Neo4j Browser
+## Neo4j Setup
 
 1. Start Neo4j:
 ```bash
@@ -85,17 +183,21 @@ sudo systemctl start neo4j  # Linux
 3. Example Queries:
 
 ```cypher
-// View all memories
-MATCH (m:Memory) RETURN m;
+// View memory structure
+MATCH (m:Memory)-[r]->(n)
+RETURN m, r, n LIMIT 10;
 
-// Find related concepts
-MATCH (m:Memory)-[:HAS_CONCEPT]->(c:Concept)
-WHERE m.type = 'interaction'
-RETURN m, c;
+// Find concept relationships
+MATCH (c1:Concept)-[:RELATED_TO]->(c2:Concept)
+RETURN c1, c2;
 
-// Track task execution
-MATCH (t:Task)-[:GENERATED]->(m:Memory)
-RETURN t, m;
+// Track task flow
+MATCH (t1:Task)-[:DEPENDS_ON]->(t2:Task)
+RETURN t1, t2;
+
+// Analyze state changes
+MATCH (t:Task)-[:AFFECTS]->(s:State)
+RETURN t, s ORDER BY t.timestamp;
 ```
 
 ## Examples
@@ -109,34 +211,6 @@ python examples/test_neo4j_memory.py
 ```bash
 python examples/test_memory_dag.py
 ```
-
-## Architecture
-
-The system consists of several key components:
-
-1. **Memory Layer**
-   - Neo4j graph database
-   - Memory integration
-   - Concept extraction
-   - Knowledge consolidation
-
-2. **Task Layer**
-   - DAG management
-   - Task execution
-   - State tracking
-   - Error handling
-
-3. **Agent Layer**
-   - Specialized agents
-   - Coordination
-   - Response synthesis
-   - Learning
-
-4. **Integration Layer**
-   - LLM interface
-   - Memory access
-   - Task routing
-   - State management
 
 ## Development
 
