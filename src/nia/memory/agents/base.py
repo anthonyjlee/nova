@@ -28,42 +28,34 @@ class BaseAgent(ABC):
         self.vector_store = vector_store  # Qdrant for memories
         self.agent_type = agent_type
     
-    def _extract_concept_text(self, concept: Dict[str, Any]) -> str:
-        """Extract concept text from a dictionary."""
+    def _format_concept_text(self, concept: Dict[str, Any]) -> str:
+        """Format concept into readable text."""
         try:
-            # Get main concept fields with debug logging
+            # Get concept fields
             name = concept.get('name', 'Unknown concept')
             type_str = concept.get('type', '')
             desc = concept.get('description', '')
-            logger.debug(f"Extracting concept: name={name}, type={type_str}, desc={desc}")
-            
-            # Get related concepts if any
             related = concept.get('related_concepts', [])
-            related_names = []
-            if isinstance(related, list):
-                for rel in related:
-                    if isinstance(rel, dict):
-                        rel_name = rel.get('name', '')
-                        if rel_name:
-                            related_names.append(rel_name)
-                    elif isinstance(rel, str):
-                        related_names.append(rel)
-            logger.debug(f"Related concepts: {related_names}")
             
-            # Format the concept text
-            text = f"{name}"
+            # Format text
+            text_parts = []
+            text_parts.append(name)
+            
             if type_str:
-                text += f" ({type_str})"
-            if desc:
-                text += f": {desc}"
-            if related_names:
-                text += f" [Related: {', '.join(related_names)}]"
+                text_parts.append(f"({type_str})")
             
-            logger.debug(f"Formatted concept text: {text}")
+            if desc:
+                text_parts.append(f": {desc}")
+            
+            if related:
+                text_parts.append(f"[Related: {', '.join(related)}]")
+            
+            text = ' '.join(text_parts)
+            logger.debug(f"Formatted concept: {text}")
             return text
             
         except Exception as e:
-            logger.error(f"Error extracting concept text: {str(e)}")
+            logger.error(f"Error formatting concept: {str(e)}")
             return str(concept)
     
     async def process(
@@ -73,47 +65,35 @@ class BaseAgent(ABC):
     ) -> AgentResponse:
         """Process content through agent lens."""
         try:
-            # Get LLM response first
+            # Get LLM response
             llm_response = await self.llm.get_structured_completion(
                 self._format_prompt(content)
             )
-            logger.debug(f"LLM Response: {llm_response.dict()}")
+            logger.debug(f"Got LLM response: {llm_response.dict()}")
             
-            # Extract key points from both concepts and analysis
+            # Format concepts into key points
             key_points = []
             
-            # Handle concepts
-            logger.debug(f"Processing {len(llm_response.concepts)} concepts")
+            # Add formatted concepts
             for concept in llm_response.concepts:
                 try:
-                    if isinstance(concept, dict):
-                        concept_text = self._extract_concept_text(concept)
-                        key_points.append(concept_text)
-                        logger.debug(f"Added concept: {concept_text}")
+                    concept_text = self._format_concept_text(concept)
+                    key_points.append(concept_text)
+                    logger.debug(f"Added concept: {concept_text}")
                 except Exception as e:
                     logger.error(f"Error processing concept: {str(e)}")
-            
-            # Handle analysis key points
-            analysis_points = llm_response.analysis.get("key_points", [])
-            if isinstance(analysis_points, list):
-                for point in analysis_points:
-                    if isinstance(point, str):
-                        key_points.append(point)
-                        logger.debug(f"Added analysis point: {point}")
-            
-            logger.debug(f"Extracted {len(key_points)} key points")
             
             # Create agent response
             response = AgentResponse(
                 response=llm_response.response,
                 analysis=Analysis(
-                    key_points=key_points or ["No key points found"],
-                    confidence=float(llm_response.analysis.get("confidence", 0.8)),
-                    state_update=str(llm_response.analysis.get("state_update", "Processed content"))
+                    key_points=key_points or ["No concepts found"],
+                    confidence=llm_response.confidence,
+                    state_update=llm_response.state_update
                 )
             )
             
-            # Then enrich content with knowledge graph information
+            # Enrich with knowledge graph info
             try:
                 # Get system info if mentioned
                 systems_info = []
@@ -136,7 +116,7 @@ class BaseAgent(ABC):
                     if capabilities:
                         content["capabilities_info"] = capabilities
                 
-                # Get related memories from vector store
+                # Get related memories
                 similar_memories = await self.vector_store.search_vectors(
                     content=str(content),
                     limit=5
@@ -144,21 +124,20 @@ class BaseAgent(ABC):
                 if similar_memories:
                     content["similar_memories"] = similar_memories
                 
-                # Store agent's response in vector store
+                # Store in vector store
                 await self.vector_store.store_vector(
                     content={
                         'original_content': content,
                         'agent_response': response.dict(),
                         'agent_type': self.agent_type,
-                        'key_points': key_points,
-                        'concepts': [c for c in llm_response.concepts if isinstance(c, dict)],
+                        'concepts': llm_response.concepts,
                         'timestamp': metadata.get('timestamp') if metadata else None
                     },
                     metadata=metadata
                 )
             except Exception as e:
-                logger.error(f"Failed to enrich/store {self.agent_type} memory: {str(e)}")
-                # Continue even if enrichment/storage fails
+                logger.error(f"Failed to enrich/store memory: {str(e)}")
+                # Continue even if enrichment fails
             
             return response
             

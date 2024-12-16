@@ -3,7 +3,7 @@ Memory system integration.
 """
 
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, List, Any, Optional
 from datetime import datetime
 
 from .llm_interface import LLMInterface
@@ -49,13 +49,14 @@ class MemorySystem:
     ) -> Any:
         """Process an interaction through the memory system."""
         try:
-            # Store in vector store for semantic search
-            vector_id = await self.vector_store.store_vector(
+            # Store in episodic memory (raw interaction)
+            episodic_id = await self.vector_store.store_vector(
                 content=content,
-                metadata=metadata
+                metadata=metadata,
+                layer="episodic"
             )
             
-            # Find similar memories from vector store
+            # Find similar memories from both layers
             similar_memories = await self.vector_store.search_vectors(
                 content=content,
                 limit=5
@@ -104,21 +105,29 @@ class MemorySystem:
                 context={
                     'original_content': content,
                     'metadata': metadata,
-                    'vector_id': vector_id,
+                    'episodic_id': episodic_id,
                     'similar_memories': similar_memories
                 }
             )
             
-            # Store final response in vector store
+            # Store synthesized response in semantic memory
             await self.vector_store.store_vector(
                 content={
                     'original_content': str(content),
                     'metadata': str(metadata) if metadata else "",
-                    'vector_id': str(vector_id),
+                    'episodic_id': str(episodic_id),
                     'similar_memories': str(similar_memories),
-                    'final_response': str(response.dict())
+                    'final_response': str(response.dict()),
+                    'agent_responses': {
+                        'belief': belief_response.dict(),
+                        'desire': desire_response.dict(),
+                        'emotion': emotion_response.dict(),
+                        'reflection': reflection_response.dict(),
+                        'research': research_response.dict()
+                    }
                 },
-                metadata={'type': 'final_response'}
+                metadata={'type': 'synthesized_response'},
+                layer="semantic"
             )
             
             return response
@@ -127,6 +136,39 @@ class MemorySystem:
             logger.error(f"Error processing interaction: {str(e)}")
             raise
     
+    async def get_status(self) -> Dict[str, Any]:
+        """Get memory system status."""
+        try:
+            # Get vector store status
+            vector_status = await self.vector_store.get_status()
+            
+            # Get Neo4j status
+            neo4j_status = {
+                "connected": True,
+                "error": None
+            }
+            try:
+                # Try to get system info as connection test
+                await self.store.get_system_info("Nova")
+            except Exception as e:
+                neo4j_status = {
+                    "connected": False,
+                    "error": str(e)
+                }
+            
+            return {
+                "vector_store": vector_status,
+                "neo4j": neo4j_status,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting status: {str(e)}")
+            return {
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            }
+    
     async def search_memories(
         self,
         query: str,
@@ -134,7 +176,7 @@ class MemorySystem:
     ) -> List[Dict[str, Any]]:
         """Search memories in vector store."""
         try:
-            # Search vector store
+            # Search both memory layers
             vector_results = await self.vector_store.search_vectors(
                 content=query,
                 limit=limit
@@ -145,6 +187,7 @@ class MemorySystem:
             for result in vector_results:
                 results.append({
                     'source': 'vector',
+                    'layer': result.get('layer', 'unknown'),
                     'score': result.get('score', 0.0),
                     **result
                 })

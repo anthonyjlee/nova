@@ -4,11 +4,12 @@ Vector store implementation using Qdrant and LMStudio embeddings.
 
 import logging
 import json
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, Tuple
 from datetime import datetime
 import aiohttp
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
+from qdrant_client.http.models import CollectionInfo
 
 logger = logging.getLogger(__name__)
 
@@ -91,7 +92,8 @@ class VectorStore:
     async def store_vector(
         self,
         content: Dict[str, Any],
-        metadata: Optional[Dict] = None
+        metadata: Optional[Dict] = None,
+        layer: str = "episodic"  # 'episodic' or 'semantic'
     ) -> int:
         """Store content vector."""
         try:
@@ -118,13 +120,14 @@ class VectorStore:
                         payload={
                             'content': content,
                             'metadata': metadata or {},
-                            'created_at': datetime.now().isoformat()
+                            'created_at': datetime.now().isoformat(),
+                            'layer': layer  # Track memory layer
                         }
                     )
                 ]
             )
             
-            logger.info(f"Stored vector: {vector_id}")
+            logger.info(f"Stored vector in {layer} layer: {vector_id}")
             return vector_id
             
         except Exception as e:
@@ -135,7 +138,8 @@ class VectorStore:
         self,
         content: Dict[str, Any],
         limit: int = 10,
-        score_threshold: float = 0.7
+        score_threshold: float = 0.7,
+        layer: Optional[str] = None  # Filter by layer if specified
     ) -> List[Dict[str, Any]]:
         """Search for similar vectors."""
         try:
@@ -148,12 +152,25 @@ class VectorStore:
             # Get embedding from LMStudio
             query_vector = await self._get_embedding(content_str)
             
+            # Add layer filter if specified
+            filter_query = None
+            if layer:
+                filter_query = models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="layer",
+                            match=models.MatchValue(value=layer)
+                        )
+                    ]
+                )
+            
             # Search vectors
             results = self.client.search(
                 collection_name=self.collection_name,
                 query_vector=query_vector,
                 limit=limit,
-                score_threshold=score_threshold
+                score_threshold=score_threshold,
+                query_filter=filter_query
             )
             
             # Format results
@@ -164,7 +181,8 @@ class VectorStore:
                     'score': result.score,
                     'content': result.payload['content'],
                     'metadata': result.payload['metadata'],
-                    'created_at': result.payload['created_at']
+                    'created_at': result.payload['created_at'],
+                    'layer': result.payload['layer']
                 }
                 memories.append(memory)
             
@@ -188,7 +206,8 @@ class VectorStore:
                     'id': point.id,
                     'content': point.payload['content'],
                     'metadata': point.payload['metadata'],
-                    'created_at': point.payload['created_at']
+                    'created_at': point.payload['created_at'],
+                    'layer': point.payload['layer']
                 }
             
             return None
@@ -196,6 +215,53 @@ class VectorStore:
         except Exception as e:
             logger.error(f"Error getting vector: {str(e)}")
             return None
+    
+    async def get_status(self) -> Dict[str, Any]:
+        """Get vector store status."""
+        try:
+            # Get collection info
+            collection: CollectionInfo = self.client.get_collection(self.collection_name)
+            
+            # Count vectors by layer
+            episodic_count = len(self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="layer",
+                            match=models.MatchValue(value="episodic")
+                        )
+                    ]
+                )
+            )[0])
+            
+            semantic_count = len(self.client.scroll(
+                collection_name=self.collection_name,
+                scroll_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="layer",
+                            match=models.MatchValue(value="semantic")
+                        )
+                    ]
+                )
+            )[0])
+            
+            return {
+                "collection_name": self.collection_name,
+                "vector_size": self.vector_size,
+                "total_vectors": collection.points_count,
+                "episodic_memories": episodic_count,
+                "semantic_memories": semantic_count,
+                "embedding_model": self.embedding_model,
+                "status": collection.status
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting status: {str(e)}")
+            return {
+                "error": str(e)
+            }
     
     async def cleanup(self) -> None:
         """Clean up vector store."""
