@@ -1,150 +1,148 @@
 """
-Main entry point for the memory system.
+Main application entry point.
 """
 
 import os
 import sys
-import json
 import logging
-import asyncio
 import argparse
+import asyncio
 from datetime import datetime
 from typing import Optional
 
-from nia.memory.llm_interface import LLMInterface
-from nia.memory.neo4j_store import Neo4jMemoryStore
-from nia.memory.vector_store import VectorStore
-from nia.memory.memory_integration import MemorySystem
-from nia.memory.logging_config import configure_logging
+from src.nia.memory.llm_interface import LLMInterface
+from src.nia.memory.neo4j_store import Neo4jMemoryStore
+from src.nia.memory.vector_store import VectorStore
+from src.nia.memory.memory_integration import MemorySystem
 
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s%(msecs)03d - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 logger = logging.getLogger(__name__)
 
-# ANSI color codes
-BLUE = "\033[94m"
-GREEN = "\033[92m"
-YELLOW = "\033[93m"
-RED = "\033[91m"
-ENDC = "\033[0m"
-BOLD = "\033[1m"
+def print_header():
+    """Print application header."""
+    print("\n" + "=" * 60)
+    print(" " * 21 + "Nova AI Assistant")
+    print("=" * 60 + "\n")
+    print("Hello! I'm Nova focused on self-discovery and growth.")
+    print("Type !help to see commands or !exit to end.\n")
 
-HELP_TEXT = f"""
-Available commands:
-{BLUE}!help{ENDC}     - Show this help message
-{BLUE}!status{ENDC}   - Show memory system status
-{BLUE}!reset{ENDC}    - Reset memory system
-{BLUE}!exit{ENDC}     - Exit the program
+def print_footer():
+    """Print application footer."""
+    print("\n" + "=" * 60)
+    print(" " * 23 + "Session Ended")
+    print("=" * 60 + "\n")
+    print("Thank you for the interaction! Goodbye!")
 
-Type any message to interact with Nova.
-"""
+def print_help():
+    """Print help information."""
+    print("\nAvailable Commands:")
+    print("  !help     - Show this help message")
+    print("  !exit     - Exit the application")
+    print("  !reset    - Reset memory system")
+    print("  !status   - Show memory system status")
+    print("  !search   - Search memories")
+    print("  !clear    - Clear screen\n")
 
-def format_status(status: dict) -> str:
-    """Format status output."""
-    lines = []
-    lines.append(f"\n{BOLD}============================================================{ENDC}")
-    lines.append(f"{BOLD}                    Memory System Status                    {ENDC}")
-    lines.append(f"{BOLD}============================================================{ENDC}\n")
-    
-    # Vector Store Status
-    vector_status = status.get("vector_store", {})
-    lines.append(f"{BOLD}Vector Store:{ENDC}")
-    lines.append(f"  Collection: {BLUE}{vector_status.get('collection_name')}{ENDC}")
-    lines.append(f"  Total Vectors: {vector_status.get('total_vectors', 0)}")
-    lines.append(f"  Episodic Memories: {YELLOW}{vector_status.get('episodic_memories', 0)}{ENDC}")
-    lines.append(f"  Semantic Memories: {GREEN}{vector_status.get('semantic_memories', 0)}{ENDC}")
-    lines.append(f"  Vector Size: {vector_status.get('vector_size')}")
-    lines.append(f"  Embedding Model: {vector_status.get('embedding_model')}")
-    
-    # Color status based on value
-    status_value = vector_status.get('status', 'unknown')
-    status_color = GREEN if status_value == 'green' else YELLOW if status_value == 'yellow' else RED
-    lines.append(f"  Status: {status_color}{status_value}{ENDC}")
-    
-    # Neo4j Status
-    neo4j_status = status.get("neo4j", {})
-    lines.append(f"\n{BOLD}Neo4j Store:{ENDC}")
-    connected = neo4j_status.get('connected', False)
-    status_color = GREEN if connected else RED
-    lines.append(f"  Connected: {status_color}{connected}{ENDC}")
-    if neo4j_status.get("error"):
-        lines.append(f"  Error: {RED}{neo4j_status['error']}{ENDC}")
-    
-    # Timestamp
-    lines.append(f"\nTimestamp: {BLUE}{status.get('timestamp', datetime.now().isoformat())}{ENDC}")
-    lines.append(f"{BOLD}============================================================{ENDC}")
-    
-    return "\n".join(lines)
+async def get_user_input(prompt: str = "You: ") -> str:
+    """Get user input asynchronously."""
+    return await asyncio.get_event_loop().run_in_executor(
+        None, lambda: input(prompt)
+    )
 
-async def run_session(reset: bool = False) -> None:
-    """Run an interactive session."""
+async def process_command(
+    command: str,
+    memory: MemorySystem
+) -> bool:
+    """Process special commands."""
+    if command == "!help":
+        print_help()
+        return True
+        
+    elif command == "!exit":
+        return False
+        
+    elif command == "!reset":
+        print("\nResetting memory system...")
+        await memory.cleanup()
+        print("Memory system reset complete.")
+        return True
+        
+    elif command == "!status":
+        status = await memory.get_status()
+        print("\nMemory System Status:")
+        print(f"Vector Store: {status['vector_store']}")
+        print(f"Neo4j: {status['neo4j']}")
+        print(f"Timestamp: {status['timestamp']}\n")
+        return True
+        
+    elif command == "!search":
+        query = input("Enter search query: ")
+        results = await memory.search_memories(query)
+        print("\nSearch Results:")
+        for i, result in enumerate(results, 1):
+            print(f"\n{i}. Score: {result['score']:.2f}")
+            print(f"Content: {result['content']}")
+            print(f"Metadata: {result['metadata']}")
+        print()
+        return True
+        
+    elif command == "!clear":
+        os.system('cls' if os.name == 'nt' else 'clear')
+        print_header()
+        return True
+        
+    return False
+
+async def run_session(reset: bool = False):
+    """Run interactive session."""
     try:
         # Initialize components
         llm = LLMInterface()
-        store = Neo4jMemoryStore(llm=llm)
-        memory_system = MemorySystem(llm, store)
-        logger.info("Initialized memory system")
+        store = Neo4jMemoryStore()
+        vector_store = VectorStore()
+        
+        # Initialize memory system
+        memory = MemorySystem(llm, store, vector_store)
         
         # Reset if requested
         if reset:
-            await memory_system.cleanup()
-            print(f"{GREEN}Memory system reset complete.{ENDC}")
+            print("\nResetting memory system...")
+            await memory.cleanup()
+            print("Memory system reset complete.")
         
-        # Print welcome message
-        print(f"\n{BOLD}============================================================{ENDC}")
-        print(f"{BOLD}                     Nova AI Assistant                     {ENDC}")
-        print(f"{BOLD}============================================================{ENDC}\n")
-        print(f"{BLUE}Hello! I'm Nova, focused on self-discovery and growth.")
-        print(f"Type !help to see commands or !exit to end.{ENDC}\n")
+        logger.info("Initialized memory system")
+        print_header()
         
+        # Main interaction loop
         while True:
-            try:
-                # Get user input
-                user_input = input(f"{BOLD}You:{ENDC} ").strip()
-                
-                # Handle commands
-                if user_input.lower() == "!help":
-                    print(HELP_TEXT)
-                    continue
-                elif user_input.lower() == "!status":
-                    status = await memory_system.get_status()
-                    print(format_status(status))
-                    continue
-                elif user_input.lower() == "!reset":
-                    print(f"\n{YELLOW}Resetting memory system...{ENDC}")
-                    await memory_system.cleanup()
-                    print(f"{GREEN}Memory system reset complete.{ENDC}")
-                    continue
-                elif user_input.lower() == "!exit":
+            # Get user input
+            user_input = await get_user_input()
+            
+            # Check for commands
+            if user_input.startswith("!"):
+                should_continue = await process_command(user_input, memory)
+                if not should_continue:
                     break
-                
-                # Process user input
-                print(f"\n{YELLOW}Processing...{ENDC}")
-                response = await memory_system.process_interaction(
-                    content=user_input,
-                    metadata={
-                        'timestamp': datetime.now().isoformat(),
-                        'type': 'user_input'
-                    }
-                )
-                
-                # Print response
-                print(f"\n{BOLD}Nova:{ENDC}", response.response)
-                
-            except KeyboardInterrupt:
-                print("\nInterrupted by user")
-                break
+                continue
+            
+            # Process user input
+            print("\nProcessing...")
+            try:
+                response = await memory.process_interaction(user_input)
+                print(f"\nNova: {response.response}")
             except Exception as e:
                 logger.error(f"Error processing interaction: {str(e)}")
-                print(f"\n{BOLD}Nova:{ENDC} I need to process that differently")
+                print(f"\nNova: I need to process that differently")
         
-        # Close memory system
-        memory_system.close()
+        # Clean up
+        memory.close()
         logger.info("Closed memory system")
-        
-        # Print goodbye message
-        print(f"\n{BOLD}============================================================{ENDC}")
-        print(f"{BOLD}                       Session Ended                       {ENDC}")
-        print(f"{BOLD}============================================================{ENDC}\n")
-        print(f"{BLUE}Thank you for the interaction! Goodbye!{ENDC}")
+        print_footer()
         
     except Exception as e:
         logger.error(f"Fatal error: {str(e)}")
@@ -152,8 +150,7 @@ async def run_session(reset: bool = False) -> None:
 
 def main():
     """Main entry point."""
-    # Parse arguments
-    parser = argparse.ArgumentParser(description="Run the memory system")
+    parser = argparse.ArgumentParser(description="Nova AI Assistant")
     parser.add_argument(
         "--reset",
         action="store_true",
@@ -161,11 +158,13 @@ def main():
     )
     args = parser.parse_args()
     
-    # Configure logging
-    configure_logging()
-    
-    # Run session
-    asyncio.run(run_session(args.reset))
+    try:
+        asyncio.run(run_session(args.reset))
+    except KeyboardInterrupt:
+        print_footer()
+    except Exception as e:
+        logger.error(f"Fatal error: {str(e)}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
