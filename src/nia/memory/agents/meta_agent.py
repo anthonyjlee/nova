@@ -8,24 +8,32 @@ import logging
 import traceback
 
 from .base import TimeAwareAgent
-from .response_processor import ResponseProcessor
-from .context_builder import ContextBuilder
 from ..error_handling import ErrorHandler
 from ..feedback import FeedbackSystem
 from ..persistence import MemoryStore
+from ..llm_interface import LLMInterface
 
 logger = logging.getLogger(__name__)
 
 class MetaAgent(TimeAwareAgent):
     """Coordinates other agents and synthesizes responses."""
     
-    def __init__(self, memory_store: MemoryStore, error_handler: ErrorHandler,
-                 feedback_system: FeedbackSystem):
+    def __init__(
+        self,
+        memory_store: MemoryStore,
+        error_handler: ErrorHandler,
+        feedback_system: FeedbackSystem,
+        llm_interface: LLMInterface
+    ):
         """Initialize meta agent."""
-        super().__init__("MetaAgent", memory_store, error_handler, feedback_system)
+        super().__init__(
+            "MetaAgent",
+            memory_store,
+            error_handler,
+            feedback_system,
+            llm_interface
+        )
         self.registered_agents = {}
-        self.response_processor = ResponseProcessor()
-        self.context_builder = ContextBuilder(memory_store)
     
     def register_agent(self, name: str, agent: TimeAwareAgent) -> None:
         """Register an agent for coordination."""
@@ -35,15 +43,53 @@ class MetaAgent(TimeAwareAgent):
     async def _synthesize_response(self, content: str, agent_outputs: Dict[str, str]) -> Dict:
         """Synthesize a response from agent outputs."""
         try:
-            # Build context from memories
-            context_str = await self.context_builder.build_full_context(content)
+            # Search for similar interactions
+            similar_interactions = await self.memory_store.search_similar_memories(
+                content=content,
+                limit=5,
+                filter_dict={'memory_type': 'interaction'},
+                prioritize_temporal=True
+            )
             
-            # Format agent outputs
+            # Format similar interactions for context
+            interaction_context = []
+            for memory in similar_interactions:
+                memory_content = memory.get('content', {})
+                if isinstance(memory_content, dict):
+                    if 'input' in memory_content:
+                        interaction_context.append(f"Previous interaction ({memory['time_ago']}):")
+                        interaction_context.append(f"- Input: {memory_content['input']}")
+                        if 'synthesis' in memory_content:
+                            synthesis = memory_content['synthesis']
+                            if isinstance(synthesis, dict):
+                                if synthesis.get('response'):
+                                    interaction_context.append(f"- Response: {synthesis['response']}")
+                                if synthesis.get('key_points'):
+                                    interaction_context.append("- Key points:")
+                                    for point in synthesis['key_points']:
+                                        interaction_context.append(f"  * {point}")
+            
+            # Get current context
+            current_context = self.memory_store.get_current_context()
+            
+            # Format agent outputs for prompt
             formatted_outputs = "\n".join([
                 f"{name}: {output}" for name, output in agent_outputs.items()
             ])
             
-            prompt = f"""You are Nova, an AI assistant. Your task is to synthesize a response considering the following information and guidelines.
+            # Format context sections
+            context_sections = []
+            if interaction_context:
+                context_sections.append("Previous Interactions:\n" + "\n".join(interaction_context))
+            if current_context:
+                if 'beliefs' in current_context:
+                    context_sections.append("Current Beliefs:\n- " + "\n- ".join(current_context['beliefs'][-3:]))
+                if 'insights' in current_context:
+                    context_sections.append("Recent Insights:\n- " + "\n".join(current_context['insights'][-3:]))
+            
+            context_str = "\n\n".join(context_sections) if context_sections else "No prior context available"
+            
+            prompt = f"""You are Nova, an AI assistant. Synthesize a response that integrates emotional state, desires, and beliefs, while considering similar past interactions.
 
 Input: {content}
 
@@ -95,17 +141,35 @@ Guidelines for JSON fields:
 
 5. continuity_markers:
    - List specific connections to past interactions
-   - Include timestamps or context references
+   - Include timestamps or context references"""
 
-Remember: Return ONLY the JSON object, no other text."""
-
-            # Get synthesis from LLM
-            synthesis = await self.get_completion(prompt)
+            # Get synthesis with retries and default response
+            default_response = {
+                'response': "I apologize, but I need to process that differently.",
+                'key_points': ["error in synthesis"],
+                'state_update': "no significant change",
+                'memory_influence': "no clear memory influence",
+                'continuity_markers': [],
+                'timestamp': datetime.now().isoformat()
+            }
             
-            # Process response
-            synthesis_data = self.response_processor.process_llm_response(synthesis)
+            data = await self.get_json_completion(
+                prompt=prompt,
+                retries=3,
+                default_response=default_response
+            )
             
-            # Update meta state vector
+            # Clean and validate data
+            synthesis_data = {
+                'response': self._safe_str(data.get('response'), "I apologize, but I need to process that differently."),
+                'key_points': self._safe_list(data.get('key_points')),
+                'state_update': self._safe_str(data.get('state_update'), "no significant change"),
+                'memory_influence': self._safe_str(data.get('memory_influence'), "no clear memory influence"),
+                'continuity_markers': self._safe_list(data.get('continuity_markers')),
+                'timestamp': datetime.now().isoformat()
+            }
+            
+            # Update meta state vector with richer context
             await self.update_state_vector('memories', 
                 f"{synthesis_data['response']} {synthesis_data['state_update']} {synthesis_data['memory_influence']}")
             
@@ -122,14 +186,21 @@ Remember: Return ONLY the JSON object, no other text."""
                 'timestamp': datetime.now().isoformat()
             }
     
-    async def process_interaction(self, content: str, agent_outputs: Optional[Dict[str, str]] = None) -> str:
+    async def process_interaction(self, content: str) -> str:
         """Process interaction and synthesize response."""
         try:
             # Extract context
             content, context = self._extract_context(content)
             
-            # Use provided agent outputs or empty dict
-            agent_outputs = agent_outputs or {}
+            # Get responses from other agents
+            agent_outputs = {}
+            for name, agent in self.registered_agents.items():
+                try:
+                    response = await agent.process_interaction(content)
+                    agent_outputs[name] = response
+                except Exception as e:
+                    logger.error(f"Error getting response from {name}: {str(e)}")
+                    agent_outputs[name] = f"Error: {str(e)}"
             
             # Synthesize response
             synthesis = await self._synthesize_response(content, agent_outputs)
@@ -157,64 +228,3 @@ Remember: Return ONLY the JSON object, no other text."""
             error_msg = f"Error in meta processing: {str(e)}\n{traceback.format_exc()}"
             logger.error(error_msg)
             return "I apologize, but I encountered an error processing that interaction."
-    
-    async def reflect(self) -> Dict:
-        """Reflect on meta agent state."""
-        try:
-            # Get recent memories with increased limit
-            memories = await self.memory_store.get_recent_memories(
-                agent_name=self.name,
-                memory_type="interaction",
-                limit=5  # Increased limit for better reflection
-            )
-            
-            # Extract patterns
-            responses = []
-            key_points = []
-            state_updates = []
-            memory_influences = []
-            continuity_markers = []
-            
-            for memory in memories:
-                if isinstance(memory.get('content'), dict):
-                    synthesis = memory['content'].get('synthesis', {})
-                    if isinstance(synthesis, dict):
-                        if synthesis.get('response'):
-                            responses.append(synthesis['response'])
-                        if synthesis.get('key_points'):
-                            key_points.extend(synthesis['key_points'])
-                        if synthesis.get('state_update'):
-                            state_updates.append(synthesis['state_update'])
-                        if synthesis.get('memory_influence'):
-                            memory_influences.append(synthesis['memory_influence'])
-                        if synthesis.get('continuity_markers'):
-                            continuity_markers.extend(synthesis['continuity_markers'])
-            
-            # Limit to most recent unique items
-            responses = list(dict.fromkeys(responses))[-3:]
-            key_points = list(dict.fromkeys(key_points))[-5:]
-            state_updates = list(dict.fromkeys(state_updates))[-3:]
-            memory_influences = list(dict.fromkeys(memory_influences))[-3:]
-            continuity_markers = list(dict.fromkeys(continuity_markers))[-5:]
-            
-            return {
-                'response_pattern': ', '.join(responses) if responses else 'no clear pattern',
-                'key_point_trend': ', '.join(key_points) if key_points else 'no clear trends',
-                'state_evolution': ', '.join(state_updates) if state_updates else 'no clear evolution',
-                'memory_influence_pattern': ', '.join(memory_influences) if memory_influences else 'no clear memory patterns',
-                'continuity_trend': ', '.join(continuity_markers) if continuity_markers else 'no clear continuity',
-                'timestamp': datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            error_msg = f"Error in meta reflection: {str(e)}\n{traceback.format_exc()}"
-            logger.error(error_msg)
-            return {
-                'error': error_msg,
-                'response_pattern': 'no clear pattern',
-                'key_point_trend': 'no clear trends',
-                'state_evolution': 'no clear evolution',
-                'memory_influence_pattern': 'no clear memory patterns',
-                'continuity_trend': 'no clear continuity',
-                'timestamp': datetime.now().isoformat()
-            }

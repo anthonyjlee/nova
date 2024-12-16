@@ -5,23 +5,34 @@ Agent for managing and updating beliefs.
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import logging
-import json
 import traceback
 
 from .base import TimeAwareAgent
 from ..error_handling import ErrorHandler
 from ..feedback import FeedbackSystem
 from ..persistence import MemoryStore
+from ..llm_interface import LLMInterface
 
 logger = logging.getLogger(__name__)
 
 class BeliefAgent(TimeAwareAgent):
     """Manages and updates beliefs."""
     
-    def __init__(self, memory_store: MemoryStore, error_handler: ErrorHandler,
-                 feedback_system: FeedbackSystem):
+    def __init__(
+        self,
+        memory_store: MemoryStore,
+        error_handler: ErrorHandler,
+        feedback_system: FeedbackSystem,
+        llm_interface: LLMInterface
+    ):
         """Initialize belief agent."""
-        super().__init__("BeliefAgent", memory_store, error_handler, feedback_system)
+        super().__init__(
+            "BeliefAgent",
+            memory_store,
+            error_handler,
+            feedback_system,
+            llm_interface
+        )
     
     async def _analyze_beliefs(self, content: str, context: Dict) -> Dict:
         """Analyze and update beliefs."""
@@ -65,7 +76,7 @@ class BeliefAgent(TimeAwareAgent):
                 if 'beliefs' in current_context:
                     context_sections.append("Current Beliefs:\n- " + "\n- ".join(current_context['beliefs'][-3:]))
                 if 'insights' in current_context:
-                    context_sections.append("Recent Insights:\n- " + "\n- ".join(current_context['insights'][-3:]))
+                    context_sections.append("Recent Insights:\n- " + "\n".join(current_context['insights'][-3:]))
             
             context_str = "\n\n".join(context_sections) if context_sections else "No prior context available"
             
@@ -103,23 +114,23 @@ Return ONLY a JSON object in this EXACT format (no other text):
     "belief_evolution": ["list showing how this belief has changed over time"]
 }}"""
 
-            # Get belief analysis
-            analysis = await self.get_completion(prompt)
+            # Get belief analysis with retries and default response
+            default_response = {
+                'core_belief': "Unable to analyze beliefs",
+                'confidence': "low",
+                'supporting_evidence': ["analysis failed"],
+                'state_update': "error in processing",
+                'belief_conflicts': [],
+                'resolution_strategy': "maintain current beliefs",
+                'knowledge_source': "error during analysis",
+                'belief_evolution': []
+            }
             
-            # Parse JSON
-            try:
-                # Remove any non-JSON text
-                json_start = analysis.find('{')
-                json_end = analysis.rfind('}') + 1
-                if json_start >= 0 and json_end > json_start:
-                    analysis = analysis[json_start:json_end]
-                    # Clean up common formatting issues
-                    analysis = analysis.replace('\n', ' ').replace('\r', ' ')
-                    analysis = analysis.replace('```json', '').replace('```', '')
-                data = json.loads(analysis)
-            except json.JSONDecodeError:
-                logger.error("Failed to parse belief analysis JSON")
-                raise ValueError("Invalid JSON format in belief analysis")
+            data = await self.get_json_completion(
+                prompt=prompt,
+                retries=3,
+                default_response=default_response
+            )
             
             # Clean and validate data
             belief_data = {
