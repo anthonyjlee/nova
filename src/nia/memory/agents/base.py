@@ -28,50 +28,6 @@ class BaseAgent(ABC):
         self.vector_store = vector_store  # Qdrant for memories
         self.agent_type = agent_type
     
-    def _extract_concept_text(self, point: Dict[str, Any]) -> str:
-        """Extract concept text from a dictionary point."""
-        # Try different possible key names for concept name
-        name = point.get('concept') or point.get('Name of concept') or point.get('name', 'Unknown concept')
-        
-        # Try different possible key names for type
-        type_str = point.get('type') or point.get('Type', '')
-        
-        # Try different possible key names for description
-        desc = point.get('description') or point.get('Description', '')
-        
-        # Try different possible key names for confidence
-        conf = point.get('confidence', 1.0)
-        
-        # Format the concept text
-        if type_str:
-            return f"{name} ({type_str}, {conf:.1f}): {desc}"
-        else:
-            return f"{name} ({conf:.1f}): {desc}"
-    
-    def _extract_key_points(self, llm_response: Any) -> List[str]:
-        """Extract key points from LLM response."""
-        key_points = []
-        
-        # Try to get concepts from either key_points or concepts field
-        raw_points = (
-            llm_response.analysis.get("key_points", []) if hasattr(llm_response, 'analysis') else []
-        )
-        concepts = llm_response.get("concepts", [])
-        
-        # Process key_points
-        for point in raw_points:
-            if isinstance(point, str):
-                key_points.append(point)
-            elif isinstance(point, dict):
-                key_points.append(self._extract_concept_text(point))
-        
-        # Process concepts if present
-        for concept in concepts:
-            if isinstance(concept, dict):
-                key_points.append(self._extract_concept_text(concept))
-        
-        return key_points or ["No key points found"]
-    
     async def process(
         self,
         content: Dict[str, Any],
@@ -84,21 +40,23 @@ class BaseAgent(ABC):
                 self._format_prompt(content)
             )
             
-            # Extract key points
-            key_points = self._extract_key_points(llm_response)
+            # Extract response text
+            response_text = str(llm_response.response)
             
-            # Get confidence and state update from analysis if present
-            analysis = getattr(llm_response, 'analysis', {})
-            if not isinstance(analysis, dict):
-                analysis = {}
+            # Extract key points - just use the response text split by newlines
+            key_points = [
+                line.strip() 
+                for line in response_text.split('\n') 
+                if line.strip() and not line.strip().startswith('#')
+            ]
             
-            # Convert LLM response to AgentResponse
+            # Create agent response
             response = AgentResponse(
-                response=llm_response.response,
+                response=response_text,
                 analysis=Analysis(
                     key_points=key_points,
-                    confidence=float(analysis.get("confidence", 0.0)),
-                    state_update=str(analysis.get("state_update", ""))
+                    confidence=0.8,  # Default confidence
+                    state_update="Processed content through agent lens"
                 )
             )
             
