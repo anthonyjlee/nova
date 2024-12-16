@@ -28,25 +28,33 @@ class BaseAgent(ABC):
         self.vector_store = vector_store  # Qdrant for memories
         self.agent_type = agent_type
     
-    def _extract_concept_text(self, point: Dict[str, Any]) -> str:
-        """Extract concept text from a dictionary point."""
-        # Try different possible key names for concept name
-        name = point.get('concept') or point.get('Name of concept') or point.get('name', 'Unknown concept')
+    def _extract_concept_text(self, concept: Dict[str, Any]) -> str:
+        """Extract concept text from a dictionary."""
+        # Get main concept fields
+        name = concept.get('name', 'Unknown concept')
+        type_str = concept.get('type', '')
+        desc = concept.get('description', '')
         
-        # Try different possible key names for type
-        type_str = point.get('type') or point.get('Type', '')
-        
-        # Try different possible key names for description
-        desc = point.get('description') or point.get('Description', '')
-        
-        # Try different possible key names for confidence
-        conf = point.get('confidence', 1.0)
+        # Get related concepts if any
+        related = concept.get('related_concepts', [])
+        related_names = []
+        if isinstance(related, list):
+            for rel in related:
+                if isinstance(rel, dict):
+                    related_names.append(rel.get('name', ''))
+                elif isinstance(rel, str):
+                    related_names.append(rel)
         
         # Format the concept text
+        text = f"{name}"
         if type_str:
-            return f"{name} ({type_str}, {conf:.1f}): {desc}"
-        else:
-            return f"{name} ({conf:.1f}): {desc}"
+            text += f" ({type_str})"
+        if desc:
+            text += f": {desc}"
+        if related_names:
+            text += f" [Related: {', '.join(related_names)}]"
+        
+        return text
     
     async def process(
         self,
@@ -60,29 +68,34 @@ class BaseAgent(ABC):
                 self._format_prompt(content)
             )
             
-            # Extract key points from response
+            # Extract key points from both concepts and analysis
             key_points = []
-            raw_points = llm_response.analysis.get("key_points", [])
             
-            # Handle both list and dict formats
-            for point in raw_points:
-                if isinstance(point, str):
-                    key_points.append(point)
-                elif isinstance(point, dict):
-                    # Handle nested concept structure
-                    if "concept" in point or "Name of concept" in point or "name" in point:
-                        key_points.append(self._extract_concept_text(point))
-                    else:
-                        # Handle other dictionary formats
-                        key_points.append(str(point))
+            # Handle concepts if present
+            if hasattr(llm_response, 'concepts'):
+                concepts = llm_response.concepts
+                if isinstance(concepts, list):
+                    for concept in concepts:
+                        if isinstance(concept, dict):
+                            key_points.append(self._extract_concept_text(concept))
             
-            # Convert LLM response to AgentResponse
+            # Handle analysis.key_points if present
+            if hasattr(llm_response, 'analysis'):
+                analysis_points = llm_response.analysis.get("key_points", [])
+                if isinstance(analysis_points, list):
+                    for point in analysis_points:
+                        if isinstance(point, str):
+                            key_points.append(point)
+                        elif isinstance(point, dict):
+                            key_points.append(self._extract_concept_text(point))
+            
+            # Create agent response
             response = AgentResponse(
                 response=llm_response.response,
                 analysis=Analysis(
                     key_points=key_points or ["No key points found"],
-                    confidence=float(llm_response.analysis.get("confidence", 0.8)),
-                    state_update=str(llm_response.analysis.get("state_update", "Processed content through agent lens"))
+                    confidence=float(getattr(llm_response, 'analysis', {}).get("confidence", 0.8)),
+                    state_update=str(getattr(llm_response, 'analysis', {}).get("state_update", "Processed content"))
                 )
             )
             
@@ -123,7 +136,7 @@ class BaseAgent(ABC):
                         'original_content': content,
                         'agent_response': response.dict(),
                         'agent_type': self.agent_type,
-                        'key_points': key_points,  # Store key points separately for easier retrieval
+                        'key_points': key_points,
                         'timestamp': metadata.get('timestamp') if metadata else None
                     },
                     metadata=metadata

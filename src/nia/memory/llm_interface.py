@@ -5,7 +5,7 @@ LLM interface for structured completions.
 import logging
 import json
 import aiohttp
-from typing import Dict, Any, Optional
+from typing import Dict, List, Any, Optional
 from datetime import datetime
 import re
 
@@ -17,17 +17,20 @@ class LLMResponse:
     def __init__(
         self,
         response: str,
-        analysis: Dict[str, Any]
+        analysis: Dict[str, Any],
+        concepts: Optional[List[Dict[str, Any]]] = None
     ):
         """Initialize response."""
         self.response = response
         self.analysis = analysis
+        self.concepts = concepts or []
     
     def dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return {
             "response": self.response,
-            "analysis": self.analysis
+            "analysis": self.analysis,
+            "concepts": self.concepts
         }
 
 class LLMInterface:
@@ -85,20 +88,20 @@ class LLMInterface:
             if not isinstance(data.get("response"), str):
                 data["response"] = str(data.get("response", ""))
             
+            # Handle concepts field
+            if "concepts" not in data:
+                data["concepts"] = []
+            elif not isinstance(data["concepts"], list):
+                data["concepts"] = []
+            
             # Handle analysis field
             if "analysis" not in data:
                 data["analysis"] = {}
             
             # Handle key_points field
             if "key_points" not in data["analysis"]:
-                # Try to extract from concepts if present
-                if "concepts" in data:
-                    data["analysis"]["key_points"] = data["concepts"]
-                else:
-                    data["analysis"]["key_points"] = []
-            
-            # Ensure key_points is a list
-            if isinstance(data["analysis"]["key_points"], str):
+                data["analysis"]["key_points"] = []
+            elif isinstance(data["analysis"]["key_points"], str):
                 data["analysis"]["key_points"] = [data["analysis"]["key_points"]]
             
             # Handle confidence field
@@ -134,7 +137,12 @@ class LLMInterface:
                     "name": "Concept name",
                     "type": "Concept type (e.g., idea, capability, emotion)",
                     "description": "Clear description of the concept",
-                    "confidence": 0.0-1.0
+                    "related_concepts": [
+                        {
+                            "name": "Related concept name",
+                            "type": "Related concept type"
+                        }
+                    ]
                 }
             ],
             "analysis": {
@@ -188,7 +196,8 @@ class LLMInterface:
                         
                         return LLMResponse(
                             response=data["response"],
-                            analysis=data["analysis"]
+                            analysis=data["analysis"],
+                            concepts=data["concepts"]
                         )
                 
             except Exception as e:
