@@ -5,10 +5,10 @@ A modular system for building intelligent agents with memory, reasoning, and lea
 ## Features
 
 - **Two-Layer Memory System**
-  - Episodic memory for experiences
-  - Semantic memory for knowledge
-  - Graph-based storage with Neo4j
-  - Memory consolidation
+  - Semantic Search Layer (Qdrant + LMStudio embeddings)
+  - Graph Knowledge Layer (Neo4j)
+  - Memory consolidation and integration
+  - Hybrid retrieval system
 
 - **DAG-Based Task Management**
   - Task decomposition
@@ -24,8 +24,9 @@ A modular system for building intelligent agents with memory, reasoning, and lea
   - Research abilities
 
 - **LLM Integration**
-  - Async completion
-  - JSON response handling
+  - LMStudio chat completions
+  - LMStudio embeddings
+  - Structured JSON responses
   - Error recovery
   - Context management
 
@@ -34,6 +35,7 @@ A modular system for building intelligent agents with memory, reasoning, and lea
 1. Python 3.9 or higher
 2. Docker and Docker Compose
 3. Git
+4. LMStudio running locally
 
 ## Installation
 
@@ -56,7 +58,41 @@ This will:
 
 ## Memory Architecture
 
-The system uses Neo4j to create a rich, interconnected memory graph:
+The system implements a two-layer memory architecture:
+
+### 1. Semantic Search Layer (Qdrant + LMStudio)
+
+The semantic layer uses Qdrant vector store with LMStudio embeddings for fast similarity search:
+
+```python
+# Generate embeddings through LMStudio
+curl http://127.0.0.1:1234/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "text-embedding-nomic-embed-text-v1.5@q8_0",
+    "input": "Memory content to embed"
+  }'
+
+# Store in Qdrant
+await vector_store.store_vector(
+    content={
+        'text': 'Memory content',
+        'type': 'interaction'
+    },
+    metadata={'timestamp': '2024-01-01T00:00:00'}
+)
+
+# Semantic search
+similar_memories = await vector_store.search_vectors(
+    content="Query text",
+    limit=5,
+    score_threshold=0.7
+)
+```
+
+### 2. Graph Knowledge Layer (Neo4j)
+
+The graph layer uses Neo4j to store structured knowledge and relationships:
 
 ```
 Graph Structure:
@@ -78,127 +114,103 @@ Graph Structure:
          [:MODIFIES]-> (DesireState)
 
 Node Types:
-- Task: Execution units with type, status, metadata
-- Memory: Episodic experiences or semantic knowledge
-- Concept: Extracted insights, patterns, beliefs
+- Memory: Episodic experiences with content and metadata
+- Concept: Extracted insights and patterns
 - State: System states (beliefs, emotions, desires)
+- Task: Execution units with status tracking
 
 Relationship Types:
-- GENERATED: Links tasks to their memory outputs
-- HAS_CONCEPT: Connects memories to extracted concepts
+- SIMILAR_TO: Links semantically similar memories
+- HAS_CONCEPT: Connects memories to concepts
 - RELATED_TO: Shows concept relationships
-- SIMILAR_TO: Links similar memories
-- DEPENDS_ON: Shows task dependencies
 - INFLUENCES/AFFECTS/MODIFIES: State changes
 ```
 
-## Neo4j Setup
+### Memory Integration
 
-The system uses Docker to run Neo4j, making it easy to set up and manage:
+The system combines both layers for comprehensive memory operations:
 
-1. Start Neo4j:
-```bash
-docker compose up -d
-```
-
-2. Access Neo4j Browser:
-- Visit http://localhost:7474
-- Connect using:
-  - URL: bolt://localhost:7687
-  - Username: neo4j
-  - Password: password (change in production)
-
-3. Example Queries:
-
-```cypher
-// View memory structure
-MATCH (m:Memory)-[r]->(n)
-RETURN m, r, n LIMIT 10;
-
-// Find concept relationships
-MATCH (c1:Concept)-[:RELATED_TO]->(c2:Concept)
-RETURN c1, c2;
-
-// Track task flow
-MATCH (t1:Task)-[:DEPENDS_ON]->(t2:Task)
-RETURN t1, t2;
-
-// Analyze state changes
-MATCH (t:Task)-[:AFFECTS]->(s:State)
-RETURN t, s ORDER BY t.timestamp;
-```
-
-## Memory Operations
-
-1. **Storage**
 ```python
-# Store interaction memory
-memory_id = await store.store_memory(
-    memory_type="interaction",
-    content={
-        'input': user_input,
-        'response': system_response,
-        'timestamp': datetime.now()
-    }
-)
+# Store new memory
+async def store_memory(content: Dict[str, Any]) -> str:
+    # 1. Store in vector store for semantic search
+    vector_id = await vector_store.store_vector(content)
+    
+    # 2. Find similar memories using embeddings
+    similar = await vector_store.search_vectors(content)
+    
+    # 3. Store in graph with relationships
+    memory_id = await graph_store.store_memory(
+        content=content,
+        similar_memories=similar
+    )
+    
+    return memory_id
+
+# Retrieve memories
+async def search_memories(query: str) -> List[Dict]:
+    # 1. Search vector store
+    vector_results = await vector_store.search_vectors(query)
+    
+    # 2. Search graph store
+    graph_results = await graph_store.search_memories(query)
+    
+    # 3. Combine and deduplicate results
+    return combine_results(vector_results, graph_results)
 ```
 
-2. **Retrieval**
+## LLM Integration
+
+The system uses LMStudio for both text generation and embeddings:
+
+### Chat Completions
+
 ```python
-# Get related memories
-memories = await store.get_related_memories(
-    content="user query",
-    memory_type="interaction",
-    limit=5
-)
+# Agent responses through LMStudio chat
+curl http://localhost:1234/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "messages": [
+      {"role": "system", "content": "System prompt"},
+      {"role": "user", "content": "User message"}
+    ]
+  }'
 ```
 
-3. **Concept Extraction**
+### Embeddings
+
 ```python
-# Extract and store concepts
-await store.extract_concepts(
-    memory_id=memory_id,
-    content={
-        'beliefs': extracted_beliefs,
-        'patterns': identified_patterns
-    }
-)
-```
-
-4. **Graph Traversal**
-```python
-# Get memory graph
-graph = await store.get_memory_graph(
-    memory_id=memory_id,
-    depth=2
-)
-```
-
-## Examples
-
-1. Test Neo4j Memory:
-```bash
-python examples/test_neo4j_memory.py
-```
-
-2. Test DAG System:
-```bash
-python examples/test_memory_dag.py
+# Generate embeddings for semantic search
+curl http://localhost:1234/v1/embeddings \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "text-embedding-nomic-embed-text-v1.5@q8_0",
+    "input": "Text to embed"
+  }'
 ```
 
 ## Development
 
-1. Install dev dependencies:
+1. Start services:
+```bash
+# Start Neo4j and Qdrant
+docker compose up -d
+
+# Start LMStudio
+# Run LMStudio application and load desired model
+```
+
+2. Install dev dependencies:
 ```bash
 pip install -e ".[dev]"
 ```
 
-2. Run tests:
+3. Run tests:
 ```bash
 pytest
 ```
 
-3. Run linting:
+4. Run linting:
 ```bash
 ruff check .
 black .
@@ -207,19 +219,19 @@ mypy .
 
 ## Docker Commands
 
-1. Start Neo4j:
+1. Start services:
 ```bash
 docker compose up -d
 ```
 
-2. Stop Neo4j:
+2. Stop services:
 ```bash
 docker compose down
 ```
 
 3. View logs:
 ```bash
-docker compose logs -f neo4j
+docker compose logs -f
 ```
 
 4. Reset data:
