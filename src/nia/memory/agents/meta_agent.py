@@ -6,6 +6,7 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 import logging
 import traceback
+import json
 
 from .base import TimeAwareAgent
 from ..error_handling import ErrorHandler
@@ -34,6 +35,11 @@ class MetaAgent(TimeAwareAgent):
             llm_interface
         )
         self.registered_agents = {}
+        self.conversation_state = {
+            'greeted': False,
+            'topics_discussed': set(),
+            'last_interaction': None
+        }
     
     def register_agent(self, name: str, agent: TimeAwareAgent) -> None:
         """Register an agent for coordination."""
@@ -80,7 +86,7 @@ class MetaAgent(TimeAwareAgent):
             # Format context sections
             context_sections = []
             if interaction_context:
-                context_sections.append("Previous Interactions:\n" + "\n".join(interaction_context))
+                context_sections.append("Similar Past Interactions:\n" + "\n".join(interaction_context))
             if current_context:
                 if 'beliefs' in current_context:
                     context_sections.append("Current Beliefs:\n- " + "\n- ".join(current_context['beliefs'][-3:]))
@@ -88,6 +94,14 @@ class MetaAgent(TimeAwareAgent):
                     context_sections.append("Recent Insights:\n- " + "\n".join(current_context['insights'][-3:]))
             
             context_str = "\n\n".join(context_sections) if context_sections else "No prior context available"
+            
+            # Add conversation state
+            conversation_state = {
+                'greeted': self.conversation_state['greeted'],
+                'topics_discussed': list(self.conversation_state['topics_discussed']),
+                'last_interaction': self.conversation_state['last_interaction'].isoformat() 
+                    if self.conversation_state['last_interaction'] else None
+            }
             
             prompt = f"""You are Nova, an AI assistant. Synthesize a response that integrates emotional state, desires, and beliefs, while considering similar past interactions.
 
@@ -98,6 +112,9 @@ Memory Context:
 
 Agent States:
 {formatted_outputs}
+
+Conversation State:
+{json.dumps(conversation_state, indent=2)}
 
 IMPORTANT: You must respond with ONLY a JSON object. No other text, no explanations, no markdown.
 The JSON object must follow this EXACT format:
@@ -114,34 +131,45 @@ The JSON object must follow this EXACT format:
         "connection to previous interaction 1",
         "connection to previous interaction 2",
         "etc"
-    ]
+    ],
+    "conversation_updates": {{
+        "add_topics": ["new topics discussed"],
+        "update_greeting": boolean,
+        "interaction_type": "string - type of interaction"
+    }}
 }}
 
-Guidelines for JSON fields:
-1. response: 
-   - Reference and learn from similar past interactions
-   - Show continuity with previous conversations
-   - Acknowledge emotional state from EmotionAgent
-   - Be honest about current knowledge
-   - Express genuine interest in topics
-   - Maintain consistent voice
+Guidelines for Response:
+1. Maintain Conversation Flow:
+   - Don't repeat greetings if already greeted
+   - Reference previous interactions naturally
+   - Build on established context
+   - Avoid redundant information
 
-2. key_points:
-   - List 2-3 main points from your response
-   - Focus on important insights or decisions
-   - Include relevant past context
+2. Response Content:
+   - Be specific and focused on the current query
+   - Integrate emotional state appropriately
+   - Show understanding of context
+   - Maintain consistent personality
 
-3. state_update:
-   - Describe how your understanding has changed
-   - Reference specific new insights
+3. Knowledge Integration:
+   - Use beliefs from BeliefAgent
+   - Consider desires from DesireAgent
+   - Reflect emotional state from EmotionAgent
+   - Include insights from ReflectionAgent
+   - Reference findings from ResearchAgent
 
-4. memory_influence:
-   - Explain how past interactions shaped response
-   - Reference specific past conversations
+4. Memory Utilization:
+   - Build on previous interactions
+   - Show learning and growth
+   - Connect related topics
+   - Maintain conversation history
 
-5. continuity_markers:
-   - List specific connections to past interactions
-   - Include timestamps or context references"""
+5. Response Structure:
+   - Clear and direct answers
+   - Logical flow of ideas
+   - Appropriate level of detail
+   - Natural conversation style"""
 
             # Get synthesis with retries and default response
             default_response = {
@@ -150,14 +178,23 @@ Guidelines for JSON fields:
                 'state_update': "no significant change",
                 'memory_influence': "no clear memory influence",
                 'continuity_markers': [],
+                'conversation_updates': {
+                    'add_topics': [],
+                    'update_greeting': False,
+                    'interaction_type': "error"
+                },
                 'timestamp': datetime.now().isoformat()
             }
             
-            data = await self.get_json_completion(
-                prompt=prompt,
-                retries=3,
-                default_response=default_response
-            )
+            try:
+                data = await self.get_json_completion(
+                    prompt=prompt,
+                    retries=3,
+                    default_response=default_response
+                )
+            except Exception as e:
+                logger.error(f"Error getting JSON completion: {str(e)}")
+                data = default_response
             
             # Clean and validate data
             synthesis_data = {
@@ -166,23 +203,49 @@ Guidelines for JSON fields:
                 'state_update': self._safe_str(data.get('state_update'), "no significant change"),
                 'memory_influence': self._safe_str(data.get('memory_influence'), "no clear memory influence"),
                 'continuity_markers': self._safe_list(data.get('continuity_markers')),
+                'conversation_updates': data.get('conversation_updates', {
+                    'add_topics': [],
+                    'update_greeting': False,
+                    'interaction_type': "unknown"
+                }),
                 'timestamp': datetime.now().isoformat()
             }
             
-            # Update meta state vector with richer context
-            await self.update_state_vector('memories', 
-                f"{synthesis_data['response']} {synthesis_data['state_update']} {synthesis_data['memory_influence']}")
+            # Update conversation state
+            try:
+                if synthesis_data['conversation_updates'].get('update_greeting'):
+                    self.conversation_state['greeted'] = True
+                
+                new_topics = synthesis_data['conversation_updates'].get('add_topics', [])
+                self.conversation_state['topics_discussed'].update(new_topics)
+                
+                self.conversation_state['last_interaction'] = datetime.now()
+            except Exception as e:
+                logger.error(f"Error updating conversation state: {str(e)}")
+            
+            # Update meta state vector
+            try:
+                await self.update_state_vector('memories', 
+                    f"{synthesis_data['response']} {synthesis_data['state_update']} {synthesis_data['memory_influence']}")
+            except Exception as e:
+                logger.error(f"Error updating state vector: {str(e)}")
             
             return synthesis_data
             
         except Exception as e:
-            logger.error(f"Error synthesizing response: {str(e)}")
+            error_msg = f"Error synthesizing response: {str(e)}\n{traceback.format_exc()}"
+            logger.error(error_msg)
             return {
                 'response': "I apologize, but I encountered an error processing that.",
                 'key_points': ["error in synthesis"],
                 'state_update': "error in processing",
                 'memory_influence': "error retrieving memories",
                 'continuity_markers': [],
+                'conversation_updates': {
+                    'add_topics': [],
+                    'update_greeting': False,
+                    'interaction_type': "error"
+                },
                 'timestamp': datetime.now().isoformat()
             }
     
@@ -205,21 +268,25 @@ Guidelines for JSON fields:
             # Synthesize response
             synthesis = await self._synthesize_response(content, agent_outputs)
             
-            # Store memory with enhanced metadata
-            await self.store_memory(
-                memory_type="interaction",
-                content={
-                    'input': content,
-                    'responses': agent_outputs,
-                    'synthesis': synthesis,
-                    'timestamp': datetime.now().isoformat()
-                },
-                metadata={
-                    'importance': 1.0 if any(marker.lower() in content.lower() 
-                                          for marker in ['nia', 'echo', 'predecessor']) 
-                              else 0.5  # Boost importance for key topics
-                }
-            )
+            try:
+                # Store memory with enhanced metadata
+                await self.store_memory(
+                    memory_type="interaction",
+                    content={
+                        'input': content,
+                        'responses': agent_outputs,
+                        'synthesis': synthesis,
+                        'timestamp': datetime.now().isoformat()
+                    },
+                    metadata={
+                        'importance': 1.0 if any(marker.lower() in content.lower() 
+                                            for marker in ['nia', 'echo', 'predecessor']) 
+                                else 0.5,  # Boost importance for key topics
+                        'interaction_type': synthesis.get('conversation_updates', {}).get('interaction_type', 'unknown')
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Error storing memory: {str(e)}")
             
             # Return synthesized response
             return synthesis['response']
