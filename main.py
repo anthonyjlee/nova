@@ -10,10 +10,10 @@ import asyncio
 from datetime import datetime
 from typing import Optional
 
-from src.nia.memory.llm_interface import LLMInterface
-from src.nia.memory.neo4j_store import Neo4jMemoryStore
-from src.nia.memory.vector_store import VectorStore
-from src.nia.memory.memory_integration import MemorySystem
+from nia.memory.llm_interface import LLMInterface
+from nia.memory.neo4j_store import Neo4jMemoryStore
+from nia.memory.vector_store import VectorStore
+from nia.memory.memory_integration import MemorySystem
 
 # Configure logging
 logging.basicConfig(
