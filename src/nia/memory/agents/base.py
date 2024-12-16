@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional, List
 from abc import ABC, abstractmethod
 from ..llm_interface import LLMInterface
 from ..neo4j_store import Neo4jMemoryStore
+from ..vector_store import VectorStore
 from ..memory_types import AgentResponse, Analysis, RelationshipTypes as RT
 
 logger = logging.getLogger(__name__)
@@ -18,11 +19,13 @@ class BaseAgent(ABC):
         self,
         llm: LLMInterface,
         store: Neo4jMemoryStore,
+        vector_store: Optional[VectorStore] = None,
         agent_type: str = "base"
     ):
         """Initialize agent."""
         self.llm = llm
-        self.store = store
+        self.store = store  # Neo4j store for concepts/systems
+        self.vector_store = vector_store or VectorStore()  # Qdrant for memories
         self.agent_type = agent_type
     
     async def process(
@@ -47,7 +50,7 @@ class BaseAgent(ABC):
                 )
             )
             
-            # Then enrich content with graph information
+            # Then enrich content with knowledge graph information
             try:
                 # Get system info if mentioned
                 systems_info = []
@@ -70,17 +73,16 @@ class BaseAgent(ABC):
                     if capabilities:
                         content["capabilities_info"] = capabilities
                 
-                # Get related memories
-                memories = await self.search_memories(
-                    content_pattern=str(content),
+                # Get related memories from vector store
+                similar_memories = await self.vector_store.search_vectors(
+                    content=str(content),
                     limit=5
                 )
-                if memories:
-                    content["related_memories"] = memories
+                if similar_memories:
+                    content["similar_memories"] = similar_memories
                 
-                # Store agent's response with enriched content
-                await self.store.store_memory(
-                    memory_type=f"{self.agent_type}_response",
+                # Store agent's response in vector store
+                await self.vector_store.store_vector(
                     content={
                         'original_content': content,
                         'agent_response': response.dict(),
@@ -173,57 +175,6 @@ class BaseAgent(ABC):
             
         except Exception as e:
             logger.error(f"Error getting capabilities: {str(e)}")
-            return []
-    
-    async def search_memories(
-        self,
-        content_pattern: Optional[str] = None,
-        memory_type: Optional[str] = None,
-        limit: int = 10
-    ) -> List[Dict]:
-        """Search memories in the graph."""
-        try:
-            conditions = []
-            params = {"limit": limit}
-            
-            if content_pattern:
-                conditions.append("m.content CONTAINS $content")
-                params["content"] = content_pattern
-            
-            if memory_type:
-                conditions.append("m.type = $type")
-                params["type"] = memory_type
-            
-            where_clause = " AND ".join(conditions) if conditions else "true"
-            
-            query = f"""
-            MATCH (m:Memory)
-            WHERE {where_clause}
-            WITH m
-            ORDER BY m.created_at DESC
-            LIMIT $limit
-            OPTIONAL MATCH (m)-[r]->(n)
-            WITH m, collect({{
-                type: type(r),
-                target_type: labels(n)[0],
-                target_id: n.id,
-                properties: properties(r)
-            }}) as rels
-            RETURN {{
-                id: m.id,
-                type: m.type,
-                content: m.content,
-                metadata: m.metadata,
-                created_at: toString(m.created_at),
-                relationships: rels
-            }} as memory
-            """
-            
-            result = await self.store.query_graph(query, params)
-            return [r["memory"] for r in result]
-            
-        except Exception as e:
-            logger.error(f"Error searching memories: {str(e)}")
             return []
     
     @abstractmethod

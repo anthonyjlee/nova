@@ -41,6 +41,8 @@ Thumbs.db
 *.log
 logs/
 .qdrant/
+data/qdrant/
+data/neo4j/
 agent_responses.log
 
 # Local development

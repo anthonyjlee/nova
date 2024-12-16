@@ -31,16 +31,16 @@ class MemorySystem:
     ):
         """Initialize memory system."""
         self.llm = llm
-        self.store = store
-        self.vector_store = vector_store or VectorStore()
+        self.store = store  # Neo4j for concepts/knowledge
+        self.vector_store = vector_store or VectorStore()  # Qdrant for memories
         
-        # Initialize agents
-        self.belief_agent = BeliefAgent(llm, store)
-        self.desire_agent = DesireAgent(llm, store)
-        self.emotion_agent = EmotionAgent(llm, store)
-        self.reflection_agent = ReflectionAgent(llm, store)
-        self.research_agent = ResearchAgent(llm, store)
-        self.meta_agent = MetaAgent(llm, store)
+        # Initialize agents with both stores
+        self.belief_agent = BeliefAgent(llm, store, self.vector_store)
+        self.desire_agent = DesireAgent(llm, store, self.vector_store)
+        self.emotion_agent = EmotionAgent(llm, store, self.vector_store)
+        self.reflection_agent = ReflectionAgent(llm, store, self.vector_store)
+        self.research_agent = ResearchAgent(llm, store, self.vector_store)
+        self.meta_agent = MetaAgent(llm, store, self.vector_store)
     
     async def process_interaction(
         self,
@@ -55,7 +55,7 @@ class MemorySystem:
                 metadata=metadata
             )
             
-            # Find similar memories
+            # Find similar memories from vector store
             similar_memories = await self.vector_store.search_vectors(
                 content=content,
                 limit=5
@@ -64,6 +64,13 @@ class MemorySystem:
             # Add similar memories to content
             if similar_memories:
                 content['similar_memories'] = similar_memories
+            
+            # Extract concepts to knowledge graph
+            await self.store.store_memory(
+                memory_type="concept",
+                content=content,
+                metadata=metadata
+            )
             
             # Process through belief system
             belief_response = await self.belief_agent.process(content, metadata)
@@ -102,16 +109,16 @@ class MemorySystem:
                 }
             )
             
-            # Store final response
-            await self.store.store_memory(
-                memory_type="interaction",
+            # Store final response in vector store
+            await self.vector_store.store_vector(
                 content={
                     'original_content': str(content),
                     'metadata': str(metadata) if metadata else "",
                     'vector_id': str(vector_id),
                     'similar_memories': str(similar_memories),
                     'final_response': str(response.dict())
-                }
+                },
+                metadata={'type': 'final_response'}
             )
             
             return response
@@ -125,7 +132,7 @@ class MemorySystem:
         query: str,
         limit: int = 10
     ) -> List[Dict[str, Any]]:
-        """Search memories using both vector and graph stores."""
+        """Search memories in vector store."""
         try:
             # Search vector store
             vector_results = await self.vector_store.search_vectors(
@@ -133,37 +140,18 @@ class MemorySystem:
                 limit=limit
             )
             
-            # Search graph store
-            graph_results = await self.store.search_memories(
-                content_pattern=query,
-                limit=limit
-            )
-            
-            # Combine and deduplicate results
-            combined_results = []
-            seen_ids = set()
-            
+            # Add source and score
+            results = []
             for result in vector_results:
-                if result['id'] not in seen_ids:
-                    seen_ids.add(result['id'])
-                    combined_results.append({
-                        'source': 'vector',
-                        'score': result.get('score', 0.0),
-                        **result
-                    })
+                results.append({
+                    'source': 'vector',
+                    'score': result.get('score', 0.0),
+                    **result
+                })
             
-            for result in graph_results:
-                if result['id'] not in seen_ids:
-                    seen_ids.add(result['id'])
-                    combined_results.append({
-                        'source': 'graph',
-                        'score': 1.0,  # Graph results are exact matches
-                        **result
-                    })
-            
-            # Sort by score and limit
-            combined_results.sort(key=lambda x: x['score'], reverse=True)
-            return combined_results[:limit]
+            # Sort by score
+            results.sort(key=lambda x: x['score'], reverse=True)
+            return results[:limit]
             
         except Exception as e:
             logger.error(f"Error searching memories: {str(e)}")
