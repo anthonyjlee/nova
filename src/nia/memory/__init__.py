@@ -24,11 +24,16 @@ class MemorySystem:
     
     def __init__(self):
         """Initialize memory system."""
-        # Core components
+        # Initialize core components in correct order
         self.memory_store = MemoryStore()
-        self.error_handler = ErrorHandler()
-        self.feedback_system = FeedbackSystem()
+        self.error_handler = ErrorHandler(self.memory_store)
+        self.feedback_system = FeedbackSystem(self.memory_store)
         
+        # Initialize agents
+        self._init_agents()
+    
+    def _init_agents(self):
+        """Initialize and register agents."""
         # Initialize agents
         self.meta_agent = MetaAgent(
             self.memory_store,
