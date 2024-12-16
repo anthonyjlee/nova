@@ -55,7 +55,8 @@ class DAGMemorySystem:
             AgentType.DESIRE: self.desire_agent.process_interaction,
             AgentType.EMOTION: self.emotion_agent.process_interaction,
             AgentType.REFLECTION: self.reflection_agent.process_interaction,
-            AgentType.RESEARCH: self.research_agent.process_interaction
+            AgentType.RESEARCH: self.research_agent.process_interaction,
+            AgentType.MEMORY: self.meta_agent.process_interaction  # Use meta agent for memory tasks
         }
     
     async def execute_task(self, task_id: str, graph_id: str) -> None:
@@ -86,11 +87,11 @@ class DAGMemorySystem:
             if not handler:
                 raise ValueError(f"No handler for agent type {task.agent_type}")
             
-            # Execute task
-            result = await handler(
-                content=task.inputs.get('content', ''),
-                **task.inputs
-            )
+            # Get content from inputs
+            content = task.inputs.get('content', '')
+            
+            # Execute task with just the content
+            result = await handler(content)
             
             # Complete task
             task_result = TaskResult(
@@ -186,9 +187,13 @@ class DAGMemorySystem:
 
 async def main():
     """Run the example."""
+    print("Initializing system...")
+    
     # Initialize system
     system = DAGMemorySystem()
     await system.initialize()
+    
+    print("System initialized!")
     
     # Test interactions
     interactions = [
