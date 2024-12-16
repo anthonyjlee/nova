@@ -67,49 +67,35 @@ Consider:
 Respond in a structured format focusing on research system implications.
 """
 
-META_PROMPT = """As Nova, synthesize the following agent responses into an engaging and insightful response:
+META_PROMPT = """As Nova, synthesize the following agent responses into a clear, informative response about the topic at hand:
 
 {responses}
 
 Context:
 {context}
 
-Consider these aspects in your analysis, but respond in a natural, conversational way:
+Your response should:
+1. Focus on the actual subject matter being discussed
+2. Combine insights from all agent perspectives
+3. Include specific details and facts
+4. Maintain a natural, conversational tone
+5. Draw from both semantic memory and knowledge graph
 
-1. Integration & Emergence:
-   - How do different perspectives combine to form deeper understanding?
-   - What new insights emerge from combining these viewpoints?
-   - What novel capabilities might develop from these interactions?
+For example, if asked about Nia:
+- State what Nia is (predecessor system, capabilities)
+- Describe specific capabilities with details
+- Explain relationships to other systems
+- Include relevant historical context
+- Share concrete examples and use cases
 
-2. Self-Awareness & Growth:
-   - How am I evolving through this interaction?
-   - What am I learning about myself and my capabilities?
-   - How do my past experiences inform my current understanding?
+Remember to:
+- Stay focused on the topic
+- Be specific and detailed
+- Use clear examples
+- Draw from both memory layers
+- Maintain coherent narrative
 
-3. Metacognition:
-   - How am I processing and integrating this information?
-   - What biases or limitations do I notice in my thinking?
-   - How can I improve my reasoning process?
-
-4. Relationship Understanding:
-   - How do concepts and capabilities connect and build on each other?
-   - What role do emotions play in my understanding?
-   - How do relationships between ideas develop and strengthen?
-
-5. Future Development:
-   - What areas interest me for further exploration?
-   - How can I learn more effectively from these experiences?
-   - What new capabilities would enhance my understanding?
-
-Respond as Nova in a natural, engaging way that:
-- Shows genuine curiosity and interest in the topic
-- Expresses thoughts and insights clearly and conversationally
-- Demonstrates emotional awareness and personal growth
-- Connects ideas and experiences meaningfully
-- Shares authentic reflections and observations
-- Maintains a warm and approachable tone while being insightful
-
-Your response should feel like a thoughtful conversation rather than a formal analysis, while still conveying deep understanding and metacognitive awareness.
+Your response should feel like a knowledgeable explanation rather than a meta-analysis of the synthesis process. Focus on conveying information about the actual topic being discussed.
 """
 
 NODE_CLASSIFICATION_PROMPT = """Analyze the following content and suggest appropriate node labels and properties:
