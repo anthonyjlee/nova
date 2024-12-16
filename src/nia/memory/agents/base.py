@@ -3,7 +3,7 @@ Base agent implementation.
 """
 
 import logging
-from typing import Dict, Any, Optional, List
+from typing import Dict, List, Any, Optional
 from abc import ABC, abstractmethod
 from ..llm_interface import LLMInterface
 from ..neo4j_store import Neo4jMemoryStore
@@ -48,6 +48,30 @@ class BaseAgent(ABC):
         else:
             return f"{name} ({conf:.1f}): {desc}"
     
+    def _extract_key_points(self, llm_response: Any) -> List[str]:
+        """Extract key points from LLM response."""
+        key_points = []
+        
+        # Try to get concepts from either key_points or concepts field
+        raw_points = (
+            llm_response.analysis.get("key_points", []) if hasattr(llm_response, 'analysis') else []
+        )
+        concepts = llm_response.get("concepts", [])
+        
+        # Process key_points
+        for point in raw_points:
+            if isinstance(point, str):
+                key_points.append(point)
+            elif isinstance(point, dict):
+                key_points.append(self._extract_concept_text(point))
+        
+        # Process concepts if present
+        for concept in concepts:
+            if isinstance(concept, dict):
+                key_points.append(self._extract_concept_text(concept))
+        
+        return key_points or ["No key points found"]
+    
     async def process(
         self,
         content: Dict[str, Any],
@@ -60,22 +84,21 @@ class BaseAgent(ABC):
                 self._format_prompt(content)
             )
             
-            # Extract key points from response
-            key_points = []
-            raw_points = llm_response.analysis.get("key_points", [])
-            for point in raw_points:
-                if isinstance(point, str):
-                    key_points.append(point)
-                elif isinstance(point, dict):
-                    key_points.append(self._extract_concept_text(point))
+            # Extract key points
+            key_points = self._extract_key_points(llm_response)
+            
+            # Get confidence and state update from analysis if present
+            analysis = getattr(llm_response, 'analysis', {})
+            if not isinstance(analysis, dict):
+                analysis = {}
             
             # Convert LLM response to AgentResponse
             response = AgentResponse(
                 response=llm_response.response,
                 analysis=Analysis(
                     key_points=key_points,
-                    confidence=float(llm_response.analysis.get("confidence", 0.0)),
-                    state_update=str(llm_response.analysis.get("state_update", ""))
+                    confidence=float(analysis.get("confidence", 0.0)),
+                    state_update=str(analysis.get("state_update", ""))
                 )
             )
             
