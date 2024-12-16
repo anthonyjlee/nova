@@ -28,6 +28,26 @@ class BaseAgent(ABC):
         self.vector_store = vector_store  # Qdrant for memories
         self.agent_type = agent_type
     
+    def _extract_concept_text(self, point: Dict[str, Any]) -> str:
+        """Extract concept text from a dictionary point."""
+        # Try different possible key names for concept name
+        name = point.get('concept') or point.get('Name of concept') or point.get('name', 'Unknown concept')
+        
+        # Try different possible key names for type
+        type_str = point.get('type') or point.get('Type', '')
+        
+        # Try different possible key names for description
+        desc = point.get('description') or point.get('Description', '')
+        
+        # Try different possible key names for confidence
+        conf = point.get('confidence', 1.0)
+        
+        # Format the concept text
+        if type_str:
+            return f"{name} ({type_str}, {conf:.1f}): {desc}"
+        else:
+            return f"{name} ({conf:.1f}): {desc}"
+    
     async def process(
         self,
         content: Dict[str, Any],
@@ -47,14 +67,7 @@ class BaseAgent(ABC):
                 if isinstance(point, str):
                     key_points.append(point)
                 elif isinstance(point, dict):
-                    # Handle nested concept structure
-                    if "concept" in point:
-                        desc = point.get("description", "")
-                        conf = point.get("confidence", 1.0)
-                        key_points.append(f"{point['concept']} ({conf:.1f}): {desc}")
-                    else:
-                        # Handle other dictionary formats
-                        key_points.append(str(point))
+                    key_points.append(self._extract_concept_text(point))
             
             # Convert LLM response to AgentResponse
             response = AgentResponse(
