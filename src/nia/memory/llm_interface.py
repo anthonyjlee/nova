@@ -78,66 +78,38 @@ class LLMInterface:
             logger.error(f"Failed to fix JSON: {str(e)}")
             raise
     
-    def _validate_response(self, data: Dict[str, Any]) -> bool:
-        """Validate response format."""
-        try:
-            # Check required fields
-            if not isinstance(data.get("response"), str):
-                logger.warning("Missing required response field")
-                return False
-            
-            analysis = data.get("analysis")
-            if not isinstance(analysis, dict):
-                logger.warning("Missing required analysis field")
-                return False
-            
-            # Check analysis fields
-            if not isinstance(analysis.get("key_points"), list):
-                logger.warning("Missing required key_points field")
-                return False
-            
-            if not isinstance(analysis.get("confidence"), (int, float)):
-                logger.warning("Missing required confidence field")
-                return False
-            
-            if not isinstance(analysis.get("state_update"), str):
-                logger.warning("Missing required state_update field")
-                return False
-            
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error validating response: {str(e)}")
-            return False
-    
     def _format_response(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Format response to standard structure."""
         try:
-            # Ensure response is a string
-            if isinstance(data.get("response"), dict):
-                data["response"] = json.dumps(data["response"])
-            elif not isinstance(data.get("response"), str):
+            # Handle response field
+            if not isinstance(data.get("response"), str):
                 data["response"] = str(data.get("response", ""))
             
-            # Ensure analysis exists
+            # Handle analysis field
             if "analysis" not in data:
                 data["analysis"] = {}
             
-            # Ensure key_points is a list
+            # Handle key_points field
             if "key_points" not in data["analysis"]:
-                data["analysis"]["key_points"] = []
-            elif isinstance(data["analysis"]["key_points"], str):
+                # Try to extract from concepts if present
+                if "concepts" in data:
+                    data["analysis"]["key_points"] = data["concepts"]
+                else:
+                    data["analysis"]["key_points"] = []
+            
+            # Ensure key_points is a list
+            if isinstance(data["analysis"]["key_points"], str):
                 data["analysis"]["key_points"] = [data["analysis"]["key_points"]]
             
-            # Ensure confidence is a float
+            # Handle confidence field
             if "confidence" not in data["analysis"]:
-                data["analysis"]["confidence"] = 0.5
+                data["analysis"]["confidence"] = 0.8
             else:
                 data["analysis"]["confidence"] = float(data["analysis"]["confidence"])
             
-            # Ensure state_update exists
+            # Handle state_update field
             if "state_update" not in data["analysis"]:
-                data["analysis"]["state_update"] = "No state update provided"
+                data["analysis"]["state_update"] = "Processed interaction"
             elif not isinstance(data["analysis"]["state_update"], str):
                 data["analysis"]["state_update"] = str(data["analysis"]["state_update"])
             
@@ -154,16 +126,25 @@ class LLMInterface:
     ) -> LLMResponse:
         """Get structured completion from LLM."""
         system_prompt = """You are Nova, an AI assistant focused on self-discovery and growth. 
-        Respond in JSON format with this structure:
+        Analyze the input and provide a response in this JSON format:
         {
             "response": "Your main response as a clear, engaging message",
+            "concepts": [
+                {
+                    "name": "Concept name",
+                    "type": "Concept type (e.g., idea, capability, emotion)",
+                    "description": "Clear description of the concept",
+                    "confidence": 0.0-1.0
+                }
+            ],
             "analysis": {
-                "key_points": ["List of key insights and observations"],
+                "key_points": ["List of key insights"],
                 "confidence": 0.0-1.0,
-                "state_update": "How this interaction affects your understanding"
+                "state_update": "How this affects your understanding"
             }
         }
-        Be natural and conversational while maintaining analytical depth."""
+        
+        Focus on extracting clear concepts and their relationships. Be natural while maintaining analytical depth."""
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -202,10 +183,6 @@ class LLMInterface:
                         
                         # Format response
                         data = self._format_response(data)
-                        
-                        # Validate response
-                        if not self._validate_response(data):
-                            raise ValueError("Invalid response format")
                         
                         logger.info(f"Raw LLM response: {json.dumps(data, indent=2)}")
                         
