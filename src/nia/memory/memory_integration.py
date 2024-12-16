@@ -5,10 +5,12 @@ Memory system integration.
 import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
+import json
 
 from .llm_interface import LLMInterface
 from .neo4j_store import Neo4jMemoryStore
 from .vector_store import VectorStore
+from .memory_types import AgentResponse
 from .agents import (
     BeliefAgent,
     DesireAgent,
@@ -19,6 +21,16 @@ from .agents import (
 )
 
 logger = logging.getLogger(__name__)
+
+def serialize_datetime(obj: Any) -> Any:
+    """Serialize datetime objects to ISO format strings."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {k: serialize_datetime(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [serialize_datetime(item) for item in obj]
+    return obj
 
 class MemorySystem:
     """Integrated memory system."""
@@ -46,38 +58,27 @@ class MemorySystem:
         self,
         content: str,
         metadata: Optional[Dict] = None
-    ) -> Any:
+    ) -> AgentResponse:
         """Process an interaction through the memory system."""
         try:
-            # Convert string content to dict
-            content_dict = {
-                'content': content,
-                'timestamp': datetime.now().isoformat()
-            }
-            
             # Store in episodic memory (raw interaction)
             episodic_id = await self.vector_store.store_vector(
-                content=content_dict,
-                metadata=metadata,
+                content=serialize_datetime({'content': content}),
+                metadata=serialize_datetime(metadata),
                 layer="episodic"
             )
             
             # Find similar memories from both layers
             similar_memories = await self.vector_store.search_vectors(
-                content=content_dict,
+                content=serialize_datetime({'content': content}),
                 limit=5
             )
             
-            # Add similar memories to content
-            if similar_memories:
-                content_dict['similar_memories'] = similar_memories
-            
-            # Extract concepts to knowledge graph
-            await self.store.store_memory(
-                memory_type="concept",
-                content=content_dict,
-                metadata=metadata
-            )
+            # Create content dict for agents
+            content_dict = {
+                'content': content,
+                'similar_memories': similar_memories if similar_memories else []
+            }
             
             # Process through belief system
             belief_response = await self.belief_agent.process(content_dict, metadata)
@@ -108,32 +109,39 @@ class MemorySystem:
                     'reflection': reflection_response,
                     'research': research_response
                 },
-                context={
+                context=serialize_datetime({
                     'original_content': content_dict,
                     'metadata': metadata,
                     'episodic_id': episodic_id,
                     'similar_memories': similar_memories
-                }
+                })
             )
             
             # Store synthesized response in semantic memory
             await self.vector_store.store_vector(
-                content={
+                content=serialize_datetime({
                     'original_content': content_dict,
                     'metadata': metadata,
                     'episodic_id': episodic_id,
                     'similar_memories': similar_memories,
-                    'final_response': response.dict(),
+                    'final_response': serialize_datetime(response.dict()),
                     'agent_responses': {
-                        'belief': belief_response.dict(),
-                        'desire': desire_response.dict(),
-                        'emotion': emotion_response.dict(),
-                        'reflection': reflection_response.dict(),
-                        'research': research_response.dict()
+                        'belief': serialize_datetime(belief_response.dict()),
+                        'desire': serialize_datetime(desire_response.dict()),
+                        'emotion': serialize_datetime(emotion_response.dict()),
+                        'reflection': serialize_datetime(reflection_response.dict()),
+                        'research': serialize_datetime(research_response.dict())
                     }
-                },
+                }),
                 metadata={'type': 'synthesized_response'},
                 layer="semantic"
+            )
+            
+            # Extract concepts to knowledge graph
+            await self.store.store_memory(
+                memory_type="concept",
+                content=serialize_datetime(content_dict),
+                metadata=serialize_datetime(metadata)
             )
             
             return response
@@ -184,7 +192,7 @@ class MemorySystem:
         try:
             # Search both memory layers
             vector_results = await self.vector_store.search_vectors(
-                content={'content': query},
+                content=serialize_datetime({'content': query}),
                 limit=limit
             )
             

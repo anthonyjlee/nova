@@ -10,6 +10,7 @@ A modular system for building intelligent agents with memory, reasoning, and lea
   - Concept extraction and linking
   - Memory consolidation and integration
   - Hybrid retrieval system
+  - Robust datetime handling and serialization
 
 - **DAG-Based Task Management**
   - Task decomposition
@@ -23,6 +24,7 @@ A modular system for building intelligent agents with memory, reasoning, and lea
   - Emotion processing
   - Reflection capabilities
   - Research abilities
+  - Consistent datetime handling across agents
 
 - **LLM Integration**
   - LMStudio chat completions
@@ -75,18 +77,25 @@ curl http://127.0.0.1:1234/v1/embeddings \
     "input": "Memory content to embed"
   }'
 
-# Store in Qdrant
+# Store in Qdrant with proper datetime handling
 await vector_store.store_vector(
-    content={
+    content=serialize_datetime({
         'text': 'Memory content',
-        'type': 'interaction'
-    },
-    metadata={'timestamp': '2024-01-01T00:00:00'}
+        'type': 'interaction',
+        'timestamp': datetime.now()
+    }),
+    metadata=serialize_datetime({
+        'created_at': datetime.now(),
+        'type': 'memory'
+    })
 )
 
-# Semantic search
+# Semantic search with datetime serialization
 similar_memories = await vector_store.search_vectors(
-    content="Query text",
+    content=serialize_datetime({
+        'text': "Query text",
+        'timestamp': datetime.now()
+    }),
     limit=5,
     score_threshold=0.7
 )
@@ -145,22 +154,26 @@ Relationship Types:
 The system combines both layers for comprehensive memory operations:
 
 ```python
-# Store new memory with concept extraction
+# Store new memory with concept extraction and datetime handling
 async def store_memory(content: Dict[str, Any]) -> str:
     # 1. Store in vector store for semantic search
-    vector_id = await vector_store.store_vector(content)
+    vector_id = await vector_store.store_vector(
+        content=serialize_datetime(content)
+    )
     
     # 2. Find similar memories using embeddings
-    similar = await vector_store.search_vectors(content)
+    similar = await vector_store.search_vectors(
+        content=serialize_datetime(content)
+    )
     
     # 3. Extract concepts using LLM
     concepts = await extract_concepts(content)
     
     # 4. Store in graph with relationships
     memory_id = await graph_store.store_memory(
-        content=content,
-        similar_memories=similar,
-        concepts=concepts
+        content=serialize_datetime(content),
+        similar_memories=serialize_datetime(similar),
+        concepts=serialize_datetime(concepts)
     )
     
     return memory_id
@@ -168,7 +181,9 @@ async def store_memory(content: Dict[str, Any]) -> str:
 # Retrieve memories with concepts
 async def search_memories(query: str) -> List[Dict]:
     # 1. Search vector store
-    vector_results = await vector_store.search_vectors(query)
+    vector_results = await vector_store.search_vectors(
+        content=serialize_datetime({'content': query})
+    )
     
     # 2. Search graph store with concepts
     graph_results = await graph_store.search_memories(
@@ -177,7 +192,9 @@ async def search_memories(query: str) -> List[Dict]:
     )
     
     # 3. Combine and deduplicate results
-    return combine_results(vector_results, graph_results)
+    return serialize_datetime(
+        combine_results(vector_results, graph_results)
+    )
 ```
 
 ## LLM Integration
@@ -213,7 +230,7 @@ curl http://localhost:1234/v1/embeddings \
 ### Concept Extraction
 
 ```python
-# Extract concepts using LLM
+# Extract concepts using LLM with datetime handling
 async def extract_concepts(content: str) -> List[Dict]:
     prompt = """Extract key concepts from the content.
     Include:
@@ -226,7 +243,11 @@ async def extract_concepts(content: str) -> List[Dict]:
     response = await llm.get_structured_completion(
         prompt.format(content=content)
     )
-    return response.analysis.get("concepts", [])
+    
+    # Ensure datetime objects are properly serialized
+    return serialize_datetime(
+        response.analysis.get("concepts", [])
+    )
 ```
 
 ## Development

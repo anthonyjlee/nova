@@ -5,10 +5,21 @@ Neo4j concept extraction and relationship management.
 import logging
 from neo4j import Session
 from typing import Dict, List, Any, Optional
+from datetime import datetime
 from ..llm_interface import LLMInterface
 from ..vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
+
+def serialize_datetime(obj: Any) -> Any:
+    """Serialize datetime objects to ISO format strings."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {k: serialize_datetime(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [serialize_datetime(item) for item in obj]
+    return obj
 
 class Neo4jConceptManager:
     """Manages concept extraction and relationships in Neo4j."""
@@ -40,17 +51,8 @@ class Neo4jConceptManager:
         
         try:
             response = await self.llm.get_structured_completion(prompt.format(content=content))
-            # Extract concepts from key_points which contain the concept objects
-            concepts = []
-            for point in response.analysis["key_points"]:
-                if isinstance(point, dict) and "concept_name" in point:
-                    concepts.append({
-                        "name": point["concept_name"],
-                        "type": point.get("concept_type", "concept"),
-                        "description": point.get("concept_description", ""),
-                        "related": point.get("related_concepts", [])
-                    })
-            return concepts
+            # The concepts are already in the right format in response.concepts
+            return response.concepts
         except Exception as e:
             logger.error(f"Error extracting concepts: {str(e)}")
             return []
@@ -92,17 +94,18 @@ class Neo4jConceptManager:
             # Update the concept in Neo4j
             self.update_concept(merged)
             
-            # Update vector store
+            # Update vector store with serialized datetime
             await self.vector_store.store_vector(
-                content={
+                content=serialize_datetime({
                     "name": merged["name"],
                     "type": "concept",
                     "description": merged["description"]
-                },
-                metadata={
+                }),
+                metadata=serialize_datetime({
                     "id": merged["name"],
                     "type": "concept"
-                }
+                }),
+                layer="semantic"
             )
             
             return merged
@@ -137,17 +140,18 @@ class Neo4jConceptManager:
                     concept_desc=concept["description"]
                 )
                 
-                # Store in vector store
+                # Store in vector store with serialized datetime
                 await self.vector_store.store_vector(
-                    content={
+                    content=serialize_datetime({
                         "name": concept["name"],
                         "type": "concept",
                         "description": concept["description"]
-                    },
-                    metadata={
+                    }),
+                    metadata=serialize_datetime({
                         "id": concept["name"],
                         "type": "concept"
-                    }
+                    }),
+                    layer="semantic"
                 )
             
             # Create relationships between concepts
@@ -200,7 +204,8 @@ class Neo4jConceptManager:
             similar_concepts = await self.vector_store.search_vectors(
                 content=query,
                 filter={"type": "concept"},
-                limit=limit
+                limit=limit,
+                layer="semantic"
             )
             
             # Get full concept details from Neo4j

@@ -7,49 +7,38 @@ from typing import List, Dict, Any, Optional
 from datetime import datetime
 import json
 
-@dataclass
-class Analysis:
-    """Analysis of content."""
-    key_points: List[str]
-    confidence: float
-    state_update: str
-
-    def dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "key_points": self.key_points,
-            "confidence": self.confidence,
-            "state_update": self.state_update
-        }
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Analysis':
-        """Create from dictionary."""
-        return cls(
-            key_points=data.get("key_points", []),
-            confidence=float(data.get("confidence", 0.0)),
-            state_update=str(data.get("state_update", ""))
-        )
+def serialize_datetime(obj: Any) -> Any:
+    """Serialize datetime objects to ISO format strings."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {k: serialize_datetime(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [serialize_datetime(item) for item in obj]
+    return obj
 
 @dataclass
 class AgentResponse:
     """Response from an agent."""
     response: str
-    analysis: Analysis
+    concepts: List[Dict[str, Any]]
+    timestamp: datetime = field(default_factory=datetime.now)
 
     def dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
-        return {
+        return serialize_datetime({
             "response": self.response,
-            "analysis": self.analysis.dict()
-        }
+            "concepts": self.concepts,
+            "timestamp": self.timestamp
+        })
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'AgentResponse':
         """Create from dictionary."""
         return cls(
             response=str(data.get("response", "")),
-            analysis=Analysis.from_dict(data.get("analysis", {}))
+            concepts=list(data.get("concepts", [])),
+            timestamp=datetime.fromisoformat(data.get("timestamp", datetime.now().isoformat()))
         )
 
 @dataclass
@@ -63,13 +52,13 @@ class Memory:
 
     def dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
-        return {
+        return serialize_datetime({
             "id": self.id,
             "type": self.type,
-            "content": json.dumps(self.content, default=str),
-            "metadata": json.dumps(self.metadata or {}, default=str),
-            "created_at": self.created_at.isoformat()
-        }
+            "content": self.content,
+            "metadata": self.metadata or {},
+            "created_at": self.created_at
+        })
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Memory':
@@ -77,8 +66,8 @@ class Memory:
         return cls(
             id=str(data.get("id", "")),
             type=str(data.get("type", "")),
-            content=json.loads(data.get("content", "{}")),
-            metadata=json.loads(data.get("metadata", "{}")),
+            content=data.get("content", {}),
+            metadata=data.get("metadata", {}),
             created_at=datetime.fromisoformat(data.get("created_at", datetime.now().isoformat()))
         )
 
@@ -92,12 +81,12 @@ class Capability:
 
     def dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
-        return {
+        return serialize_datetime({
             "id": self.id,
             "type": self.type,
             "description": self.description,
             "confidence": self.confidence
-        }
+        })
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Capability':
@@ -120,13 +109,13 @@ class AISystem:
 
     def dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
-        return {
+        return serialize_datetime({
             "id": self.id,
             "name": self.name,
             "type": self.type,
             "capabilities": self.capabilities,
-            "created_at": self.created_at.isoformat()
-        }
+            "created_at": self.created_at
+        })
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'AISystem':
@@ -150,13 +139,13 @@ class Evolution:
 
     def dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
-        return {
+        return serialize_datetime({
             "id": self.id,
             "from_system": self.from_system,
             "to_system": self.to_system,
             "changes": self.changes,
-            "created_at": self.created_at.isoformat()
-        }
+            "created_at": self.created_at
+        })
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'Evolution':

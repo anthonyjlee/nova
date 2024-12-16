@@ -5,12 +5,23 @@ Base agent implementation.
 import logging
 from typing import Dict, List, Any, Optional
 from abc import ABC, abstractmethod
+from datetime import datetime
 from ..llm_interface import LLMInterface
 from ..neo4j_store import Neo4jMemoryStore
 from ..vector_store import VectorStore
-from ..memory_types import AgentResponse, Analysis
+from ..memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
+
+def serialize_datetime(obj: Any) -> Any:
+    """Serialize datetime objects to ISO format strings."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {k: serialize_datetime(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [serialize_datetime(item) for item in obj]
+    return obj
 
 class BaseAgent(ABC):
     """Base agent class."""
@@ -35,7 +46,7 @@ class BaseAgent(ABC):
             name = concept.get('name', 'Unknown concept')
             type_str = concept.get('type', '')
             desc = concept.get('description', '')
-            related = concept.get('related_concepts', [])
+            related = concept.get('related', [])
             
             # Format text
             text_parts = []
@@ -71,26 +82,10 @@ class BaseAgent(ABC):
             )
             logger.debug(f"Got LLM response: {llm_response.dict()}")
             
-            # Format concepts into key points
-            key_points = []
-            
-            # Add formatted concepts
-            for concept in llm_response.concepts:
-                try:
-                    concept_text = self._format_concept_text(concept)
-                    key_points.append(concept_text)
-                    logger.debug(f"Added concept: {concept_text}")
-                except Exception as e:
-                    logger.error(f"Error processing concept: {str(e)}")
-            
             # Create agent response
             response = AgentResponse(
-                response=llm_response.response,
-                analysis=Analysis(
-                    key_points=key_points or ["No concepts found"],
-                    confidence=llm_response.confidence,
-                    state_update=llm_response.state_update
-                )
+                response=f"I've identified {len(llm_response.concepts)} key concepts in your message.",
+                concepts=llm_response.concepts
             )
             
             # Enrich with knowledge graph info
@@ -118,22 +113,23 @@ class BaseAgent(ABC):
                 
                 # Get related memories
                 similar_memories = await self.vector_store.search_vectors(
-                    content=str(content),
+                    content=serialize_datetime(content),
                     limit=5
                 )
                 if similar_memories:
                     content["similar_memories"] = similar_memories
                 
-                # Store in vector store
+                # Store in vector store with serialized datetime objects
                 await self.vector_store.store_vector(
-                    content={
+                    content=serialize_datetime({
                         'original_content': content,
-                        'agent_response': response.dict(),
+                        'agent_response': serialize_datetime(response.dict()),
                         'agent_type': self.agent_type,
                         'concepts': llm_response.concepts,
                         'timestamp': metadata.get('timestamp') if metadata else None
-                    },
-                    metadata=metadata
+                    }),
+                    metadata=serialize_datetime(metadata),
+                    layer="semantic"
                 )
             except Exception as e:
                 logger.error(f"Failed to enrich/store memory: {str(e)}")

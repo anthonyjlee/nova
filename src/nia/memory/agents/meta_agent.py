@@ -1,104 +1,91 @@
 """
-Meta agent for synthesizing responses from other agents.
+Meta agent for synthesizing responses.
 """
 
 import logging
-from typing import Dict, Any
-from .base import BaseAgent
-from ..llm_interface import LLMInterface
-from ..neo4j_store import Neo4jMemoryStore
-from ..vector_store import VectorStore
-from ..prompts import META_PROMPT
+from typing import Dict, List, Any, Optional
+from datetime import datetime
+from .base import BaseAgent, serialize_datetime
+from ..memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
 class MetaAgent(BaseAgent):
-    """Agent for synthesizing responses."""
+    """Meta agent for synthesizing responses."""
     
-    def __init__(
-        self,
-        llm: LLMInterface,
-        store: Neo4jMemoryStore,
-        vector_store: VectorStore
-    ):
+    def __init__(self, *args, **kwargs):
         """Initialize meta agent."""
-        super().__init__(llm, store, vector_store, "meta")
+        super().__init__(*args, agent_type="meta", **kwargs)
+    
+    def _format_prompt(self, content: Dict[str, Any]) -> str:
+        """Format prompt for LLM."""
+        return f"""Analyze the following content and extract key concepts:
+        {content}"""
     
     async def synthesize_responses(
         self,
-        responses: Dict[str, Any],
+        responses: Dict[str, AgentResponse],
         context: Dict[str, Any]
-    ) -> Any:
-        """Synthesize responses from other agents."""
+    ) -> AgentResponse:
+        """Synthesize responses from multiple agents."""
         try:
-            # Format content for synthesis
-            content = {
-                "agent_responses": responses,
-                **context
-            }
+            # Combine all concepts from agent responses
+            all_concepts = []
+            for agent_type, response in responses.items():
+                all_concepts.extend(response.concepts)
             
-            # Process through meta agent
-            return await self.process(content)
+            # Create synthesized response text
+            response_text = "Based on my analysis:\n\n"
+            
+            # Add belief perspective
+            if responses.get('belief'):
+                response_text += f"From a belief perspective: {responses['belief'].response}\n\n"
+            
+            # Add desire perspective
+            if responses.get('desire'):
+                response_text += f"Regarding desires and goals: {responses['desire'].response}\n\n"
+            
+            # Add emotional perspective
+            if responses.get('emotion'):
+                response_text += f"Emotionally: {responses['emotion'].response}\n\n"
+            
+            # Add reflection
+            if responses.get('reflection'):
+                response_text += f"Upon reflection: {responses['reflection'].response}\n\n"
+            
+            # Add research insights
+            if responses.get('research'):
+                response_text += f"Research suggests: {responses['research'].response}\n"
+            
+            # Create synthesized response
+            response = AgentResponse(
+                response=response_text.strip(),
+                concepts=all_concepts
+            )
+            
+            # Store synthesized response in vector store
+            await self.vector_store.store_vector(
+                content=serialize_datetime({
+                    'original_content': context.get('original_content'),
+                    'metadata': context.get('metadata'),
+                    'episodic_id': context.get('episodic_id'),
+                    'similar_memories': context.get('similar_memories'),
+                    'final_response': serialize_datetime(response.dict()),
+                    'agent_responses': {
+                        agent_type: serialize_datetime(agent_response.dict())
+                        for agent_type, agent_response in responses.items()
+                    }
+                }),
+                metadata={'type': 'synthesized_response'},
+                layer="semantic"
+            )
+            
+            return response
             
         except Exception as e:
             logger.error(f"Error synthesizing responses: {str(e)}")
-            raise
-    
-    def _format_prompt(self, content: Dict[str, Any]) -> str:
-        """Format prompt for response synthesis."""
-        # Format content for prompt
-        formatted_content = []
-        
-        # Add agent responses
-        if content.get('agent_responses'):
-            formatted_content.append("Agent Responses:")
-            for agent_type, response in content['agent_responses'].items():
-                formatted_content.append(f"\n{agent_type.upper()} RESPONSE:")
-                formatted_content.append(f"Response: {response.response}")
-                formatted_content.append("Analysis:")
-                for point in response.analysis.key_points:
-                    formatted_content.append(f"- {point}")
-                formatted_content.append(f"Confidence: {response.analysis.confidence}")
-                formatted_content.append(f"State Update: {response.analysis.state_update}")
-        
-        # Add original content
-        if content.get('original_content'):
-            if isinstance(content['original_content'], str):
-                formatted_content.append(f"\nOriginal Content: {content['original_content']}")
-            elif isinstance(content['original_content'], dict):
-                formatted_content.append("\nOriginal Content:")
-                for key, value in content['original_content'].items():
-                    formatted_content.append(f"{key}: {value}")
-        
-        # Add any system info
-        if content.get('systems_info'):
-            formatted_content.append("\nSystems Information:")
-            for info in content['systems_info']:
-                system = info['system']
-                formatted_content.append(f"- {system['name']} ({system['type']})")
-                formatted_content.append(f"  Created: {system['created_at']}")
-                if system.get('capabilities'):
-                    formatted_content.append("  Capabilities:")
-                    for cap in system['capabilities']:
-                        formatted_content.append(f"  - {cap['description']} ({cap['type']})")
-                if info.get('relationships'):
-                    formatted_content.append("  Relationships:")
-                    for rel in info['relationships']:
-                        formatted_content.append(f"  - {rel['relationship_type']} -> {rel['target_name']}")
-        
-        # Add any related memories
-        if content.get('similar_memories'):
-            formatted_content.append("\nSimilar Memories:")
-            for memory in content['similar_memories']:
-                formatted_content.append(f"- {memory['type']} ({memory['created_at']})")
-                if isinstance(memory.get('content'), str):
-                    formatted_content.append(f"  Content: {memory['content'][:100]}...")
-                if memory.get('relationships'):
-                    formatted_content.append("  Relationships:")
-                    for rel in memory['relationships']:
-                        formatted_content.append(f"  - {rel['type']} -> {rel['target_type']}")
-        
-        # Format final prompt
-        return META_PROMPT.format(
-            content="\n".join(formatted_content)
-        )
+            # Return basic response on error
+            return AgentResponse(
+                response="I'm processing multiple perspectives on this.",
+                concepts=[]
+            )

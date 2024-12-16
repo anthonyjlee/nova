@@ -5,6 +5,7 @@ Neo4j AI system and capability management.
 import logging
 from neo4j import Session
 from typing import Dict, List, Any, Optional
+from datetime import datetime
 from ..memory_types import (
     AISystem, Capability,
     DEFAULT_CAPABILITIES,
@@ -13,6 +14,16 @@ from ..memory_types import (
 )
 
 logger = logging.getLogger(__name__)
+
+def serialize_datetime(obj: Any) -> Any:
+    """Serialize datetime objects to ISO format strings."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {k: serialize_datetime(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [serialize_datetime(item) for item in obj]
+    return obj
 
 class Neo4jSystemManager:
     """Manages AI systems and capabilities in Neo4j."""
@@ -88,7 +99,7 @@ class Neo4jSystemManager:
                 id: s.id,
                 name: s.name,
                 type: s.type,
-                created_at: s.created_at,
+                created_at: toString(s.created_at),
                 capabilities: [cap in capabilities | {{
                     id: cap.id,
                     type: cap.type,
@@ -100,7 +111,9 @@ class Neo4jSystemManager:
             
             result = self.session.run(query, name=name)
             record = result.single()
-            return record["system"] if record else None
+            if record:
+                return serialize_datetime(record["system"])
+            return None
             
         except Exception as e:
             logger.error(f"Error getting system info: {str(e)}")
@@ -117,12 +130,21 @@ class Neo4jSystemManager:
                 target_type: labels(other)[0],
                 target_name: other.name,
                 target_id: other.id,
-                properties: properties(r)
+                properties: {{
+                    transition_date: CASE 
+                        WHEN exists(r.transition_date) 
+                        THEN toString(r.transition_date) 
+                        ELSE null 
+                    END,
+                    confidence: r.confidence,
+                    context: r.context
+                }}
             }} as relationship
             """
             
             result = self.session.run(query, name=name)
-            return [dict(record["relationship"]) for record in result]
+            relationships = [dict(record["relationship"]) for record in result]
+            return serialize_datetime(relationships)
             
         except Exception as e:
             logger.error(f"Error getting system relationships: {str(e)}")
@@ -149,7 +171,8 @@ class Neo4jSystemManager:
             """
             
             result = self.session.run(query)
-            return [dict(record["capability"]) for record in result]
+            capabilities = [dict(record["capability"]) for record in result]
+            return serialize_datetime(capabilities)
             
         except Exception as e:
             logger.error(f"Error getting capabilities: {str(e)}")

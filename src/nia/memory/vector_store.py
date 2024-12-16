@@ -1,133 +1,103 @@
 """
-Vector store implementation using Qdrant and LMStudio embeddings.
+Vector store implementation using Qdrant.
 """
 
 import logging
-import json
-from typing import Dict, List, Any, Optional, Tuple
+from typing import Dict, List, Any, Optional
 from datetime import datetime
-import aiohttp
+import json
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
-from qdrant_client.http.models import CollectionInfo
+from qdrant_client.http.exceptions import UnexpectedResponse
 
 logger = logging.getLogger(__name__)
 
+def serialize_datetime(obj: Any) -> Any:
+    """Serialize datetime objects to ISO format strings."""
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    elif isinstance(obj, dict):
+        return {k: serialize_datetime(v) for k, v in obj.items()}
+    elif isinstance(obj, list):
+        return [serialize_datetime(item) for item in obj]
+    return obj
+
 class VectorStore:
-    """Vector store for semantic memory search."""
+    """Qdrant-based vector store."""
     
     def __init__(
         self,
-        collection_name: str = "memory_vectors",
-        embedding_url: str = "http://localhost:1234/v1/embeddings",
-        embedding_model: str = "text-embedding-nomic-embed-text-v1.5@q8_0",
-        vector_size: int = 768,  # Nomic embed dimension
-        host: str = "localhost",
-        port: int = 6333
+        url: str = "http://localhost:6333",
+        collection_name: str = "memories",
+        dim: int = 384  # Default for all-MiniLM-L6-v2
     ):
-        """Initialize vector store."""
+        """Initialize Qdrant client."""
+        self.client = QdrantClient(url=url)
         self.collection_name = collection_name
-        self._vector_id_counter = 0
-        self.embedding_url = embedding_url
-        self.embedding_model = embedding_model
-        self.vector_size = vector_size
+        self.dim = dim
         
-        # Initialize Qdrant client
-        self.client = QdrantClient(host=host, port=port)
-        self._initialize_collection()
+        # Initialize collection
+        self.initialize_collection()
     
-    def _initialize_collection(self) -> None:
+    def initialize_collection(self) -> None:
         """Initialize vector collection."""
         try:
-            # Check if collection exists
-            collections = self.client.get_collections()
-            exists = any(c.name == self.collection_name for c in collections.collections)
+            # Create collection if it doesn't exist
+            collections = self.client.get_collections().collections
+            exists = any(c.name == self.collection_name for c in collections)
             
             if not exists:
-                # Create collection
                 self.client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config=models.VectorParams(
-                        size=self.vector_size,
+                        size=self.dim,
                         distance=models.Distance.COSINE
                     )
                 )
-                logger.info(f"Created collection: {self.collection_name}")
-            
-            # Reset counter
-            self._vector_id_counter = 0
+                logger.info(f"Created collection {self.collection_name}")
             
         except Exception as e:
             logger.error(f"Error initializing collection: {str(e)}")
-            raise
-    
-    async def _get_embedding(self, text: str) -> List[float]:
-        """Get embedding from LMStudio."""
-        try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    self.embedding_url,
-                    json={
-                        "model": self.embedding_model,
-                        "input": text
-                    }
-                ) as response:
-                    if response.status != 200:
-                        raise ValueError(f"Embedding request failed: {response.status}")
-                    
-                    result = await response.json()
-                    if not result.get("data"):
-                        raise ValueError("No embedding data in response")
-                    
-                    embedding = result["data"][0]["embedding"]
-                    if not isinstance(embedding, list) or len(embedding) != self.vector_size:
-                        raise ValueError(f"Invalid embedding dimension: {len(embedding)}")
-                    
-                    return embedding
-                    
-        except Exception as e:
-            logger.error(f"Error getting embedding: {str(e)}")
             raise
     
     async def store_vector(
         self,
         content: Dict[str, Any],
         metadata: Optional[Dict] = None,
-        layer: str = "episodic"  # 'episodic' or 'semantic'
-    ) -> int:
-        """Store content vector."""
+        layer: str = "semantic"
+    ) -> str:
+        """Store vector in collection."""
         try:
-            # Get next vector ID
-            vector_id = self._vector_id_counter
-            self._vector_id_counter += 1
+            # Generate vector ID
+            vector_id = f"{layer}_{datetime.now().isoformat()}"
             
-            # Convert content to string for embedding
-            if isinstance(content, dict):
-                content_str = json.dumps(content)
-            else:
-                content_str = str(content)
+            # Serialize datetime objects in content and metadata
+            content = serialize_datetime(content)
+            metadata = serialize_datetime(metadata) if metadata else {}
             
-            # Get embedding from LMStudio
-            vector = await self._get_embedding(content_str)
+            # Add layer and timestamp to metadata
+            metadata.update({
+                "layer": layer,
+                "timestamp": datetime.now().isoformat()
+            })
             
-            # Store vector with payload
+            # Convert content to JSON string
+            content_str = json.dumps(content)
+            
+            # Store in Qdrant
             self.client.upsert(
                 collection_name=self.collection_name,
                 points=[
                     models.PointStruct(
                         id=vector_id,
-                        vector=vector,
                         payload={
-                            'content': content,
-                            'metadata': metadata or {},
-                            'created_at': datetime.now().isoformat(),
-                            'layer': layer  # Track memory layer
+                            "content": content_str,
+                            "metadata": metadata
                         }
                     )
                 ]
             )
             
-            logger.info(f"Stored vector in {layer} layer: {vector_id}")
             return vector_id
             
         except Exception as e:
@@ -137,144 +107,99 @@ class VectorStore:
     async def search_vectors(
         self,
         content: Dict[str, Any],
+        filter: Optional[Dict] = None,
         limit: int = 10,
-        score_threshold: float = 0.7,
-        layer: Optional[str] = None  # Filter by layer if specified
+        layer: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """Search for similar vectors."""
+        """Search vectors by similarity."""
         try:
-            # Convert content to string for embedding
-            if isinstance(content, dict):
-                content_str = json.dumps(content)
-            else:
-                content_str = str(content)
+            # Serialize datetime objects in content
+            content = serialize_datetime(content)
             
-            # Get embedding from LMStudio
-            query_vector = await self._get_embedding(content_str)
+            # Convert content to JSON string
+            content_str = json.dumps(content)
             
-            # Add layer filter if specified
-            filter_query = None
+            # Build search filter
+            search_filter = {}
+            if filter:
+                search_filter.update(filter)
             if layer:
-                filter_query = models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="layer",
-                            match=models.MatchValue(value=layer)
-                        )
-                    ]
-                )
+                search_filter["layer"] = layer
             
-            # Search vectors
+            # Search in Qdrant
             results = self.client.search(
                 collection_name=self.collection_name,
-                query_vector=query_vector,
-                limit=limit,
-                score_threshold=score_threshold,
-                query_filter=filter_query
+                query_filter=models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key=k,
+                            match=models.MatchValue(value=v)
+                        )
+                        for k, v in search_filter.items()
+                    ]
+                ) if search_filter else None,
+                limit=limit
             )
             
-            # Format results
+            # Process results
             memories = []
             for result in results:
-                memory = {
-                    'id': result.id,
-                    'score': result.score,
-                    'content': result.payload['content'],
-                    'metadata': result.payload['metadata'],
-                    'created_at': result.payload['created_at'],
-                    'layer': result.payload['layer']
-                }
-                memories.append(memory)
+                try:
+                    content = json.loads(result.payload["content"])
+                    metadata = result.payload.get("metadata", {})
+                    memories.append({
+                        "id": result.id,
+                        "content": content,
+                        "metadata": metadata,
+                        "score": result.score
+                    })
+                except json.JSONDecodeError:
+                    logger.warning(f"Failed to decode content for vector {result.id}")
+                    continue
             
             return memories
             
         except Exception as e:
             logger.error(f"Error searching vectors: {str(e)}")
-            return []
-    
-    async def get_vector(self, vector_id: int) -> Optional[Dict[str, Any]]:
-        """Get vector by ID."""
-        try:
-            result = self.client.retrieve(
-                collection_name=self.collection_name,
-                ids=[vector_id]
-            )
-            
-            if result:
-                point = result[0]
-                return {
-                    'id': point.id,
-                    'content': point.payload['content'],
-                    'metadata': point.payload['metadata'],
-                    'created_at': point.payload['created_at'],
-                    'layer': point.payload['layer']
-                }
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error getting vector: {str(e)}")
-            return None
+            raise
     
     async def get_status(self) -> Dict[str, Any]:
         """Get vector store status."""
         try:
-            # Get collection info
-            collection: CollectionInfo = self.client.get_collection(self.collection_name)
+            collections = self.client.get_collections()
+            collection = next(
+                (c for c in collections.collections if c.name == self.collection_name),
+                None
+            )
             
-            # Count vectors by layer
-            episodic_count = len(self.client.scroll(
-                collection_name=self.collection_name,
-                scroll_filter=models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="layer",
-                            match=models.MatchValue(value="episodic")
-                        )
-                    ]
-                )
-            )[0])
-            
-            semantic_count = len(self.client.scroll(
-                collection_name=self.collection_name,
-                scroll_filter=models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="layer",
-                            match=models.MatchValue(value="semantic")
-                        )
-                    ]
-                )
-            )[0])
+            if collection:
+                return {
+                    "name": collection.name,
+                    "vectors_count": collection.vectors_count,
+                    "status": "ready"
+                }
             
             return {
-                "collection_name": self.collection_name,
-                "vector_size": self.vector_size,
-                "total_vectors": collection.points_count,
-                "episodic_memories": episodic_count,
-                "semantic_memories": semantic_count,
-                "embedding_model": self.embedding_model,
-                "status": collection.status
+                "name": self.collection_name,
+                "status": "not_found"
             }
             
         except Exception as e:
             logger.error(f"Error getting status: {str(e)}")
             return {
+                "name": self.collection_name,
+                "status": "error",
                 "error": str(e)
             }
     
     async def cleanup(self) -> None:
         """Clean up vector store."""
         try:
-            # Delete collection
-            self.client.delete_collection(
-                collection_name=self.collection_name
-            )
-            logger.info(f"Deleted collection: {self.collection_name}")
+            self.client.delete_collection(collection_name=self.collection_name)
+            logger.info(f"Deleted collection {self.collection_name}")
             
             # Recreate collection
-            self._initialize_collection()
-            logger.info("Re-initialized vector store")
+            self.initialize_collection()
             
         except Exception as e:
             logger.error(f"Error cleaning up vector store: {str(e)}")
@@ -286,5 +211,5 @@ class VectorStore:
             self.client.close()
             logger.info("Closed vector store connection")
         except Exception as e:
-            logger.error(f"Error closing vector store connection: {str(e)}")
+            logger.error(f"Error closing vector store: {str(e)}")
             raise
