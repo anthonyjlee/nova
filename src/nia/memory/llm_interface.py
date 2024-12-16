@@ -4,6 +4,7 @@ LLM interface for structured completions.
 
 import logging
 import json
+import aiohttp
 from typing import Dict, Any, Optional
 from datetime import datetime
 import re
@@ -32,8 +33,13 @@ class LLMResponse:
 class LLMInterface:
     """Interface for LLM interactions."""
     
-    def __init__(self, api_key: Optional[str] = None):
+    def __init__(
+        self,
+        api_url: str = "http://localhost:1234/v1/chat/completions",
+        api_key: Optional[str] = None
+    ):
         """Initialize LLM interface."""
+        self.api_url = api_url
         self.api_key = api_key
     
     def _fix_json(self, text: str) -> str:
@@ -144,48 +150,66 @@ class LLMInterface:
         max_retries: int = 3
     ) -> LLMResponse:
         """Get structured completion from LLM."""
+        system_prompt = """You are Nova, an AI assistant focused on self-discovery and growth. 
+        Respond in JSON format with this structure:
+        {
+            "response": "Your main response as a clear, engaging message",
+            "analysis": {
+                "key_points": ["List of key insights and observations"],
+                "confidence": 0.0-1.0,
+                "state_update": "How this interaction affects your understanding"
+            }
+        }
+        Be natural and conversational while maintaining analytical depth."""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": prompt}
+        ]
+
         for attempt in range(max_retries):
             try:
-                # Simulate LLM call (replace with actual implementation)
-                raw_response = {
-                    "response": "Analyzing Nia's impact and technical roadmap",
-                    "analysis": {
-                        "key_points": [
-                            "Nia represents a foundation of core capabilities including function calls, image generation, and computer vision",
-                            "Technical focus should be on enhancing these capabilities and adding new ones",
-                            "Integration between capabilities needs improvement",
-                            "Memory system requires better semantic understanding"
-                        ],
-                        "confidence": 0.9,
-                        "state_update": "Developing technical roadmap based on Nia's capabilities"
-                    }
-                }
-                
-                # Parse response
-                if isinstance(raw_response, str):
-                    try:
-                        data = json.loads(raw_response)
-                    except:
-                        data = json.loads(self._fix_json(raw_response))
-                else:
-                    data = raw_response
-                
-                # Format response
-                data = self._format_response(data)
-                
-                # Validate response
-                if not self._validate_response(data):
-                    raise ValueError("Invalid response format")
-                
-                logger.info(f"Raw LLM response: {json.dumps(data, indent=2)}")
-                
-                return LLMResponse(
-                    response=data["response"],
-                    analysis=data["analysis"]
-                )
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        self.api_url,
+                        json={
+                            "messages": messages,
+                            "temperature": 0.7,
+                            "max_tokens": 1000,
+                            "stream": False
+                        }
+                    ) as response:
+                        if response.status != 200:
+                            raise ValueError(f"API request failed: {response.status}")
+                        
+                        result = await response.json()
+                        if not result.get("choices"):
+                            raise ValueError("No choices in response")
+                        
+                        content = result["choices"][0]["message"]["content"]
+                        
+                        # Parse response
+                        try:
+                            data = json.loads(content)
+                        except:
+                            data = json.loads(self._fix_json(content))
+                        
+                        # Format response
+                        data = self._format_response(data)
+                        
+                        # Validate response
+                        if not self._validate_response(data):
+                            raise ValueError("Invalid response format")
+                        
+                        logger.info(f"Raw LLM response: {json.dumps(data, indent=2)}")
+                        
+                        return LLMResponse(
+                            response=data["response"],
+                            analysis=data["analysis"]
+                        )
                 
             except Exception as e:
                 logger.warning(f"LLM request failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
                 if attempt == max_retries - 1:
-                    logger.error("All LLM requests failed: " + str(e))
+                    logger.error("All LLM requests failed")
                     raise

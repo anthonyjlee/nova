@@ -1,15 +1,14 @@
 """
-Vector store implementation using Qdrant and sentence-transformers.
+Vector store implementation using Qdrant and LMStudio embeddings.
 """
 
 import logging
 import json
 from typing import Dict, List, Any, Optional
 from datetime import datetime
-import torch
+import aiohttp
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
-from sentence_transformers import SentenceTransformer
 
 logger = logging.getLogger(__name__)
 
@@ -19,25 +18,18 @@ class VectorStore:
     def __init__(
         self,
         collection_name: str = "memory_vectors",
-        model_name: str = "all-MiniLM-L6-v2",
+        embedding_url: str = "http://localhost:1234/v1/embeddings",
+        embedding_model: str = "text-embedding-nomic-embed-text-v1.5@q8_0",
+        vector_size: int = 768,  # Nomic embed dimension
         host: str = "localhost",
-        port: int = 6333,
-        device: Optional[str] = None
+        port: int = 6333
     ):
         """Initialize vector store."""
         self.collection_name = collection_name
         self._vector_id_counter = 0
-        
-        # Set up PyTorch device
-        if device is None:
-            device = 'cuda' if torch.cuda.is_available() else 'mps' if torch.backends.mps.is_available() else 'cpu'
-        self.device = device
-        logger.info(f"Using PyTorch device: {device}")
-        
-        # Initialize sentence transformer model
-        self.model = SentenceTransformer(model_name)
-        self.model.to(device)
-        logger.info(f"Loaded model: {model_name}")
+        self.embedding_url = embedding_url
+        self.embedding_model = embedding_model
+        self.vector_size = vector_size
         
         # Initialize Qdrant client
         self.client = QdrantClient(host=host, port=port)
@@ -55,7 +47,7 @@ class VectorStore:
                 self.client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config=models.VectorParams(
-                        size=self.model.get_sentence_embedding_dimension(),
+                        size=self.vector_size,
                         distance=models.Distance.COSINE
                     )
                 )
@@ -66,6 +58,34 @@ class VectorStore:
             
         except Exception as e:
             logger.error(f"Error initializing collection: {str(e)}")
+            raise
+    
+    async def _get_embedding(self, text: str) -> List[float]:
+        """Get embedding from LMStudio."""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    self.embedding_url,
+                    json={
+                        "model": self.embedding_model,
+                        "input": text
+                    }
+                ) as response:
+                    if response.status != 200:
+                        raise ValueError(f"Embedding request failed: {response.status}")
+                    
+                    result = await response.json()
+                    if not result.get("data"):
+                        raise ValueError("No embedding data in response")
+                    
+                    embedding = result["data"][0]["embedding"]
+                    if not isinstance(embedding, list) or len(embedding) != self.vector_size:
+                        raise ValueError(f"Invalid embedding dimension: {len(embedding)}")
+                    
+                    return embedding
+                    
+        except Exception as e:
+            logger.error(f"Error getting embedding: {str(e)}")
             raise
     
     async def store_vector(
@@ -85,13 +105,8 @@ class VectorStore:
             else:
                 content_str = str(content)
             
-            # Generate embedding
-            with torch.no_grad():
-                vector = self.model.encode(
-                    content_str,
-                    convert_to_tensor=True,
-                    device=self.device
-                ).cpu().numpy().tolist()
+            # Get embedding from LMStudio
+            vector = await self._get_embedding(content_str)
             
             # Store vector with payload
             self.client.upsert(
@@ -130,13 +145,8 @@ class VectorStore:
             else:
                 content_str = str(content)
             
-            # Generate query vector
-            with torch.no_grad():
-                query_vector = self.model.encode(
-                    content_str,
-                    convert_to_tensor=True,
-                    device=self.device
-                ).cpu().numpy().tolist()
+            # Get embedding from LMStudio
+            query_vector = await self._get_embedding(content_str)
             
             # Search vectors
             results = self.client.search(

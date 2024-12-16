@@ -132,27 +132,6 @@ class Neo4jMemoryStore:
         CREATE (m)-[:CREATED_BY {
             created_at: datetime()
         }]->(nova)
-        WITH m
-        
-        MATCH (prev:Memory)
-        WHERE prev.id <> m.id
-        WITH m, prev, 
-             toFloat(
-                 size(apoc.coll.intersection(
-                     split(toLower(m.content), ' '),
-                     split(toLower(prev.content), ' ')
-                 )) * 1.0 / 
-                 size(apoc.coll.union(
-                     split(toLower(m.content), ' '),
-                     split(toLower(prev.content), ' ')
-                 ))
-             ) as similarity
-        WHERE similarity > 0.3
-        CREATE (m)-[:SIMILAR_TO {
-            score: similarity,
-            created_at: datetime()
-        }]->(prev)
-        
         RETURN m.id as memory_id
         """
         
@@ -170,11 +149,32 @@ class Neo4jMemoryStore:
                 if record is None:
                     raise ValueError("Failed to create memory node")
                 
+                # Create similarity relationships in a separate query
+                similarity_query = """
+                MATCH (m:Memory {id: $memory_id})
+                MATCH (prev:Memory)
+                WHERE prev.id <> m.id
+                WITH m, prev,
+                     reduce(s = 0.0,
+                           w in split(toLower(m.content), ' ') |
+                           s + case when toLower(prev.content) contains w then 1.0 else 0.0 end
+                     ) / size(split(toLower(m.content), ' ')) as similarity
+                WHERE similarity > 0.3
+                CREATE (m)-[:SIMILAR_TO {
+                    score: similarity,
+                    created_at: datetime()
+                }]->(prev)
+                """
+                
+                try:
+                    session.run(similarity_query, memory_id=memory_id)
+                except Exception as e:
+                    logger.warning(f"Error creating similarity relationships: {str(e)}")
+                
                 return record["memory_id"]
                 
             except Exception as e:
                 logger.error(f"Error storing memory: {str(e)}")
-                # Fallback to basic storage without similarity
                 return await self._store_memory_basic(
                     memory_type,
                     content,
@@ -229,7 +229,6 @@ class Neo4jMemoryStore:
         try:
             query = """
             MATCH (c:Capability)
-            WITH c
             OPTIONAL MATCH (s:AISystem)-[r:HAS_CAPABILITY]->(c)
             WITH c, collect({
                 name: s.name,
@@ -277,24 +276,23 @@ class Neo4jMemoryStore:
             MATCH (m:Memory)
             WHERE {where_clause}
             WITH m
+            ORDER BY m.created_at DESC
+            LIMIT $limit
             OPTIONAL MATCH (m)-[r]->(n)
             WITH m, collect({{
                 type: type(r),
                 target_type: head(labels(n)),
                 target_id: n.id,
                 properties: properties(r)
-            }}) as relationships
-            WITH m, relationships
+            }}) as rels
             RETURN {{
                 id: m.id,
                 type: m.type,
                 content: m.content,
                 metadata: m.metadata,
                 created_at: toString(m.created_at),
-                relationships: relationships
+                relationships: rels
             }} as memory
-            ORDER BY m.created_at DESC
-            LIMIT $limit
             """
             
             result = await self.query_graph(query, params)

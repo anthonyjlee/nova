@@ -7,7 +7,7 @@ from typing import Dict, Any, Optional, List
 from abc import ABC, abstractmethod
 from ..llm_interface import LLMInterface
 from ..neo4j_store import Neo4jMemoryStore
-from ..memory_types import AgentResponse, RelationshipTypes as RT
+from ..memory_types import AgentResponse, Analysis, RelationshipTypes as RT
 
 logger = logging.getLogger(__name__)
 
@@ -33,8 +33,18 @@ class BaseAgent(ABC):
         """Process content through agent lens."""
         try:
             # Get LLM response first
-            response = await self.llm.get_structured_completion(
+            llm_response = await self.llm.get_structured_completion(
                 self._format_prompt(content)
+            )
+            
+            # Convert LLM response to AgentResponse
+            response = AgentResponse(
+                response=llm_response.response,
+                analysis=Analysis(
+                    key_points=llm_response.analysis["key_points"],
+                    confidence=llm_response.analysis["confidence"],
+                    state_update=llm_response.analysis["state_update"]
+                )
             )
             
             # Then enrich content with graph information
@@ -144,16 +154,17 @@ class BaseAgent(ABC):
             query = """
             MATCH (c:Capability)
             OPTIONAL MATCH (s:AISystem)-[r:HAS_CAPABILITY]->(c)
+            WITH c, collect({
+                name: s.name,
+                type: s.type,
+                confidence: coalesce(r.confidence, 0.0)
+            }) as systems
             RETURN {
                 id: c.id,
                 type: c.type,
                 description: c.description,
                 confidence: c.confidence,
-                systems: collect({
-                    name: s.name,
-                    type: s.type,
-                    confidence: r.confidence
-                })
+                systems: systems
             } as capability
             """
             
@@ -173,7 +184,7 @@ class BaseAgent(ABC):
         """Search memories in the graph."""
         try:
             conditions = []
-            params = {}
+            params = {"limit": limit}
             
             if content_pattern:
                 conditions.append("m.content CONTAINS $content")
@@ -189,24 +200,24 @@ class BaseAgent(ABC):
             MATCH (m:Memory)
             WHERE {where_clause}
             WITH m
+            ORDER BY m.created_at DESC
+            LIMIT $limit
             OPTIONAL MATCH (m)-[r]->(n)
+            WITH m, collect({{
+                type: type(r),
+                target_type: labels(n)[0],
+                target_id: n.id,
+                properties: properties(r)
+            }}) as rels
             RETURN {{
                 id: m.id,
                 type: m.type,
                 content: m.content,
                 metadata: m.metadata,
-                created_at: m.created_at,
-                relationships: collect({{
-                    type: type(r),
-                    target_type: labels(n)[0],
-                    target_id: n.id
-                }})
+                created_at: toString(m.created_at),
+                relationships: rels
             }} as memory
-            ORDER BY m.created_at DESC
-            LIMIT $limit
             """
-            
-            params["limit"] = limit
             
             result = await self.store.query_graph(query, params)
             return [r["memory"] for r in result]
