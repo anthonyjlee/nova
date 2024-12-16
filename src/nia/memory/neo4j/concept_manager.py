@@ -46,30 +46,20 @@ class Neo4jConceptManager:
             logger.error(f"Error extracting concepts: {str(e)}")
             return []
     
-    def create_concept(
-        self,
-        memory_id: str,
-        concept: Dict[str, Any]
-    ) -> None:
-        """Create a concept node and link it to memory."""
+    def create_concept(self, concept: Dict[str, Any]) -> None:
+        """Create a concept node and its relationships."""
         try:
-            # Create concept and link to memory
+            # Create concept
             concept_query = """
-            MATCH (m:Memory {id: $memory_id})
             MERGE (c:Concept {
                 id: $concept_name,
                 type: $concept_type
             })
             ON CREATE SET c.description = $concept_desc
-            WITH m, c
-            MERGE (m)-[:HAS_CONCEPT {
-                created_at: datetime()
-            }]->(c)
             """
             
             self.session.run(
                 concept_query,
-                memory_id=memory_id,
                 concept_name=concept["name"],
                 concept_type=concept["type"],
                 concept_desc=concept["description"]
@@ -94,11 +84,11 @@ class Neo4jConceptManager:
         except Exception as e:
             logger.warning(f"Error creating concept {concept['name']}: {str(e)}")
     
-    def get_memory_concepts(self, memory_id: str) -> List[Dict[str, Any]]:
-        """Get all concepts linked to a memory."""
+    def get_concept(self, concept_id: str) -> Optional[Dict[str, Any]]:
+        """Get a concept and its relationships."""
         try:
             query = """
-            MATCH (m:Memory {id: $memory_id})-[:HAS_CONCEPT]->(c:Concept)
+            MATCH (c:Concept {id: $concept_id})
             OPTIONAL MATCH (c)-[:RELATED_TO]->(r:Concept)
             WITH c, collect(r.id) as related
             RETURN {
@@ -109,34 +99,47 @@ class Neo4jConceptManager:
             } as concept
             """
             
-            result = self.session.run(query, memory_id=memory_id)
-            return [dict(record["concept"]) for record in result]
+            result = self.session.run(query, concept_id=concept_id)
+            record = result.single()
+            return dict(record["concept"]) if record else None
+            
         except Exception as e:
-            logger.error(f"Error getting memory concepts: {str(e)}")
-            return []
+            logger.error(f"Error getting concept: {str(e)}")
+            return None
     
-    def create_similarity_relationships(self, memory_id: str) -> None:
-        """Create similarity relationships between memories."""
+    def search_concepts(
+        self,
+        pattern: str,
+        limit: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Search concepts by pattern."""
         try:
-            similarity_query = """
-            MATCH (m:Memory {id: $memory_id})
-            MATCH (prev:Memory)
-            WHERE prev.id <> m.id
-            WITH m, prev,
-                 reduce(s = 0.0,
-                       w in split(toLower(m.content), ' ') |
-                       s + case when toLower(prev.content) contains w then 1.0 else 0.0 end
-                 ) / size(split(toLower(m.content), ' ')) as similarity
-            WHERE similarity > 0.3
-            CREATE (m)-[:SIMILAR_TO {
-                score: similarity,
-                created_at: datetime()
-            }]->(prev)
+            query = """
+            MATCH (c:Concept)
+            WHERE c.description CONTAINS $pattern
+            WITH c
+            OPTIONAL MATCH (c)-[:RELATED_TO]->(r:Concept)
+            WITH c, collect(r.id) as related
+            RETURN {
+                id: c.id,
+                type: c.type,
+                description: c.description,
+                related: related
+            } as concept
+            LIMIT $limit
             """
             
-            self.session.run(similarity_query, memory_id=memory_id)
+            result = self.session.run(
+                query,
+                pattern=pattern,
+                limit=limit
+            )
+            
+            return [dict(record["concept"]) for record in result]
+            
         except Exception as e:
-            logger.warning(f"Error creating similarity relationships: {str(e)}")
+            logger.error(f"Error searching concepts: {str(e)}")
+            return []
     
     def cleanup_concepts(self) -> None:
         """Remove all concept nodes and relationships."""
