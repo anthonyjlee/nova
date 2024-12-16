@@ -1,78 +1,170 @@
 # NIA (Neural Intelligence Architecture)
 
-A self-reflective, adaptive, and evolving multi-agent system that explores its own existence, processes external data, and cultivates an enriched internal understanding of its identity, goals, and potential.
+A modular system for building intelligent agents with memory, reasoning, and learning capabilities.
 
 ## Features
 
-### Memory System
-- Two-layer memory architecture with short-term and long-term storage
-- Vector-based storage using Qdrant for semantic search
-- Indexed fields for efficient retrieval:
-  - memory_type: Type of memory (belief, emotion, desire, etc.)
-  - timestamp: When the memory was created
-  - importance: Memory significance score
+- **Two-Layer Memory System**
+  - Episodic memory for experiences
+  - Semantic memory for knowledge
+  - Graph-based storage with Neo4j
+  - Memory consolidation
 
-### Agent System
-- BeliefAgent: Ensures logical consistency and factual accuracy
-- DesireAgent: Explores and refines system goals and aspirations
-- EmotionAgent: Interprets and expresses system emotional states
-- ReflectionAgent: Synthesizes insights from past experiences
-- ResearchAgent: Gathers and integrates external data
-- MetaAgent: Coordinates interactions and synthesizes outputs
+- **DAG-Based Task Management**
+  - Task decomposition
+  - Parallel execution
+  - Dependency handling
+  - State tracking
 
-## Getting Started
+- **Agent System**
+  - Belief management
+  - Desire tracking
+  - Emotion processing
+  - Reflection capabilities
+  - Research abilities
 
-### Prerequisites
-- Python 3.8 or higher
-- Qdrant running locally (default: http://localhost:6333)
-- LM Studio or similar LLM server running locally (default: http://localhost:1234)
+- **LLM Integration**
+  - Async completion
+  - JSON response handling
+  - Error recovery
+  - Context management
 
-### Installation
+## Installation
+
+1. Install Python 3.9 or higher
+2. Clone this repository
+3. Run the setup script:
+
 ```bash
-# Clone the repository
-git clone [repository-url]
-
-# Install the package
-pip install -e .
+python scripts/setup.py
 ```
 
-### Running the Interactive System
+This will:
+- Install Python dependencies
+- Install and configure Neo4j
+- Set up environment variables
+- Create necessary directories
+
+## Neo4j Memory System
+
+The system uses Neo4j for graph-based memory storage, offering:
+
+- **Rich Relationships**
+  - Task dependencies
+  - Memory connections
+  - Concept linking
+  - Temporal relationships
+
+- **Interactive Visualization**
+  - Memory graphs
+  - Task execution flows
+  - Knowledge networks
+  - Concept maps
+
+- **Powerful Querying**
+  - Pattern matching
+  - Path finding
+  - Similarity search
+  - Temporal queries
+
+### Using Neo4j Browser
+
+1. Start Neo4j:
 ```bash
-python examples/interactive_memory_system.py
+brew services start neo4j  # macOS
+sudo systemctl start neo4j  # Linux
 ```
 
-Available commands in the interactive system:
-- `status`: Show system state
-- `logs`: Show memory state and agent responses
-- `reset`: Reset memory system
-- `clean`: Clean memory system
-- `exit`: End session
+2. Open Neo4j Browser:
+- Visit http://localhost:7474
+- Connect using:
+  - URL: bolt://localhost:7687
+  - Username: neo4j
+  - Password: password (or as configured)
 
-## Project Structure
-```
-nia/
-├── docs/
-│   ├── architecture.md   # Detailed system architecture
-│   └── DEVLOG.md        # Development log
-├── examples/
-│   └── interactive_memory_system.py
-├── src/
-│   └── nia/
-│       └── memory/      # Core memory system
-│           ├── agents/  # Agent implementations
-│           └── ...      # Memory management modules
-└── tests/
-    └── test_basic.py
+3. Example Queries:
+
+```cypher
+// View all memories
+MATCH (m:Memory) RETURN m;
+
+// Find related concepts
+MATCH (m:Memory)-[:HAS_CONCEPT]->(c:Concept)
+WHERE m.type = 'interaction'
+RETURN m, c;
+
+// Track task execution
+MATCH (t:Task)-[:GENERATED]->(m:Memory)
+RETURN t, m;
 ```
 
-## Development Status
-- [x] Memory system with vector store integration
-- [x] Core agent system implementation
-- [x] Interactive CLI for testing
-- [x] Basic test framework
-- [ ] Advanced memory consolidation
-- [ ] Enhanced agent capabilities
-- [ ] Web interface
+## Examples
+
+1. Test Neo4j Memory:
+```bash
+python examples/test_neo4j_memory.py
+```
+
+2. Test DAG System:
+```bash
+python examples/test_memory_dag.py
+```
+
+## Architecture
+
+The system consists of several key components:
+
+1. **Memory Layer**
+   - Neo4j graph database
+   - Memory integration
+   - Concept extraction
+   - Knowledge consolidation
+
+2. **Task Layer**
+   - DAG management
+   - Task execution
+   - State tracking
+   - Error handling
+
+3. **Agent Layer**
+   - Specialized agents
+   - Coordination
+   - Response synthesis
+   - Learning
+
+4. **Integration Layer**
+   - LLM interface
+   - Memory access
+   - Task routing
+   - State management
+
+## Development
+
+1. Install dev dependencies:
+```bash
+pip install -e ".[dev]"
+```
+
+2. Run tests:
+```bash
+pytest
+```
+
+3. Run linting:
+```bash
+ruff check .
+black .
+mypy .
+```
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Run tests and linting
+5. Submit a pull request
 
 ## License
-MIT License
+
+MIT License - see LICENSE file for details
