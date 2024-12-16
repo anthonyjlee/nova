@@ -40,11 +40,27 @@ class BaseAgent(ABC):
                 self._format_prompt(content)
             )
             
+            # Extract key points from response
+            key_points = []
+            raw_points = llm_response.analysis.get("key_points", [])
+            for point in raw_points:
+                if isinstance(point, str):
+                    key_points.append(point)
+                elif isinstance(point, dict):
+                    # Handle nested concept structure
+                    if "concept" in point:
+                        desc = point.get("description", "")
+                        conf = point.get("confidence", 1.0)
+                        key_points.append(f"{point['concept']} ({conf:.1f}): {desc}")
+                    else:
+                        # Handle other dictionary formats
+                        key_points.append(str(point))
+            
             # Convert LLM response to AgentResponse
             response = AgentResponse(
                 response=llm_response.response,
                 analysis=Analysis(
-                    key_points=llm_response.analysis.get("key_points", []),
+                    key_points=key_points,
                     confidence=float(llm_response.analysis.get("confidence", 0.0)),
                     state_update=str(llm_response.analysis.get("state_update", ""))
                 )
