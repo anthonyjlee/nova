@@ -1,257 +1,351 @@
-"""
-Memory system types and schemas.
-"""
+"""Memory system type definitions."""
 
 from dataclasses import dataclass, field, asdict
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Protocol, Union, Literal
 from datetime import datetime
+from enum import Enum, auto
 import json
 
-def serialize_datetime(obj: Any) -> Any:
-    """Serialize datetime objects to ISO format strings."""
-    if isinstance(obj, datetime):
-        return obj.isoformat()
-    elif isinstance(obj, dict):
-        return {k: serialize_datetime(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [serialize_datetime(item) for item in obj]
-    return obj
+class JSONSerializable(Protocol):
+    """Protocol for JSON serializable objects."""
+    def to_json(self) -> str:
+        """Convert object to JSON string."""
+        ...
+    
+    @classmethod
+    def from_json(cls, json_str: str) -> 'JSONSerializable':
+        """Create object from JSON string."""
+        ...
+
+class RelationshipTypes(Enum):
+    """Types of relationships between concepts."""
+    IS_A = auto()
+    HAS_A = auto()
+    PART_OF = auto()
+    RELATED_TO = auto()
+    DEPENDS_ON = auto()
+    CAUSES = auto()
+    INFLUENCES = auto()
+    CONTRADICTS = auto()
+    SUPPORTS = auto()
+    PRECEDES = auto()
+    FOLLOWS = auto()
+    SIMILAR_TO = auto()
+    DIFFERENT_FROM = auto()
+    INSTANCE_OF = auto()
+    MEMBER_OF = auto()
+    SUBSET_OF = auto()
+    SUPERSET_OF = auto()
+    DERIVED_FROM = auto()
+    LEADS_TO = auto()
+    ENABLES = auto()
+    PREVENTS = auto()
+    REQUIRES = auto()
+    EXCLUDES = auto()
+    ALTERNATIVE_TO = auto()
+    EQUIVALENT_TO = auto()
+    
+    def to_json(self) -> str:
+        """Convert enum to JSON string."""
+        return json.dumps(self.name)
+    
+    @classmethod
+    def from_json(cls, json_str: str) -> 'RelationshipTypes':
+        """Create enum from JSON string."""
+        return cls[json.loads(json_str)]
+
+@dataclass
+class Evolution:
+    """System evolution record."""
+    version: str
+    changes: List[str]
+    timestamp: datetime = field(default_factory=datetime.now)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    def to_json(self) -> str:
+        """Convert evolution record to JSON string."""
+        data = asdict(self)
+        data['timestamp'] = self.timestamp.isoformat()
+        return json.dumps(data)
+    
+    @classmethod
+    def from_json(cls, json_str: str) -> 'Evolution':
+        """Create evolution record from JSON string."""
+        data = json.loads(json_str)
+        data['timestamp'] = datetime.fromisoformat(data['timestamp'])
+        return cls(**data)
+
+@dataclass
+class Capability:
+    """A system capability."""
+    name: str
+    description: str
+    type: str  # e.g. memory, reasoning, perception
+    parameters: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    evolution: Optional[Evolution] = None
+    relationships: Dict[RelationshipTypes, List[str]] = field(default_factory=dict)
+    
+    def to_json(self) -> str:
+        """Convert capability to JSON string."""
+        data = asdict(self)
+        if self.evolution:
+            data['evolution'] = json.loads(self.evolution.to_json())
+        data['relationships'] = {
+            rel.name: targets for rel, targets in self.relationships.items()
+        }
+        return json.dumps(data)
+    
+    @classmethod
+    def from_json(cls, json_str: str) -> 'Capability':
+        """Create capability from JSON string."""
+        data = json.loads(json_str)
+        if data.get('evolution'):
+            data['evolution'] = Evolution.from_json(json.dumps(data['evolution']))
+        if data.get('relationships'):
+            data['relationships'] = {
+                RelationshipTypes[rel]: targets
+                for rel, targets in data['relationships'].items()
+            }
+        return cls(**data)
+
+@dataclass
+class AISystem:
+    """Configuration for an AI system."""
+    name: str
+    description: str
+    capabilities: List[Capability]
+    parameters: Dict[str, Any] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    evolution: Optional[Evolution] = None
+    relationships: Dict[RelationshipTypes, List[str]] = field(default_factory=dict)
+    
+    def to_json(self) -> str:
+        """Convert system config to JSON string."""
+        data = asdict(self)
+        data['capabilities'] = [
+            json.loads(c.to_json()) for c in self.capabilities
+        ]
+        if self.evolution:
+            data['evolution'] = json.loads(self.evolution.to_json())
+        data['relationships'] = {
+            rel.name: targets for rel, targets in self.relationships.items()
+        }
+        return json.dumps(data)
+    
+    @classmethod
+    def from_json(cls, json_str: str) -> 'AISystem':
+        """Create system config from JSON string."""
+        data = json.loads(json_str)
+        data['capabilities'] = [
+            Capability.from_json(json.dumps(c))
+            for c in data['capabilities']
+        ]
+        if data.get('evolution'):
+            data['evolution'] = Evolution.from_json(json.dumps(data['evolution']))
+        if data.get('relationships'):
+            data['relationships'] = {
+                RelationshipTypes[rel]: targets
+                for rel, targets in data['relationships'].items()
+            }
+        return cls(**data)
+
+@dataclass
+class Memory:
+    """A memory entry in the system."""
+    content: str
+    memory_type: str  # semantic, episodic, procedural
+    source: str  # agent or system that created the memory
+    timestamp: datetime = field(default_factory=datetime.now)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    references: List[str] = field(default_factory=list)
+    embedding: Optional[List[float]] = None
+    evolution: Optional[Evolution] = None
+    relationships: Dict[RelationshipTypes, List[str]] = field(default_factory=dict)
+    
+    def to_json(self) -> str:
+        """Convert memory to JSON string."""
+        data = asdict(self)
+        data['timestamp'] = self.timestamp.isoformat()
+        if self.evolution:
+            data['evolution'] = json.loads(self.evolution.to_json())
+        data['relationships'] = {
+            rel.name: targets for rel, targets in self.relationships.items()
+        }
+        return json.dumps(data)
+    
+    @classmethod
+    def from_json(cls, json_str: str) -> 'Memory':
+        """Create memory from JSON string."""
+        data = json.loads(json_str)
+        data['timestamp'] = datetime.fromisoformat(data['timestamp'])
+        if data.get('evolution'):
+            data['evolution'] = Evolution.from_json(json.dumps(data['evolution']))
+        if data.get('relationships'):
+            data['relationships'] = {
+                RelationshipTypes[rel]: targets
+                for rel, targets in data['relationships'].items()
+            }
+        return cls(**data)
+
+@dataclass
+class DialogueMessage:
+    """A message in a dialogue."""
+    agent_type: str
+    content: str
+    message_type: str  # e.g. question, insight, validation
+    references: List[str] = field(default_factory=list)
+    timestamp: datetime = field(default_factory=datetime.now)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    evolution: Optional[Evolution] = None
+    relationships: Dict[RelationshipTypes, List[str]] = field(default_factory=dict)
+    
+    def to_json(self) -> str:
+        """Convert message to JSON string."""
+        data = asdict(self)
+        data['timestamp'] = self.timestamp.isoformat()
+        if self.evolution:
+            data['evolution'] = json.loads(self.evolution.to_json())
+        data['relationships'] = {
+            rel.name: targets for rel, targets in self.relationships.items()
+        }
+        return json.dumps(data)
+    
+    @classmethod
+    def from_json(cls, json_str: str) -> 'DialogueMessage':
+        """Create message from JSON string."""
+        data = json.loads(json_str)
+        data['timestamp'] = datetime.fromisoformat(data['timestamp'])
+        if data.get('evolution'):
+            data['evolution'] = Evolution.from_json(json.dumps(data['evolution']))
+        if data.get('relationships'):
+            data['relationships'] = {
+                RelationshipTypes[rel]: targets
+                for rel, targets in data['relationships'].items()
+            }
+        return cls(**data)
+
+@dataclass
+class DialogueContext:
+    """Context for a dialogue session."""
+    topic: str
+    messages: List[DialogueMessage] = field(default_factory=list)
+    participants: List[str] = field(default_factory=list)
+    status: str = "active"  # active, completed, archived
+    created_at: datetime = field(default_factory=datetime.now)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    evolution: Optional[Evolution] = None
+    relationships: Dict[RelationshipTypes, List[str]] = field(default_factory=dict)
+    
+    def add_message(self, message: DialogueMessage):
+        """Add a message to the dialogue."""
+        self.messages.append(message)
+        if message.agent_type not in self.participants:
+            self.participants.append(message.agent_type)
+    
+    def add_participant(self, participant: str):
+        """Add a participant to the dialogue."""
+        if participant not in self.participants:
+            self.participants.append(participant)
+    
+    def get_messages_by_type(self, message_type: str) -> List[DialogueMessage]:
+        """Get all messages of a specific type."""
+        return [m for m in self.messages if m.message_type == message_type]
+    
+    def get_messages_by_agent(self, agent_type: str) -> List[DialogueMessage]:
+        """Get all messages from a specific agent."""
+        return [m for m in self.messages if m.agent_type == agent_type]
+    
+    def get_recent_messages(self, count: int = 5) -> List[DialogueMessage]:
+        """Get the most recent messages."""
+        return self.messages[-count:]
+    
+    def to_json(self) -> str:
+        """Convert context to JSON string."""
+        data = asdict(self)
+        data['messages'] = [
+            json.loads(m.to_json()) for m in self.messages
+        ]
+        data['created_at'] = self.created_at.isoformat()
+        if self.evolution:
+            data['evolution'] = json.loads(self.evolution.to_json())
+        data['relationships'] = {
+            rel.name: targets for rel, targets in self.relationships.items()
+        }
+        return json.dumps(data)
+    
+    @classmethod
+    def from_json(cls, json_str: str) -> 'DialogueContext':
+        """Create context from JSON string."""
+        data = json.loads(json_str)
+        data['messages'] = [
+            DialogueMessage.from_json(json.dumps(m))
+            for m in data['messages']
+        ]
+        data['created_at'] = datetime.fromisoformat(data['created_at'])
+        if data.get('evolution'):
+            data['evolution'] = Evolution.from_json(json.dumps(data['evolution']))
+        if data.get('relationships'):
+            data['relationships'] = {
+                RelationshipTypes[rel]: targets
+                for rel, targets in data['relationships'].items()
+            }
+        return cls(**data)
 
 @dataclass
 class AgentResponse:
     """Response from an agent."""
     response: str
-    concepts: List[Dict[str, Any]]
-    timestamp: datetime = field(default_factory=datetime.now)
-
-    def dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return serialize_datetime({
-            "response": self.response,
-            "concepts": self.concepts,
-            "timestamp": self.timestamp,
-            "type": "agent_response"  # Add explicit type information
-        })
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'AgentResponse':
-        """Create from dictionary."""
-        return cls(
-            response=str(data.get("response", "")),
-            concepts=list(data.get("concepts", [])),
-            timestamp=datetime.fromisoformat(data.get("timestamp", datetime.now().isoformat()))
-        )
-
-@dataclass
-class Memory:
-    """Memory node."""
-    id: str
-    type: str
-    content: Dict[str, Any]
-    metadata: Optional[Dict[str, Any]] = None
-    created_at: datetime = field(default_factory=datetime.now)
-
-    def dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return serialize_datetime({
-            "id": self.id,
-            "type": self.type,
-            "content": self.content,
-            "metadata": self.metadata or {},
-            "created_at": self.created_at
-        })
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Memory':
-        """Create from dictionary."""
-        return cls(
-            id=str(data.get("id", "")),
-            type=str(data.get("type", "")),
-            content=data.get("content", {}),
-            metadata=data.get("metadata", {}),
-            created_at=datetime.fromisoformat(data.get("created_at", datetime.now().isoformat()))
-        )
-
-@dataclass
-class Capability:
-    """System capability."""
-    id: str
-    type: str
-    description: str
+    concepts: List[Dict[str, Any]] = field(default_factory=list)
+    key_points: List[str] = field(default_factory=list)
+    implications: List[str] = field(default_factory=list)
+    uncertainties: List[str] = field(default_factory=list)
+    reasoning: List[str] = field(default_factory=list)
+    dialogue_context: Optional[DialogueContext] = None
+    referenced_messages: List[DialogueMessage] = field(default_factory=list)
+    perspective: str = ""
     confidence: float = 1.0
-
-    def dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return serialize_datetime({
-            "id": self.id,
-            "type": self.type,
-            "description": self.description,
-            "confidence": self.confidence
-        })
-
+    timestamp: datetime = field(default_factory=datetime.now)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    evolution: Optional[Evolution] = None
+    relationships: Dict[RelationshipTypes, List[str]] = field(default_factory=dict)
+    
+    def to_json(self) -> str:
+        """Convert response to JSON string."""
+        data = asdict(self)
+        if self.dialogue_context:
+            data['dialogue_context'] = json.loads(
+                self.dialogue_context.to_json()
+            )
+        data['referenced_messages'] = [
+            json.loads(m.to_json()) for m in self.referenced_messages
+        ]
+        data['timestamp'] = self.timestamp.isoformat()
+        if self.evolution:
+            data['evolution'] = json.loads(self.evolution.to_json())
+        data['relationships'] = {
+            rel.name: targets for rel, targets in self.relationships.items()
+        }
+        return json.dumps(data)
+    
     @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Capability':
-        """Create from dictionary."""
-        return cls(
-            id=str(data.get("id", "")),
-            type=str(data.get("type", "")),
-            description=str(data.get("description", "")),
-            confidence=float(data.get("confidence", 1.0))
-        )
-
-@dataclass
-class AISystem:
-    """AI system node."""
-    id: str
-    name: str
-    type: str
-    capabilities: List[str] = field(default_factory=list)
-    created_at: datetime = field(default_factory=datetime.now)
-
-    def dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return serialize_datetime({
-            "id": self.id,
-            "name": self.name,
-            "type": self.type,
-            "capabilities": self.capabilities,
-            "created_at": self.created_at
-        })
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'AISystem':
-        """Create from dictionary."""
-        return cls(
-            id=str(data.get("id", "")),
-            name=str(data.get("name", "")),
-            type=str(data.get("type", "")),
-            capabilities=list(data.get("capabilities", [])),
-            created_at=datetime.fromisoformat(data.get("created_at", datetime.now().isoformat()))
-        )
-
-@dataclass
-class Evolution:
-    """System evolution node."""
-    id: str
-    from_system: str
-    to_system: str
-    changes: List[str]
-    created_at: datetime = field(default_factory=datetime.now)
-
-    def dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return serialize_datetime({
-            "id": self.id,
-            "from_system": self.from_system,
-            "to_system": self.to_system,
-            "changes": self.changes,
-            "created_at": self.created_at
-        })
-
-    @classmethod
-    def from_dict(cls, data: Dict[str, Any]) -> 'Evolution':
-        """Create from dictionary."""
-        return cls(
-            id=str(data.get("id", "")),
-            from_system=str(data.get("from_system", "")),
-            to_system=str(data.get("to_system", "")),
-            changes=list(data.get("changes", [])),
-            created_at=datetime.fromisoformat(data.get("created_at", datetime.now().isoformat()))
-        )
-
-class RelationshipTypes:
-    """Neo4j relationship types."""
-    CREATED_BY = "CREATED_BY"
-    SIMILAR_TO = "SIMILAR_TO"
-    HAS_CAPABILITY = "HAS_CAPABILITY"
-    PREDECESSOR_OF = "PREDECESSOR_OF"
-    EVOLVED_TO = "EVOLVED_TO"
-    RELATED_TO = "RELATED_TO"
-    HAS_CONCEPT = "HAS_CONCEPT"
-
-# Default capabilities
-DEFAULT_CAPABILITIES = [
-    Capability(
-        id="function_calls",
-        type="system",
-        description="Function call capabilities"
-    ),
-    Capability(
-        id="image_generation",
-        type="generation",
-        description="Image generation capabilities"
-    ),
-    Capability(
-        id="audio_generation",
-        type="generation",
-        description="Audio generation capabilities"
-    ),
-    Capability(
-        id="webcam_access",
-        type="hardware",
-        description="Webcam access capabilities"
-    ),
-    Capability(
-        id="computer_vision",
-        type="vision",
-        description="Computer vision capabilities"
-    )
-]
-
-# Default systems
-NOVA = AISystem(
-    id="nova",
-    name="Nova",
-    type="current",
-    created_at=datetime.now()
-)
-
-NIA = AISystem(
-    id="nia",
-    name="Nia",
-    type="predecessor",
-    capabilities=[c.id for c in DEFAULT_CAPABILITIES],
-    created_at=datetime.now()
-)
-
-ECHO = AISystem(
-    id="echo",
-    name="Echo",
-    type="initial",
-    created_at=datetime.now()
-)
-
-# Neo4j schema
-Neo4jSchema = Dict[str, Dict[str, str]]
-Neo4jQuery = Dict[str, Any]
-Neo4jQuerySet = Dict[str, Neo4jQuery]
-
-DEFAULT_SCHEMA: Neo4jSchema = {
-    "Memory": {
-        "id": "string",
-        "type": "string",
-        "content": "string",
-        "metadata": "string",
-        "created_at": "datetime"
-    },
-    "Capability": {
-        "id": "string",
-        "type": "string",
-        "description": "string",
-        "confidence": "float"
-    },
-    "AISystem": {
-        "id": "string",
-        "name": "string",
-        "type": "string",
-        "capabilities": "list",
-        "created_at": "datetime"
-    },
-    "Evolution": {
-        "id": "string",
-        "from_system": "string",
-        "to_system": "string",
-        "changes": "list",
-        "created_at": "datetime"
-    }
-}
+    def from_json(cls, json_str: str) -> 'AgentResponse':
+        """Create response from JSON string."""
+        data = json.loads(json_str)
+        if data.get('dialogue_context'):
+            data['dialogue_context'] = DialogueContext.from_json(
+                json.dumps(data['dialogue_context'])
+            )
+        data['referenced_messages'] = [
+            DialogueMessage.from_json(json.dumps(m))
+            for m in data['referenced_messages']
+        ]
+        data['timestamp'] = datetime.fromisoformat(data['timestamp'])
+        if data.get('evolution'):
+            data['evolution'] = Evolution.from_json(json.dumps(data['evolution']))
+        if data.get('relationships'):
+            data['relationships'] = {
+                RelationshipTypes[rel]: targets
+                for rel, targets in data['relationships'].items()
+            }
+        return cls(**data)

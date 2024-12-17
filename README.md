@@ -60,6 +60,13 @@ This will:
 - Create necessary directories
 - Configure environment variables
 
+## Documentation
+
+- Architecture: See [architecture.md](docs/architecture.md)
+- Development Log: See daily logs in [docs/devlog/](docs/devlog/)
+- Memory Architecture: Detailed below
+- LLM Integration: Detailed below
+
 ## Memory Architecture
 
 The system implements a two-layer memory architecture:

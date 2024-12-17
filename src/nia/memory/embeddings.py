@@ -15,9 +15,9 @@ class EmbeddingService:
     
     def __init__(self, api_base: str = "http://localhost:1234/v1",
                  api_key: str = "not-needed",
-                 model: str = "local",
+                 model: str = "text-embedding-nomic-embed-text-v1.5@q8_0",
                  max_tokens: int = 2048,
-                 embedding_dim: int = 768):  # Default to 768 for most models
+                 embedding_dim: int = 384):  # Changed to match Qdrant's expected dimension
         """Initialize embedding service."""
         self.api_base = api_base
         self.api_key = api_key

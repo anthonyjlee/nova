@@ -5,11 +5,36 @@ Logging configuration for the memory system.
 import logging
 import sys
 from datetime import datetime
+from colorama import Fore, Style, init
+
+# Initialize colorama
+init()
+
+class ColoredFormatter(logging.Formatter):
+    """Custom formatter with colors."""
+    
+    COLORS = {
+        'DEBUG': Fore.CYAN,
+        'INFO': Fore.GREEN,
+        'WARNING': Fore.YELLOW,
+        'ERROR': Fore.RED,
+        'CRITICAL': Fore.RED + Style.BRIGHT
+    }
+    
+    def format(self, record):
+        # Add color to levelname
+        color = self.COLORS.get(record.levelname, '')
+        record.levelname = f"{color}{record.levelname}{Style.RESET_ALL}"
+        
+        # Add color to name (logger name)
+        record.name = f"{Fore.BLUE}{record.name}{Style.RESET_ALL}"
+        
+        return super().format(record)
 
 def configure_logging():
     """Configure logging for the memory system."""
     # Create formatter
-    formatter = logging.Formatter(
+    formatter = ColoredFormatter(
         '%(asctime)s%(msecs)03d - %(name)s - %(levelname)s - %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S'
     )

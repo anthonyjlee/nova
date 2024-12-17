@@ -1,73 +1,37 @@
-"""
-Base agent implementation.
-"""
+"""Base agent implementation with collaborative dialogue support."""
 
 import logging
 from typing import Dict, List, Any, Optional
 from abc import ABC, abstractmethod
 from datetime import datetime
-from ..llm_interface import LLMInterface
+import json
+from ..interfaces import LLMInterfaceBase
 from ..neo4j_store import Neo4jMemoryStore
 from ..vector_store import VectorStore
-from ..memory_types import AgentResponse
+from ..memory_types import (
+    AgentResponse,
+    DialogueMessage,
+    DialogueContext
+)
 
 logger = logging.getLogger(__name__)
 
-def serialize_datetime(obj: Any) -> Any:
-    """Serialize datetime objects to ISO format strings."""
-    if isinstance(obj, datetime):
-        return obj.isoformat()
-    elif isinstance(obj, dict):
-        return {k: serialize_datetime(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [serialize_datetime(item) for item in obj]
-    return obj
-
 class BaseAgent(ABC):
-    """Base agent class."""
+    """Base agent class with collaborative dialogue support."""
     
     def __init__(
         self,
-        llm: LLMInterface,
+        llm: LLMInterfaceBase,
         store: Neo4jMemoryStore,
         vector_store: VectorStore,
         agent_type: str = "base"
     ):
         """Initialize agent."""
         self.llm = llm
-        self.store = store  # Neo4j for concepts/knowledge
+        self.store = store  # Neo4j for concepts only
         self.vector_store = vector_store  # Qdrant for memories
         self.agent_type = agent_type
-    
-    def _format_concept_text(self, concept: Dict[str, Any]) -> str:
-        """Format concept into readable text."""
-        try:
-            # Get concept fields
-            name = concept.get('name', 'Unknown concept')
-            type_str = concept.get('type', '')
-            desc = concept.get('description', '')
-            related = concept.get('related', [])
-            
-            # Format text
-            text_parts = []
-            text_parts.append(name)
-            
-            if type_str:
-                text_parts.append(f"({type_str})")
-            
-            if desc:
-                text_parts.append(f": {desc}")
-            
-            if related:
-                text_parts.append(f"[Related: {', '.join(related)}]")
-            
-            text = ' '.join(text_parts)
-            logger.debug(f"Formatted concept: {text}")
-            return text
-            
-        except Exception as e:
-            logger.error(f"Error formatting concept: {str(e)}")
-            return str(concept)
+        self.current_dialogue: Optional[DialogueContext] = None
     
     async def process(
         self,
@@ -76,123 +40,223 @@ class BaseAgent(ABC):
     ) -> AgentResponse:
         """Process content through agent lens."""
         try:
+            # Get dialogue context if available
+            dialogue = content.get('dialogue_context')
+            if dialogue:
+                self.current_dialogue = dialogue
+            
+            # Get similar memories for context
+            similar_memories = await self.vector_store.search_vectors(
+                content=json.dumps(content),  # Convert to string for vector search
+                limit=5
+            )
+            
+            # Enrich content with context
+            enriched_content = await self._enrich_content(content, similar_memories)
+            
             # Get LLM response
             llm_response = await self.llm.get_structured_completion(
-                self._format_prompt(content)
-            )
-            logger.debug(f"Got LLM response: {llm_response.dict()}")
-            
-            # Create agent response
-            response = AgentResponse(
-                response=f"From a {self.agent_type} perspective: I've identified {len(llm_response.concepts)} key concepts in your message.",
-                concepts=llm_response.concepts,
-                timestamp=datetime.now()
+                self._format_prompt(enriched_content)
             )
             
-            # Enrich with knowledge graph info
-            try:
-                # Get system info if mentioned
-                systems_info = []
-                for system in ["Nova", "Nia", "Echo"]:
-                    if system.lower() in str(content).lower():
-                        system_info = await self.get_system_info(system)
-                        if system_info:
-                            relationships = await self.get_system_relationships(system)
-                            systems_info.append({
-                                "system": system_info,
-                                "relationships": relationships
-                            })
-                
-                if systems_info:
-                    content["systems_info"] = systems_info
-                
-                # Get capabilities if mentioned
-                if "capability" in str(content).lower():
-                    capabilities = await self.get_capabilities()
-                    if capabilities:
-                        content["capabilities_info"] = capabilities
-                
-                # Get related memories
-                similar_memories = await self.vector_store.search_vectors(
-                    content=serialize_datetime(content),
-                    limit=5
+            # Process response through agent lens
+            response = await self._process_llm_response(llm_response, enriched_content)
+            
+            # Add to dialogue if active
+            if self.current_dialogue:
+                message = DialogueMessage(
+                    agent_type=self.agent_type,
+                    content=response.response,
+                    message_type="response",
+                    references=[c["name"] for c in response.concepts],
+                    metadata={
+                        "confidence": response.confidence,
+                        "key_points": response.key_points
+                    }
                 )
-                if similar_memories:
-                    content["similar_memories"] = similar_memories
-                
-                # Store in vector store with serialized datetime objects
-                await self.vector_store.store_vector(
-                    content=serialize_datetime({
-                        'original_content': content,
-                        'agent_response': serialize_datetime(response.dict()),
-                        'agent_type': self.agent_type,
-                        'concepts': llm_response.concepts,
-                        'timestamp': datetime.now().isoformat()
-                    }),
-                    metadata=serialize_datetime(metadata),
-                    layer="semantic"
-                )
-                
-                # Store concepts in Neo4j
-                for concept in llm_response.concepts:
-                    try:
-                        # Store concept
-                        await self.store.store_concept(
-                            name=concept["name"],
-                            type=concept["type"],
-                            description=concept["description"]
-                        )
-                        
-                        # Store relationships
-                        for related in concept["related"]:
-                            await self.store.store_concept_relationship(
-                                concept["name"],
-                                related
-                            )
-                    except Exception as e:
-                        logger.warning(f"Error storing concept {concept['name']}: {str(e)}")
-                        # Continue even if concept storage fails
-                
-            except Exception as e:
-                logger.error(f"Failed to enrich/store memory: {str(e)}")
-                # Continue even if enrichment fails
+                self.current_dialogue.add_message(message)
+                response.dialogue_context = self.current_dialogue
+            
+            # Store processed memory
+            await self.vector_store.store_vector(
+                content=json.dumps({
+                    'original_content': content,
+                    'enriched_content': enriched_content,
+                    'agent_response': response.dict(),
+                    'agent_type': self.agent_type,
+                    'timestamp': datetime.now().isoformat()
+                }),
+                metadata=metadata,
+                layer="semantic"
+            )
+            
+            # Store validated concepts
+            await self._store_validated_concepts(response.concepts)
             
             return response
             
         except Exception as e:
             logger.error(f"Error in {self.agent_type} agent: {str(e)}")
-            # Return basic response on error
             return AgentResponse(
-                response=f"From a {self.agent_type} perspective: I encountered an error processing your message.",
+                response=f"Error processing from {self.agent_type} perspective: {str(e)}",
                 concepts=[],
-                timestamp=datetime.now()
+                perspective=self.agent_type,
+                confidence=0.0
             )
     
-    async def get_system_info(self, name: str) -> Optional[Dict]:
-        """Get information about an AI system."""
-        try:
-            return await self.store.get_system_info(name)
-        except Exception as e:
-            logger.error(f"Error getting system info: {str(e)}")
-            return None
+    async def send_message(
+        self,
+        content: str,
+        message_type: str = "message",
+        references: Optional[List[str]] = None,
+        metadata: Optional[Dict] = None
+    ) -> DialogueMessage:
+        """Send a message to the current dialogue."""
+        if not self.current_dialogue:
+            raise ValueError("No active dialogue context")
+            
+        message = DialogueMessage(
+            agent_type=self.agent_type,
+            content=content,
+            message_type=message_type,
+            references=references or [],
+            metadata=metadata or {}
+        )
+        
+        self.current_dialogue.add_message(message)
+        return message
     
-    async def get_system_relationships(self, name: str) -> List[Dict]:
-        """Get relationships for an AI system."""
-        try:
-            return await self.store.get_system_relationships(name)
-        except Exception as e:
-            logger.error(f"Error getting system relationships: {str(e)}")
-            return []
+    async def ask_question(
+        self,
+        question: str,
+        references: Optional[List[str]] = None,
+        metadata: Optional[Dict] = None
+    ) -> DialogueMessage:
+        """Ask a question in the current dialogue."""
+        return await self.send_message(
+            content=question,
+            message_type="question",
+            references=references,
+            metadata=metadata
+        )
     
-    async def get_capabilities(self) -> List[Dict]:
-        """Get all capabilities in the system."""
+    async def provide_insight(
+        self,
+        insight: str,
+        references: Optional[List[str]] = None,
+        metadata: Optional[Dict] = None
+    ) -> DialogueMessage:
+        """Share an insight in the current dialogue."""
+        return await self.send_message(
+            content=insight,
+            message_type="insight",
+            references=references,
+            metadata=metadata
+        )
+    
+    async def _enrich_content(
+        self,
+        content: Dict[str, Any],
+        similar_memories: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Enrich content with context using LLM."""
         try:
-            return await self.store.get_capabilities()
+            # Format prompt for context analysis
+            context_prompt = f"""Analyze this content and context:
+            
+            Content: {json.dumps(content)}
+            Similar Memories: {json.dumps(similar_memories)}
+            
+            Identify:
+            1. Relevant concepts
+            2. Important relationships
+            3. Key context elements
+            4. Potential implications
+            
+            Provide analysis in JSON format."""
+            
+            # Get context analysis
+            context_analysis = await self.llm.get_completion(context_prompt)
+            
+            try:
+                analysis = json.loads(context_analysis)
+                
+                # Return enriched content
+                return {
+                    **content,
+                    "similar_memories": similar_memories,
+                    "context_analysis": analysis
+                }
+                
+            except json.JSONDecodeError:
+                logger.error("Failed to parse context analysis")
+                return {
+                    **content,
+                    "similar_memories": similar_memories
+                }
+                
         except Exception as e:
-            logger.error(f"Error getting capabilities: {str(e)}")
-            return []
+            logger.error(f"Error enriching content: {str(e)}")
+            return {
+                **content,
+                "similar_memories": similar_memories
+            }
+    
+    async def _process_llm_response(
+        self,
+        llm_response: Any,
+        content: Dict[str, Any]
+    ) -> AgentResponse:
+        """Process LLM response into agent response."""
+        # This can be overridden by specific agents
+        return AgentResponse(
+            response=llm_response.response,
+            concepts=llm_response.concepts,
+            key_points=llm_response.key_points,
+            implications=llm_response.implications,
+            uncertainties=llm_response.uncertainties,
+            reasoning=llm_response.reasoning,
+            dialogue_context=self.current_dialogue,
+            perspective=self.agent_type,
+            confidence=0.5,  # Default confidence
+            timestamp=datetime.now()
+        )
+    
+    async def _store_validated_concepts(
+        self,
+        concepts: List[Dict[str, Any]]
+    ):
+        """Store validated concepts in knowledge graph."""
+        try:
+            for concept in concepts:
+                # Store concept
+                await self.store.store_concept(
+                    name=concept["name"],
+                    type=concept["type"],
+                    description=concept["description"]
+                )
+                
+                # Store relationships
+                for related in concept.get("related", []):
+                    await self.store.store_concept_relationship(
+                        concept["name"],
+                        related,
+                        "RELATED_TO"
+                    )
+                    
+        except Exception as e:
+            logger.error(f"Error storing concepts: {str(e)}")
     
     @abstractmethod
     def _format_prompt(self, content: Dict[str, Any]) -> str:
-        """Format prompt for LLM."""
+        """Format prompt for LLM.
+        
+        This should be implemented by each agent to provide their unique perspective.
+        The prompt should guide the LLM to:
+        1. Analyze the content through the agent's specialized lens
+        2. Extract relevant concepts in the specified format
+        3. Provide structured analysis (key points, implications, etc.)
+        4. Consider dialogue context if available
+        5. Maintain clean separation between memories and concepts
+        """
         pass
