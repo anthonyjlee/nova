@@ -3,6 +3,7 @@ Enhanced research agent implementation using LLMs for all operations.
 """
 
 import logging
+import json
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from .agents.base import BaseAgent

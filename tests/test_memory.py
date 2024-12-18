@@ -16,6 +16,9 @@ from nia.memory.research_agent import ResearchAgent
 from nia.memory.agents.meta_agent import MetaAgent
 from nia.memory.memory_integration import MemorySystem
 from nia.memory.llm_interface import LLMInterface, extract_structured_content
+from nia.memory.neo4j_store import Neo4jMemoryStore
+from nia.memory.vector_store import VectorStore
+from nia.memory.embeddings import EmbeddingService
 
 # Test data
 TEST_CONTENT = {
@@ -30,11 +33,19 @@ TEST_CONTENT = {
     }
 }
 
+def setup_test_stores():
+    """Set up test stores with mock embedding service."""
+    embedding_service = EmbeddingService()
+    vector_store = VectorStore(embedding_service)
+    store = Neo4jMemoryStore()
+    return store, vector_store
+
 @pytest.mark.asyncio
 async def test_memory_system_separation():
     """Test clean separation between memories and concepts."""
     llm = LLMInterface()
-    memory_system = MemorySystem(llm, None, None)  # Mock stores
+    store, vector_store = setup_test_stores()
+    memory_system = MemorySystem(llm, store, vector_store)
     
     # Process interaction
     response = await memory_system.process_interaction(TEST_CONTENT["content"])
@@ -57,7 +68,8 @@ async def test_memory_system_separation():
 async def test_memory_consolidation():
     """Test memory consolidation and concept extraction."""
     llm = LLMInterface()
-    memory_system = MemorySystem(llm, None, None)
+    store, vector_store = setup_test_stores()
+    memory_system = MemorySystem(llm, store, vector_store)
     
     # Store multiple memories
     responses = []
@@ -81,7 +93,8 @@ async def test_memory_consolidation():
 async def test_belief_agent_response():
     """Test belief agent response structure and content."""
     llm = LLMInterface()
-    belief_agent = BeliefAgent(llm, None, None)
+    store, vector_store = setup_test_stores()
+    belief_agent = BeliefAgent(llm, store, vector_store)
     
     response = await belief_agent.process(TEST_CONTENT)
     
@@ -108,7 +121,8 @@ async def test_belief_agent_response():
 async def test_emotion_agent_response():
     """Test emotion agent response structure and content."""
     llm = LLMInterface()
-    emotion_agent = EmotionAgent(llm, None, None)
+    store, vector_store = setup_test_stores()
+    emotion_agent = EmotionAgent(llm, store, vector_store)
     
     response = await emotion_agent.process(TEST_CONTENT)
     
@@ -124,14 +138,16 @@ async def test_emotion_agent_response():
     assert 0 <= response.confidence <= 1
     
     # Verify emotional concepts
+    valid_types = ["emotion", "affect", "pattern", "response"]
     for concept in response.concepts:
-        assert concept["type"] in ["emotion", "affect", "pattern", "response"]
+        assert concept["type"] in valid_types
 
 @pytest.mark.asyncio
 async def test_desire_agent_response():
     """Test desire agent response structure and content."""
     llm = LLMInterface()
-    desire_agent = DesireAgent(llm, None, None)
+    store, vector_store = setup_test_stores()
+    desire_agent = DesireAgent(llm, store, vector_store)
     
     response = await desire_agent.process(TEST_CONTENT)
     
@@ -147,14 +163,16 @@ async def test_desire_agent_response():
     assert 0 <= response.confidence <= 1
     
     # Verify goal concepts
+    valid_types = ["goal", "motivation", "aspiration", "desire"]
     for concept in response.concepts:
-        assert concept["type"] in ["goal", "motivation", "aspiration", "desire"]
+        assert concept["type"] in valid_types
 
 @pytest.mark.asyncio
 async def test_reflection_agent_response():
     """Test reflection agent response structure and content."""
     llm = LLMInterface()
-    reflection_agent = ReflectionAgent(llm, None, None)
+    store, vector_store = setup_test_stores()
+    reflection_agent = ReflectionAgent(llm, store, vector_store)
     
     response = await reflection_agent.process(TEST_CONTENT)
     
@@ -170,14 +188,16 @@ async def test_reflection_agent_response():
     assert 0 <= response.confidence <= 1
     
     # Verify reflection concepts
+    valid_types = ["pattern", "insight", "learning", "evolution"]
     for concept in response.concepts:
-        assert concept["type"] in ["pattern", "insight", "learning", "evolution"]
+        assert concept["type"] in valid_types
 
 @pytest.mark.asyncio
 async def test_research_agent_response():
     """Test research agent response structure and content."""
     llm = LLMInterface()
-    research_agent = ResearchAgent(llm, None, None)
+    store, vector_store = setup_test_stores()
+    research_agent = ResearchAgent(llm, store, vector_store)
     
     response = await research_agent.process(TEST_CONTENT)
     
@@ -193,14 +213,16 @@ async def test_research_agent_response():
     assert 0 <= response.confidence <= 1
     
     # Verify research concepts
+    valid_types = ["knowledge", "source", "connection", "gap"]
     for concept in response.concepts:
-        assert concept["type"] in ["knowledge", "source", "connection", "gap"]
+        assert concept["type"] in valid_types
 
 @pytest.mark.asyncio
 async def test_meta_agent_synthesis():
     """Test meta agent synthesis capabilities."""
     llm = LLMInterface()
-    meta_agent = MetaAgent(llm, None, None)
+    store, vector_store = setup_test_stores()
+    meta_agent = MetaAgent(llm, store, vector_store)
     
     # Create mock agent responses
     belief_response = AgentResponse(
@@ -236,13 +258,14 @@ async def test_meta_agent_synthesis():
     )
     
     # Synthesize responses
-    synthesis = await meta_agent.synthesize_responses(
-        {
+    synthesis = await meta_agent.synthesize_dialogue({
+        'content': TEST_CONTENT,
+        'dialogue_context': None,
+        'agent_responses': {
             "belief": belief_response,
             "emotion": emotion_response
-        },
-        TEST_CONTENT
-    )
+        }
+    })
     
     # Verify synthesis structure
     assert isinstance(synthesis, AgentResponse)
@@ -266,7 +289,8 @@ async def test_meta_agent_synthesis():
 async def test_memory_search():
     """Test memory search across layers."""
     llm = LLMInterface()
-    memory_system = MemorySystem(llm, None, None)
+    store, vector_store = setup_test_stores()
+    memory_system = MemorySystem(llm, store, vector_store)
     
     # Store some test memories
     await memory_system.process_interaction("Memory about consciousness")
@@ -294,7 +318,8 @@ async def test_memory_search():
     )
     assert all(m["layer"] == "semantic" for m in semantic_only)
 
-def test_structured_content_extraction():
+@pytest.mark.asyncio
+async def test_structured_content_extraction():
     """Test extraction of structured content from LLM response."""
     test_response = """
     [
@@ -323,7 +348,7 @@ def test_structured_content_extraction():
     2. Considered information flow
     """
     
-    content = extract_structured_content(test_response)
+    content = await extract_structured_content(test_response)
     
     # Verify structure
     assert "concepts" in content

@@ -1,11 +1,12 @@
 """Memory system type definitions."""
 
 from dataclasses import dataclass, field, asdict
-from typing import List, Dict, Any, Optional, Protocol, Union, Literal
+from typing import List, Dict, Any, Optional, Protocol, Union, Literal, runtime_checkable
 from datetime import datetime
 from enum import Enum, auto
 import json
 
+@runtime_checkable
 class JSONSerializable(Protocol):
     """Protocol for JSON serializable objects."""
     def to_json(self) -> str:
@@ -310,23 +311,42 @@ class AgentResponse:
     evolution: Optional[Evolution] = None
     relationships: Dict[RelationshipTypes, List[str]] = field(default_factory=dict)
     
-    def to_json(self) -> str:
-        """Convert response to JSON string."""
-        data = asdict(self)
+    def dict(self) -> Dict[str, Any]:
+        """Convert response to dictionary."""
+        data = {
+            'response': self.response,
+            'concepts': self.concepts,
+            'key_points': self.key_points,
+            'implications': self.implications,
+            'uncertainties': self.uncertainties,
+            'reasoning': self.reasoning,
+            'perspective': self.perspective,
+            'confidence': self.confidence,
+            'timestamp': self.timestamp.isoformat(),
+            'metadata': self.metadata
+        }
+        
         if self.dialogue_context:
-            data['dialogue_context'] = json.loads(
-                self.dialogue_context.to_json()
-            )
-        data['referenced_messages'] = [
-            json.loads(m.to_json()) for m in self.referenced_messages
-        ]
-        data['timestamp'] = self.timestamp.isoformat()
+            data['dialogue_context'] = json.loads(self.dialogue_context.to_json())
+        
+        if self.referenced_messages:
+            data['referenced_messages'] = [
+                json.loads(m.to_json()) for m in self.referenced_messages
+            ]
+        
         if self.evolution:
             data['evolution'] = json.loads(self.evolution.to_json())
-        data['relationships'] = {
-            rel.name: targets for rel, targets in self.relationships.items()
-        }
-        return json.dumps(data)
+        
+        if self.relationships:
+            data['relationships'] = {
+                rel.name: targets for rel, targets in self.relationships.items()
+            }
+        
+        return data
+    
+    def to_json(self) -> str:
+        """Convert response to JSON string."""
+        return json.dumps(self.dict())
     
     @classmethod
     def from_json(cls, json_str: str) -> 'AgentResponse':
@@ -336,10 +356,11 @@ class AgentResponse:
             data['dialogue_context'] = DialogueContext.from_json(
                 json.dumps(data['dialogue_context'])
             )
-        data['referenced_messages'] = [
-            DialogueMessage.from_json(json.dumps(m))
-            for m in data['referenced_messages']
-        ]
+        if data.get('referenced_messages'):
+            data['referenced_messages'] = [
+                DialogueMessage.from_json(json.dumps(m))
+                for m in data['referenced_messages']
+            ]
         data['timestamp'] = datetime.fromisoformat(data['timestamp'])
         if data.get('evolution'):
             data['evolution'] = Evolution.from_json(json.dumps(data['evolution']))

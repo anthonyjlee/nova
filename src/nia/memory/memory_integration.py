@@ -30,7 +30,7 @@ def serialize_datetime(obj: Any) -> Any:
     elif isinstance(obj, dict):
         return {k: serialize_datetime(v) for k, v in obj.items()}
     elif isinstance(obj, list):
-        return [serialize_datetime(item) for item in item]
+        return [serialize_datetime(item) for item in obj]  # Fixed list handling
     return obj
 
 class MemorySystem:
@@ -46,7 +46,7 @@ class MemorySystem:
         """Initialize memory system."""
         self.llm = llm
         self.store = store  # Neo4j for concepts only
-        self.vector_store = vector_store or VectorStore()  # Qdrant for all memories
+        self.vector_store = vector_store  # Qdrant for all memories
         self.consolidation_interval = consolidation_interval
         self.last_consolidation = datetime.now()
         
@@ -108,16 +108,12 @@ class MemorySystem:
                 responses[agent_type] = await agent.process(content_dict, metadata)
                 logger.info(f"{agent_type.capitalize()}Agent processed interaction")
             
-            # Synthesize responses
-            response = await self.meta_agent.synthesize_responses(
-                responses=responses,
-                context=serialize_datetime({
-                    'original_content': content_dict,
-                    'metadata': metadata,
-                    'memory_id': memory_id,
-                    'similar_memories': similar_memories
-                })
-            )
+            # Synthesize responses using dialogue format
+            response = await self.meta_agent.synthesize_dialogue({
+                'content': content_dict,
+                'dialogue_context': None,
+                'agent_responses': responses
+            })
             
             # Store processed memory in semantic layer
             await self.vector_store.store_vector(

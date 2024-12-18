@@ -3,6 +3,7 @@ Enhanced belief agent implementation using LLMs for all operations.
 """
 
 import logging
+import json
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from .base import BaseAgent

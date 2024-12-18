@@ -2,6 +2,19 @@
 
 A modular system for building intelligent agents with memory, reasoning, and learning capabilities.
 
+> **Recent Changes (2024-12-18)**  
+> - Enhanced error handling in LLM interface
+> - Improved database connection handling
+> - Fixed test assertions for concept validation
+> - Made JSONSerializable a runtime_checkable protocol
+> - Added proper relationship type handling in Neo4j store
+>
+> **Known Issues**  
+> - Database connectivity issues may occur with Neo4j and Qdrant
+> - Some tests are failing due to LLM response parsing
+> - Storage space issues with Qdrant need to be addressed
+> - See [devlog](docs/devlog/2024-12-18.md) for detailed todo list
+
 ## Features
 
 - **Two-Layer Memory System**

@@ -56,7 +56,18 @@ class LLMInterface(LLMInterfaceBase):
                     }
                 ) as response:
                     result = await response.json()
-                    return result["choices"][0]["message"]["content"]
+                    
+                    # Handle different response formats
+                    if "choices" in result and result["choices"]:
+                        if "message" in result["choices"][0]:
+                            return result["choices"][0]["message"]["content"]
+                        elif "text" in result["choices"][0]:
+                            return result["choices"][0]["text"]
+                    
+                    # If we can't find the expected format, log the response and return empty
+                    logger.error(f"Unexpected response format: {result}")
+                    return ""
+                    
         except Exception as e:
             logger.error(f"Error getting completion: {str(e)}")
             return ""
@@ -67,6 +78,18 @@ class LLMInterface(LLMInterfaceBase):
             # Get raw completion
             completion = await self.get_completion(prompt)
             
+            # If completion is empty, return error response
+            if not completion:
+                return AgentResponse(
+                    response="Error: No completion received from LLM",
+                    concepts=[],
+                    key_points=[],
+                    implications=[],
+                    uncertainties=[],
+                    reasoning=[],
+                    timestamp=datetime.now()
+                )
+            
             # Parse response using agent
             response = await self.parser.parse_text(completion)
             
@@ -75,7 +98,7 @@ class LLMInterface(LLMInterfaceBase):
         except Exception as e:
             logger.error(f"Error getting structured completion: {str(e)}")
             return AgentResponse(
-                response="Error getting completion",
+                response=f"Error getting completion: {str(e)}",
                 concepts=[],
                 key_points=[],
                 implications=[],
@@ -96,7 +119,16 @@ class LLMInterface(LLMInterfaceBase):
                     }
                 ) as response:
                     result = await response.json()
-                    return result["data"][0]["embedding"]
+                    
+                    # Handle different response formats
+                    if "data" in result and result["data"]:
+                        if "embedding" in result["data"][0]:
+                            return result["data"][0]["embedding"]
+                    
+                    # If we can't find embeddings, log and return default
+                    logger.error(f"Unexpected embeddings response format: {result}")
+                    return [0.0] * 384  # Default embedding size
+                    
         except Exception as e:
             logger.error(f"Error getting embeddings: {str(e)}")
             return [0.0] * 384  # Default embedding size
@@ -116,7 +148,15 @@ class LLMInterface(LLMInterfaceBase):
                     }
                 ) as response:
                     result = await response.json()
-                    return [data["embedding"] for data in result["data"]]
+                    
+                    # Handle different response formats
+                    if "data" in result:
+                        return [data.get("embedding", [0.0] * 384) for data in result["data"]]
+                    
+                    # If we can't find embeddings, log and return defaults
+                    logger.error(f"Unexpected batch embeddings response format: {result}")
+                    return [[0.0] * 384 for _ in texts]
+                    
         except Exception as e:
             logger.error(f"Error getting batch embeddings: {str(e)}")
             return [[0.0] * 384 for _ in texts]  # Default embedding size
@@ -161,3 +201,34 @@ class LLMInterface(LLMInterfaceBase):
         """Close LLM interface."""
         if self.session:
             self.session.close()
+
+async def extract_structured_content(text: str) -> Dict[str, Any]:
+    """Extract structured content from text using parsing agent.
+    
+    This function is maintained for backwards compatibility.
+    New code should use ParsingAgent directly.
+    """
+    try:
+        # Create LLM interface
+        llm = LLMInterface()
+        
+        # Use parsing agent to extract content
+        response = await llm.parser.parse_text(text)
+        
+        # Convert to expected format
+        return {
+            "concepts": response.concepts,
+            "key_points": response.key_points,
+            "implications": response.implications,
+            "uncertainties": response.uncertainties,
+            "reasoning": response.reasoning
+        }
+    except Exception as e:
+        logger.error(f"Error extracting structured content: {str(e)}")
+        return {
+            "concepts": [],
+            "key_points": [],
+            "implications": [],
+            "uncertainties": [],
+            "reasoning": []
+        }

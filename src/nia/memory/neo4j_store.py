@@ -62,16 +62,17 @@ class Neo4jMemoryStore:
     async def store_concept_relationship(
         self,
         concept_name: str,
-        related_name: str
+        related_name: str,
+        relationship_type: str = "RELATED_TO"
     ) -> None:
         """Store relationship between concepts."""
         try:
-            query = """
-                    MATCH (c:Concept {id: $concept_name})
-                    MERGE (r:Concept {id: $related_name})
-                    MERGE (c)-[:RELATED_TO {
+            query = f"""
+                    MATCH (c:Concept {{id: $concept_name}})
+                    MERGE (r:Concept {{id: $related_name}})
+                    MERGE (c)-[:{relationship_type} {{
                         created_at: datetime()
-                    }]->(r)
+                    }}]->(r)
                     """
             
             async with self.driver.session() as session:
@@ -204,6 +205,18 @@ class Neo4jMemoryStore:
         except Exception as e:
             logger.error(f"Error getting capabilities: {str(e)}")
             raise
+
+    async def count_concepts(self) -> int:
+        """Get total number of concepts."""
+        try:
+            query = "MATCH (c:Concept) RETURN count(c) as count"
+            async with self.driver.session() as session:
+                result = await session.run(query)
+                record = await result.single()
+                return record["count"] if record else 0
+        except Exception as e:
+            logger.error(f"Error counting concepts: {str(e)}")
+            return 0
     
     async def cleanup(self) -> None:
         """Clean up graph store."""
