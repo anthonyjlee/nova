@@ -9,6 +9,7 @@ from ..vector_store import VectorStore
 from ..memory_types import AgentResponse, DialogueContext, DialogueMessage
 from .base import BaseAgent
 from .parsing_agent import ParsingAgent
+from .dialogue_agent import DialogueAgent
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ class MetaAgent(BaseAgent):
         super().__init__(llm, store, vector_store, agent_type="meta")
         self.specialized_agents = {}
         self.parser = ParsingAgent(llm, store, vector_store)
+        self.dialogue_manager = DialogueAgent(llm, store, vector_store)
     
     def _format_prompt(self, content: Dict[str, Any]) -> str:
         """Format prompt for meta agent."""
@@ -75,6 +77,12 @@ class MetaAgent(BaseAgent):
             )
             self.current_dialogue.add_message(user_message)
             
+            # Process dialogue through dialogue manager
+            self.current_dialogue = await self.dialogue_manager.process_dialogue(
+                content,
+                self.current_dialogue
+            )
+            
             # Get meta response
             meta_response = await self.llm.get_completion(
                 self._format_prompt({
@@ -108,13 +116,11 @@ class MetaAgent(BaseAgent):
                             }
                         )
                         
-                        # Add message to dialogue
-                        self.current_dialogue.add_message(message)
-                        
-                        # Add participants
-                        self.current_dialogue.add_participant(self.agent_type)
-                        if target_agent:
-                            self.current_dialogue.add_participant(target_agent)
+                        # Process message through dialogue manager
+                        self.current_dialogue = await self.dialogue_manager.process_dialogue(
+                            action_content,
+                            self.current_dialogue
+                        )
                         
                         # Perform action
                         if action_type == 'ASK':
@@ -150,8 +156,14 @@ class MetaAgent(BaseAgent):
                     except Exception as e:
                         logger.error(f"Error processing action: {str(e)}")
             
+            # Get next action suggestion
+            next_action = await self.dialogue_manager.suggest_next_action(
+                self.current_dialogue
+            )
+            
             # Update response with dialogue context
             parsed.dialogue_context = self.current_dialogue
+            parsed.metadata["next_action"] = next_action
             return parsed
             
         except Exception as e:
@@ -170,9 +182,20 @@ class MetaAgent(BaseAgent):
     ) -> AgentResponse:
         """Synthesize dialogue insights."""
         try:
+            # Process dialogue through dialogue manager
+            dialogue = content.get('dialogue_context')
+            if dialogue:
+                dialogue = await self.dialogue_manager.process_dialogue(
+                    content.get('content', ''),
+                    dialogue
+                )
+            
             # Get meta synthesis
             meta_synthesis = await self.llm.get_completion(
-                self._format_prompt(content)
+                self._format_prompt({
+                    **content,
+                    'dialogue_context': dialogue
+                })
             )
             
             # Parse synthesis using parsing agent
@@ -180,16 +203,16 @@ class MetaAgent(BaseAgent):
             
             # Add metadata
             parsed.metadata.update({
-                'dialogue_turns': len(content.get('dialogue_context', {}).messages),
+                'dialogue_turns': len(dialogue.messages) if dialogue else 0,
                 'participating_agents': list(set(
                     m.agent_type
-                    for m in content.get('dialogue_context', {}).messages
-                )),
+                    for m in dialogue.messages
+                )) if dialogue else [],
                 'synthesis_timestamp': datetime.now().isoformat()
             })
             
             # Update response
-            parsed.dialogue_context = content.get('dialogue_context')
+            parsed.dialogue_context = dialogue
             parsed.perspective = "Collaborative dialogue synthesis"
             parsed.confidence = 0.9  # High confidence for synthesis
             

@@ -1,6 +1,8 @@
 """Parsing agent for extracting structured information from text."""
 
 import logging
+import json
+import re
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from ..llm_interface import LLMInterface
@@ -25,35 +27,60 @@ class ParsingAgent(BaseAgent):
     
     def _format_prompt(self, content: Dict[str, Any]) -> str:
         """Format prompt for parsing."""
-        return f"""You are a parsing agent. Your task is to extract structured information from the given text and return it in a natural language response that I can parse.
+        return f"""You are a parsing agent. Your task is to extract structured information from the given text and return it in JSON format.
 
 Text to analyze:
 {content.get('text', '')}
 
-Please analyze this text and provide:
+IMPORTANT: You must respond with ONLY valid JSON, no other text. Here is an example of the exact format required:
 
-1. Concepts - Extract both actions and validated concepts:
-   - For actions, include: action_type (ASK/SYNTHESIZE/VALIDATE/PROBE), target_agent, content, purpose, references
-   - For concepts, include: name, type, description, related concepts, source perspectives, confidence level, validation details
+{{
+    "concepts": [
+        {{
+            "name": "Emotional Processing",
+            "type": "capability",
+            "description": "AI systems process emotions differently from humans",
+            "confidence": 0.8,
+            "validation": {{
+                "supported_by": ["observed patterns", "expert analysis"],
+                "contradicted_by": [],
+                "needs_verification": ["long-term stability"]
+            }}
+        }}
+    ],
+    "key_points": [
+        "AI emotional processing shows unique patterns",
+        "Self-reflection capabilities are emerging"
+    ],
+    "implications": [
+        "Need to explore emotional intelligence in AI systems",
+        "Further research needed on self-reflection mechanisms"
+    ],
+    "uncertainties": [
+        "How do AI systems develop emotional awareness?",
+        "What are the limits of machine consciousness?"
+    ],
+    "reasoning": [
+        "AI systems show distinct patterns in emotional processing",
+        "Self-reflection appears to be an emerging capability"
+    ]
+}}
 
-2. Key Points - What are the main insights or conclusions?
+Extract:
+- Concepts from "Validated Concepts" sections
+- Key points from "Key Insights" sections
+- Implications from "Areas Needing Discussion" sections
+- Uncertainties from questions raised
+- Reasoning from "Synthesis" sections
 
-3. Implications - What areas need more discussion or investigation?
+For concepts, include:
+- Name from bold text or bullet points
+- Type based on context (capability, pattern, insight)
+- Description from the explanation
+- Supporting evidence from context
+- Related concepts from nearby mentions
 
-4. Uncertainties - What questions or doubts remain?
-
-5. Reasoning - What is the synthesis of current understanding?
-
-Format your response with clear section headers. For each concept, provide complete details including validation information (what supports it, contradicts it, or needs verification).
-
-Remember:
-- Identify both actions to be taken and concepts being discussed
-- Include all validation details for concepts
-- Maintain relationships between ideas
-- Preserve all references and citations
-- Extract both explicit and implicit insights
-
-Analyze the text thoroughly and provide a complete structured understanding."""
+Your response must be ONLY the JSON object shown above, with no markdown, no text, no explanation - just the JSON."""
     
     async def parse_text(self, text: str) -> AgentResponse:
         """Parse text into structured format."""
@@ -65,49 +92,86 @@ Analyze the text thoroughly and provide a complete structured understanding."""
                 })
             )
             
-            # Get another LLM pass to extract structured data
-            extraction_prompt = f"""From this analysis, extract structured data in this exact format:
+            # Try to parse JSON response
+            try:
+                structured = json.loads(response)
+            except json.JSONDecodeError:
+                # If not valid JSON, try to extract JSON from markdown
+                json_match = re.search(r'```json\s*(.*?)\s*```', response, re.DOTALL)
+                if json_match:
+                    try:
+                        structured = json.loads(json_match.group(1))
+                    except json.JSONDecodeError:
+                        # If still not valid, ask LLM to fix it
+                        fix_prompt = f"""The previous response was not valid JSON. Format the following text as JSON matching this example exactly:
 
-Analysis:
+{{
+    "concepts": [
+        {{
+            "name": "Emotional Processing",
+            "type": "capability",
+            "description": "AI systems process emotions differently from humans",
+            "confidence": 0.8,
+            "validation": {{
+                "supported_by": ["observed patterns"],
+                "contradicted_by": [],
+                "needs_verification": ["long-term stability"]
+            }}
+        }}
+    ],
+    "key_points": ["AI emotional processing shows unique patterns"],
+    "implications": ["Need to explore emotional intelligence in AI"],
+    "uncertainties": ["How do AI systems develop awareness?"],
+    "reasoning": ["AI systems show distinct emotional patterns"]
+}}
+
+Text to format:
 {response}
 
-Please provide:
-1. A list of concepts (including both actions and validated concepts)
-2. A list of key points
-3. A list of implications
-4. A list of uncertainties
-5. A list of reasoning points
+Return ONLY the JSON object, no other text."""
+                        
+                        fixed_response = await self.llm.get_completion(fix_prompt)
+                        structured = json.loads(fixed_response)
+                else:
+                    # If no JSON found, ask LLM to fix it
+                    fix_prompt = f"""The previous response was not valid JSON. Format the following text as JSON matching this example exactly:
 
-For each concept that represents an action, include:
-- type: "action"
-- action_type: "ASK", "SYNTHESIZE", "VALIDATE", or "PROBE"
-- target_agent: which agent should perform the action
-- content: what should be done
-- purpose: why this action is needed
-- references: any relevant citations
+{{
+    "concepts": [
+        {{
+            "name": "Emotional Processing",
+            "type": "capability",
+            "description": "AI systems process emotions differently from humans",
+            "confidence": 0.8,
+            "validation": {{
+                "supported_by": ["observed patterns"],
+                "contradicted_by": [],
+                "needs_verification": ["long-term stability"]
+            }}
+        }}
+    ],
+    "key_points": ["AI emotional processing shows unique patterns"],
+    "implications": ["Need to explore emotional intelligence in AI"],
+    "uncertainties": ["How do AI systems develop awareness?"],
+    "reasoning": ["AI systems show distinct emotional patterns"]
+}}
 
-For each validated concept, include:
-- type: the concept type (pattern, insight, etc.)
-- name: concept name
-- description: clear description
-- related: related concepts
-- source_perspectives: who contributed to this concept
-- confidence: 0.0-1.0 confidence score
-- validation: what supports/contradicts/needs verification
+Text to format:
+{response}
 
-Provide your response in natural language, describing each element clearly."""
-            
-            # Get structured data
-            structured = await self.llm.get_completion(extraction_prompt)
+Return ONLY the JSON object, no other text."""
+                    
+                    fixed_response = await self.llm.get_completion(fix_prompt)
+                    structured = json.loads(fixed_response)
             
             # Create agent response
             return AgentResponse(
                 response=text,  # Original text
-                concepts=self._extract_concepts(structured),
-                key_points=self._extract_points(structured, "key points"),
-                implications=self._extract_points(structured, "implications"),
-                uncertainties=self._extract_points(structured, "uncertainties"),
-                reasoning=self._extract_points(structured, "reasoning"),
+                concepts=structured.get('concepts', []),
+                key_points=structured.get('key_points', []),
+                implications=structured.get('implications', []),
+                uncertainties=structured.get('uncertainties', []),
+                reasoning=structured.get('reasoning', []),
                 perspective="parsing",
                 confidence=0.9,  # High confidence for structured data
                 timestamp=datetime.now()
@@ -122,36 +186,3 @@ Provide your response in natural language, describing each element clearly."""
                 confidence=0.0,
                 timestamp=datetime.now()
             )
-    
-    def _extract_concepts(self, text: str) -> List[Dict[str, Any]]:
-        """Extract concepts from text using another LLM call."""
-        prompt = f"""From this text, extract all concepts (both actions and validated concepts) as a list of descriptions.
-        
-Text:
-{text}
-
-For each concept, describe:
-1. Whether it's an action or a validated concept
-2. All its properties and details
-3. Any validation information
-4. Any relationships to other concepts
-
-Provide your response as a natural language list of concept descriptions."""
-        
-        # This will be called by parse_text which already has LLM access
-        return []  # Placeholder - actual extraction happens in parse_text
-    
-    def _extract_points(self, text: str, section: str) -> List[str]:
-        """Extract points from a section using another LLM call."""
-        prompt = f"""From this text, extract the {section} as a list.
-        
-Text:
-{text}
-
-List each {section} point as a clear, complete statement.
-Preserve any important details, references, or relationships.
-
-Provide your response as a natural language list."""
-        
-        # This will be called by parse_text which already has LLM access
-        return []  # Placeholder - actual extraction happens in parse_text

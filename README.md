@@ -25,14 +25,18 @@ A modular system for building intelligent agents with memory, reasoning, and lea
   - Reflection capabilities
   - Research abilities
   - Consistent datetime handling across agents
+  - Structured JSON communication
+  - Example-based error recovery
 
 - **LLM Integration**
   - LMStudio chat completions
   - LMStudio embeddings
   - Concept extraction
   - Structured JSON responses
-  - Error recovery
+  - Example-based prompts
+  - Robust error recovery
   - Context management
+  - Default behaviors
 
 ## Prerequisites
 
@@ -208,53 +212,79 @@ async def search_memories(query: str) -> List[Dict]:
 
 The system uses LMStudio for text generation, embeddings, and concept extraction:
 
-### Chat Completions
+### Chat Completions with Examples
 
 ```python
-# Agent responses through LMStudio chat
+# Agent responses through LMStudio with example-based prompts
 curl http://localhost:1234/v1/chat/completions \
   -H "Content-Type: application/json" \
   -d '{
     "messages": [
-      {"role": "system", "content": "System prompt"},
+      {"role": "system", "content": "System prompt with examples"},
+      {"role": "user", "content": "Here is an example of the format I want:"},
+      {"role": "assistant", "content": "Example response in correct format"},
       {"role": "user", "content": "User message"}
     ]
   }'
 ```
 
-### Embeddings
+### Structured JSON Output
 
 ```python
-# Generate embeddings for semantic search
-curl http://localhost:1234/v1/embeddings \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "text-embedding-nomic-embed-text-v1.5@q8_0",
-    "input": "Text to embed"
-  }'
+# Extract structured data using LLM
+async def extract_structured_data(content: str) -> Dict:
+    prompt = """Extract information in this exact JSON format:
+    {
+        "concepts": [{
+            "name": "concept name",
+            "type": "concept type",
+            "description": "description",
+            "confidence": 0.8,
+            "validation": {
+                "supported_by": ["evidence"],
+                "contradicted_by": [],
+                "needs_verification": []
+            }
+        }],
+        "key_points": ["main insights"],
+        "implications": ["areas needing discussion"]
+    }"""
+    
+    response = await llm.get_completion(prompt)
+    
+    try:
+        return json.loads(response)
+    except json.JSONDecodeError:
+        # Example-based error recovery
+        return await llm.get_completion(
+            f"Fix JSON format:\n{response}\n\nExample:\n{example_json}"
+        )
 ```
 
-### Concept Extraction
+### Error Recovery
 
 ```python
-# Extract concepts using LLM with datetime handling
-async def extract_concepts(content: str) -> List[Dict]:
-    prompt = """Extract key concepts from the content.
-    Include:
-    1. Name of concept
-    2. Type (technology, capability, system, idea)
-    3. Description
-    4. Related concepts
-    """
+# Robust error handling with examples
+async def handle_llm_error(error: Exception, context: str) -> Dict:
+    # 1. Try to extract JSON from markdown
+    json_match = re.search(r'```json\s*(.*?)\s*```', context)
+    if json_match:
+        try:
+            return json.loads(json_match.group(1))
+        except:
+            pass
     
-    response = await llm.get_structured_completion(
-        prompt.format(content=content)
-    )
+    # 2. Example-based recovery
+    fix_prompt = f"""Fix this response to match example:
     
-    # Ensure datetime objects are properly serialized
-    return serialize_datetime(
-        response.analysis.get("concepts", [])
-    )
+    Example:
+    {example_json}
+    
+    Response to fix:
+    {context}"""
+    
+    fixed = await llm.get_completion(fix_prompt)
+    return json.loads(fixed)
 ```
 
 ## Development
