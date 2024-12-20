@@ -1,228 +1,182 @@
-"""Meta agent for coordinating dialogue between specialized agents."""
+"""Meta agent for synthesizing responses from other agents."""
 
 import logging
-from typing import Dict, List, Any, Optional
+import json
+from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from datetime import datetime
-from ..llm_interface import LLMInterface
-from ..neo4j_store import Neo4jMemoryStore
-from ..vector_store import VectorStore
-from ..memory_types import AgentResponse, DialogueContext, DialogueMessage
+from ..memory_types import AgentResponse, DialogueContext
 from .base import BaseAgent
-from .parsing_agent import ParsingAgent
-from .dialogue_agent import DialogueAgent
+
+if TYPE_CHECKING:
+    from ..llm_interface import LLMInterface
+    from ..neo4j_store import Neo4jMemoryStore
+    from ..vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
 class MetaAgent(BaseAgent):
-    """Meta agent for coordinating dialogue."""
+    """Agent for synthesizing responses and managing dialogue."""
     
     def __init__(
         self,
-        llm: LLMInterface,
-        store: Neo4jMemoryStore,
-        vector_store: VectorStore
+        llm: 'LLMInterface',
+        store: 'Neo4jMemoryStore',
+        vector_store: 'VectorStore'
     ):
         """Initialize meta agent."""
         super().__init__(llm, store, vector_store, agent_type="meta")
-        self.specialized_agents = {}
-        self.parser = ParsingAgent(llm, store, vector_store)
-        self.dialogue_manager = DialogueAgent(llm, store, vector_store)
+        self.current_dialogue = None
     
     def _format_prompt(self, content: Dict[str, Any]) -> str:
-        """Format prompt for meta agent."""
-        # Get dialogue context if available
+        """Format prompt for LLM."""
+        # Get content and responses
+        text = content.get('content', {}).get('content', '')
+        responses = content.get('agent_responses', {})
         dialogue = content.get('dialogue_context')
+        
+        # Format agent responses
+        response_text = '\n\n'.join([
+            f"{agent_type.capitalize()} Agent Response:\n{response.response}\n"
+            f"Concepts: {json.dumps(response.concepts)}\n"
+            f"Key Points: {json.dumps(response.key_points)}\n"
+            f"Implications: {json.dumps(response.implications)}"
+            for agent_type, response in responses.items()
+        ])
+        
+        # Format dialogue context if available
         dialogue_text = ""
-        if dialogue and isinstance(dialogue, DialogueContext):
-            dialogue_text = "\n".join([
-                f"{m.agent_type}: {m.content} ({m.message_type})"
-                for m in dialogue.messages[-5:]  # Last 5 messages
+        if dialogue:
+            dialogue_text = "\nDialogue Context:\n" + "\n".join([
+                f"{m.agent_type}: {m.content}"
+                for m in dialogue.messages
             ])
-            dialogue_text = f"\nCurrent Dialogue:\n{dialogue_text}\n"
         
         # Format prompt
-        return f"""You are a meta agent coordinating dialogue between specialized agents.
+        prompt = f"""Synthesize the following agent responses into a coherent dialogue.
+
+Content:
+{text}
+
+Agent Responses:
+{response_text}
+
+{dialogue_text}
+
+Provide synthesis in this exact format:
+{{
+    "response": "Detailed dialogue synthesis",
+    "concepts": [
+        {{
+            "name": "Concept name",
+            "type": "pattern|insight|learning|evolution",
+            "description": "Clear description",
+            "related": ["Related concept names"],
+            "validation": {{
+                "confidence": 0.8,
+                "supported_by": ["evidence"],
+                "contradicted_by": [],
+                "needs_verification": []
+            }}
+        }}
+    ],
+    "key_points": [
+        "Key insight or observation"
+    ],
+    "implications": [
+        "Important implication"
+    ],
+    "uncertainties": [
+        "Area of uncertainty"
+    ],
+    "reasoning": [
+        "Step in synthesis"
+    ]
+}}
+
+Guidelines:
+1. Synthesize responses into a coherent narrative
+2. Extract common themes and concepts
+3. Identify key insights and implications
+4. Note areas of uncertainty or disagreement
+5. Format as proper JSON
+
+Return ONLY the JSON object, no other text."""
         
-        Content:
-        {content.get('content', '')}
-        {dialogue_text}
-        
-        Context:
-        {content.get('context_analysis', {})}
-        
-        Provide:
-        1. Dialogue actions - what actions should be taken by which agents?
-        2. Validated concepts - what concepts have been validated through the dialogue?
-        3. Key insights from the dialogue
-        4. Areas needing more discussion
-        5. Synthesis of current understanding
-        
-        Format your response in natural language with clear section headers."""
-    
-    async def process_interaction(self, content: str) -> AgentResponse:
-        """Process user interaction."""
-        try:
-            # Create dialogue context if needed
-            if not self.current_dialogue:
-                self.current_dialogue = DialogueContext(
-                    topic="User Interaction",
-                    status="active"
-                )
-            
-            # Add initial user message
-            user_message = DialogueMessage(
-                agent_type="user",
-                content=content,
-                message_type="input"
-            )
-            self.current_dialogue.add_message(user_message)
-            
-            # Process dialogue through dialogue manager
-            self.current_dialogue = await self.dialogue_manager.process_dialogue(
-                content,
-                self.current_dialogue
-            )
-            
-            # Get meta response
-            meta_response = await self.llm.get_completion(
-                self._format_prompt({
-                    'content': content,
-                    'dialogue_context': self.current_dialogue
-                })
-            )
-            
-            # Parse response using parsing agent
-            parsed = await self.parser.parse_text(meta_response)
-            
-            # Process actions from parsed response
-            for action in parsed.concepts:
-                if action.get('type') == 'action':
-                    try:
-                        action_type = action.get('action_type', '').upper()
-                        target_agent = action.get('target_agent')
-                        action_content = action.get('content')
-                        references = action.get('references', [])
-                        purpose = action.get('purpose')
-                        
-                        # Create message for action
-                        message = DialogueMessage(
-                            agent_type=self.agent_type,
-                            content=action_content,
-                            message_type=action_type.lower(),
-                            references=references,
-                            metadata={
-                                "target_agent": target_agent,
-                                "purpose": purpose
-                            }
-                        )
-                        
-                        # Process message through dialogue manager
-                        self.current_dialogue = await self.dialogue_manager.process_dialogue(
-                            action_content,
-                            self.current_dialogue
-                        )
-                        
-                        # Perform action
-                        if action_type == 'ASK':
-                            await self.ask_question(
-                                action_content,
-                                references=references,
-                                metadata={"target_agent": target_agent}
-                            )
-                        elif action_type == 'SYNTHESIZE':
-                            await self.provide_insight(
-                                action_content,
-                                references=references,
-                                metadata={"target_agent": target_agent}
-                            )
-                        elif action_type == 'VALIDATE':
-                            await self.provide_insight(
-                                action_content,
-                                references=references,
-                                metadata={
-                                    "target_agent": target_agent,
-                                    "validation": True
-                                }
-                            )
-                        elif action_type == 'PROBE':
-                            await self.ask_question(
-                                action_content,
-                                references=references,
-                                metadata={
-                                    "target_agent": target_agent,
-                                    "probe": True
-                                }
-                            )
-                    except Exception as e:
-                        logger.error(f"Error processing action: {str(e)}")
-            
-            # Get next action suggestion
-            next_action = await self.dialogue_manager.suggest_next_action(
-                self.current_dialogue
-            )
-            
-            # Update response with dialogue context
-            parsed.dialogue_context = self.current_dialogue
-            parsed.metadata["next_action"] = next_action
-            return parsed
-            
-        except Exception as e:
-            logger.error(f"Error processing interaction: {str(e)}")
-            return AgentResponse(
-                response=f"Error processing interaction: {str(e)}",
-                concepts=[],
-                perspective="meta",
-                confidence=0.0,
-                timestamp=datetime.now()
-            )
+        return prompt
     
     async def synthesize_dialogue(
         self,
         content: Dict[str, Any]
     ) -> AgentResponse:
-        """Synthesize dialogue insights."""
+        """Synthesize dialogue from agent responses."""
         try:
-            # Process dialogue through dialogue manager
-            dialogue = content.get('dialogue_context')
-            if dialogue:
-                dialogue = await self.dialogue_manager.process_dialogue(
-                    content.get('content', ''),
-                    dialogue
-                )
-            
-            # Get meta synthesis
-            meta_synthesis = await self.llm.get_completion(
-                self._format_prompt({
-                    **content,
-                    'dialogue_context': dialogue
-                })
+            # Get structured completion
+            response = await self.llm.get_structured_completion(
+                self._format_prompt(content)
             )
             
-            # Parse synthesis using parsing agent
-            parsed = await self.parser.parse_text(meta_synthesis)
+            # Add dialogue context if available
+            if content.get('dialogue_context'):
+                response.dialogue_context = content['dialogue_context']
             
             # Add metadata
-            parsed.metadata.update({
-                'dialogue_turns': len(dialogue.messages) if dialogue else 0,
-                'participating_agents': list(set(
-                    m.agent_type
-                    for m in dialogue.messages
-                )) if dialogue else [],
+            response.metadata = {
+                'dialogue_turns': len(content.get('dialogue_context', {}).messages) if content.get('dialogue_context') else 0,
+                'participating_agents': list(content.get('agent_responses', {}).keys()),
                 'synthesis_timestamp': datetime.now().isoformat()
-            })
+            }
             
-            # Update response
-            parsed.dialogue_context = dialogue
-            parsed.perspective = "Collaborative dialogue synthesis"
-            parsed.confidence = 0.9  # High confidence for synthesis
-            
-            return parsed
+            return response
             
         except Exception as e:
             logger.error(f"Error synthesizing dialogue: {str(e)}")
             return AgentResponse(
-                response=f"Error synthesizing dialogue: {str(e)}",
+                response="Error synthesizing dialogue",
                 concepts=[],
+                key_points=[],
+                implications=[],
+                uncertainties=[],
+                reasoning=[],
+                perspective="meta",
+                confidence=0.0,
+                timestamp=datetime.now()
+            )
+    
+    async def process_interaction(
+        self,
+        content: str,
+        metadata: Optional[Dict] = None
+    ) -> AgentResponse:
+        """Process interaction through meta agent."""
+        try:
+            # Create content dict
+            content_dict = {
+                'content': {'content': content},
+                'dialogue_context': self.current_dialogue,
+                'agent_responses': {}
+            }
+            
+            # Get agent responses
+            for agent_type in ['belief', 'desire', 'emotion', 'reflection', 'research']:
+                agent = getattr(self, f"{agent_type}_agent", None)
+                if agent:
+                    content_dict['agent_responses'][agent_type] = await agent.process(
+                        content_dict['content'],
+                        metadata
+                    )
+            
+            # Synthesize responses
+            return await self.synthesize_dialogue(content_dict)
+            
+        except Exception as e:
+            logger.error(f"Error processing interaction: {str(e)}")
+            return AgentResponse(
+                response="Error processing interaction",
+                concepts=[],
+                key_points=[],
+                implications=[],
+                uncertainties=[],
+                reasoning=[],
                 perspective="meta",
                 confidence=0.0,
                 timestamp=datetime.now()

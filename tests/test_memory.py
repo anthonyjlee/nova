@@ -15,7 +15,8 @@ from nia.memory.agents.reflection_agent import ReflectionAgent
 from nia.memory.research_agent import ResearchAgent
 from nia.memory.agents.meta_agent import MetaAgent
 from nia.memory.memory_integration import MemorySystem
-from nia.memory.llm_interface import LLMInterface, extract_structured_content
+from nia.memory.llm_interface import LLMInterface
+from nia.memory.agents.parsing_agent import extract_structured_content
 from nia.memory.neo4j_store import Neo4jMemoryStore
 from nia.memory.vector_store import VectorStore
 from nia.memory.embeddings import EmbeddingService
@@ -320,7 +321,7 @@ async def test_memory_search():
 
 @pytest.mark.asyncio
 async def test_structured_content_extraction():
-    """Test extraction of structured content from LLM response."""
+    """Test extraction of structured content from text."""
     test_response = """
     [
       {
@@ -348,7 +349,7 @@ async def test_structured_content_extraction():
     2. Considered information flow
     """
     
-    content = await extract_structured_content(test_response)
+    content = extract_structured_content(test_response)
     
     # Verify structure
     assert "concepts" in content

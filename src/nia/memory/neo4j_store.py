@@ -1,26 +1,15 @@
-"""
-Neo4j store implementation.
-"""
+"""Neo4j memory store."""
 
 import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from neo4j import AsyncGraphDatabase, AsyncDriver
+from .memory_types import Memory, Concept
 
 logger = logging.getLogger(__name__)
 
-def serialize_datetime(obj: Any) -> Any:
-    """Serialize datetime objects to ISO format strings."""
-    if isinstance(obj, datetime):
-        return obj.isoformat()
-    elif isinstance(obj, dict):
-        return {k: serialize_datetime(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [serialize_datetime(item) for item in obj]
-    return obj
-
 class Neo4jMemoryStore:
-    """Neo4j-based memory store."""
+    """Neo4j memory store."""
     
     def __init__(
         self,
@@ -28,251 +17,186 @@ class Neo4jMemoryStore:
         user: str = "neo4j",
         password: str = "password"
     ):
-        """Initialize Neo4j connection."""
+        """Initialize Neo4j store."""
+        self.uri = uri
+        self.user = user
+        self.password = password
         self.driver = AsyncGraphDatabase.driver(uri, auth=(user, password))
+    
+    async def close(self):
+        """Close Neo4j connection."""
+        await self.driver.close()
     
     async def store_concept(
         self,
         name: str,
         type: str,
-        description: str
+        description: str,
+        related: Optional[List[str]] = None
     ) -> None:
-        """Store concept in graph."""
+        """Store concept in Neo4j."""
         try:
-            # First try to find existing concept
-            query = """
-                MATCH (c:Concept {id: $concept_name})
-                RETURN c
-                """
-            
+            async with self.driver.session() as session:
+                # Create concept node
+                await session.run(
+                    """
+                    MERGE (c:Concept {name: $name})
+                    SET c.type = $type,
+                        c.description = $description,
+                        c.timestamp = datetime()
+                    """,
+                    name=name,
+                    type=type,
+                    description=description
+                )
+                
+                # Create relationships to related concepts
+                if related:
+                    for rel in related:
+                        await session.run(
+                            """
+                            MATCH (c1:Concept {name: $name1})
+                            MERGE (c2:Concept {name: $name2})
+                            MERGE (c1)-[:RELATED_TO]->(c2)
+                            """,
+                            name1=name,
+                            name2=rel
+                        )
+                
+        except Exception as e:
+            logger.error(f"Error storing concept: {str(e)}")
+    
+    async def get_concept(self, name: str) -> Optional[Dict]:
+        """Get concept by name."""
+        try:
             async with self.driver.session() as session:
                 result = await session.run(
-                    query,
-                    concept_name=name
-                )
-                record = await result.single()
-                
-                if record:
-                    # Update existing concept if type or description changed
-                    update_query = """
-                        MATCH (c:Concept {id: $concept_name})
-                        SET c.type = $concept_type,
-                            c.description = $concept_desc,
-                            c.updated_at = datetime()
-                        """
-                    await session.run(
-                        update_query,
-                        concept_name=name,
-                        concept_type=type,
-                        concept_desc=description
-                    )
-                else:
-                    # Create new concept
-                    create_query = """
-                        CREATE (c:Concept {
-                            id: $concept_name,
-                            type: $concept_type,
-                            description: $concept_desc,
-                            created_at: datetime()
-                        })
-                        """
-                    await session.run(
-                        create_query,
-                        concept_name=name,
-                        concept_type=type,
-                        concept_desc=description
-                    )
-                
-        except Exception as e:
-            logger.warning(f"Error creating/updating concept {name}: {str(e)}")
-            raise
-    
-    async def store_concept_relationship(
-        self,
-        concept_name: str,
-        related_name: str,
-        relationship_type: str = "RELATED_TO"
-    ) -> None:
-        """Store relationship between concepts."""
-        try:
-            # First ensure both concepts exist
-            await self.store_concept(concept_name, "concept", "Automatically created concept")
-            await self.store_concept(related_name, "concept", "Automatically created concept")
-            
-            # Then create relationship if it doesn't exist
-            query = f"""
-                    MATCH (c:Concept {{id: $concept_name}})
-                    MATCH (r:Concept {{id: $related_name}})
-                    MERGE (c)-[rel:{relationship_type}]->(r)
-                    ON CREATE SET rel.created_at = datetime()
-                    ON MATCH SET rel.updated_at = datetime()
                     """
-            
+                    MATCH (c:Concept {name: $name})
+                    OPTIONAL MATCH (c)-[:RELATED_TO]->(r:Concept)
+                    RETURN c, collect(r.name) as related
+                    """,
+                    name=name
+                )
+                
+                record = await result.single()
+                if record:
+                    concept = record["c"]
+                    related = record["related"]
+                    return {
+                        "name": concept["name"],
+                        "type": concept["type"],
+                        "description": concept["description"],
+                        "related": related
+                    }
+                return None
+                
+        except Exception as e:
+            logger.error(f"Error getting concept: {str(e)}")
+            return None
+    
+    async def get_concepts_by_type(self, type: str) -> List[Dict]:
+        """Get concepts by type."""
+        try:
+            async with self.driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (c:Concept {type: $type})
+                    OPTIONAL MATCH (c)-[:RELATED_TO]->(r:Concept)
+                    RETURN c, collect(r.name) as related
+                    """,
+                    type=type
+                )
+                
+                concepts = []
+                async for record in result:
+                    concept = record["c"]
+                    related = record["related"]
+                    concepts.append({
+                        "name": concept["name"],
+                        "type": concept["type"],
+                        "description": concept["description"],
+                        "related": related
+                    })
+                return concepts
+                
+        except Exception as e:
+            logger.error(f"Error getting concepts by type: {str(e)}")
+            return []
+    
+    async def get_related_concepts(self, name: str) -> List[Dict]:
+        """Get concepts related to given concept."""
+        try:
+            async with self.driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (c:Concept {name: $name})-[:RELATED_TO]->(r:Concept)
+                    RETURN r
+                    """,
+                    name=name
+                )
+                
+                concepts = []
+                async for record in result:
+                    concept = record["r"]
+                    concepts.append({
+                        "name": concept["name"],
+                        "type": concept["type"],
+                        "description": concept["description"]
+                    })
+                return concepts
+                
+        except Exception as e:
+            logger.error(f"Error getting related concepts: {str(e)}")
+            return []
+    
+    async def delete_concept(self, name: str) -> None:
+        """Delete concept and its relationships."""
+        try:
             async with self.driver.session() as session:
                 await session.run(
-                    query,
-                    concept_name=concept_name,
-                    related_name=related_name
+                    """
+                    MATCH (c:Concept {name: $name})
+                    DETACH DELETE c
+                    """,
+                    name=name
                 )
                 
         except Exception as e:
-            logger.warning(
-                f"Error creating relationship {concept_name}->{related_name}: {str(e)}"
-            )
-            raise
+            logger.error(f"Error deleting concept: {str(e)}")
     
-    async def store_memory(
+    async def search_concepts(
         self,
-        memory_type: str,
-        content: Dict[str, Any],
-        metadata: Optional[Dict] = None
-    ) -> None:
-        """Store memory in graph."""
+        query: str,
+        limit: int = 10
+    ) -> List[Dict]:
+        """Search concepts by name or description."""
         try:
-            # Serialize datetime objects
-            content = serialize_datetime(content)
-            metadata = serialize_datetime(metadata) if metadata else {}
-            
-            # Create memory node with unique ID
-            query = """
-                CREATE (m:Memory {
-                    id: randomUUID(),
-                    type: $memory_type,
-                    content: $content,
-                    metadata: $metadata,
-                    created_at: datetime()
-                })
-                """
-            
             async with self.driver.session() as session:
-                await session.run(
-                    query,
-                    memory_type=memory_type,
-                    content=str(content),
-                    metadata=str(metadata)
+                result = await session.run(
+                    """
+                    CALL db.index.fulltext.queryNodes("concept_search", $query)
+                    YIELD node, score
+                    RETURN node, score
+                    ORDER BY score DESC
+                    LIMIT $limit
+                    """,
+                    query=query,
+                    limit=limit
                 )
                 
-        except Exception as e:
-            logger.error(f"Error storing memory: {str(e)}")
-            raise
-    
-    async def get_system_info(self, name: str) -> Optional[Dict]:
-        """Get information about an AI system."""
-        try:
-            query = """
-            MATCH (s:AISystem {name: $name})
-            OPTIONAL MATCH (s)-[:HAS_CAPABILITY]->(c:Capability)
-            WITH s, collect(c) as capabilities
-            RETURN {
-                id: s.id,
-                name: s.name,
-                type: s.type,
-                created_at: toString(s.created_at),
-                capabilities: [cap in capabilities | {
-                    id: cap.id,
-                    type: cap.type,
-                    description: cap.description,
-                    confidence: cap.confidence
-                }]
-            } as system
-            """
-            
-            async with self.driver.session() as session:
-                result = await session.run(query, name=name)
-                record = await result.single()
-                return record["system"] if record else None
+                concepts = []
+                async for record in result:
+                    concept = record["node"]
+                    score = record["score"]
+                    concepts.append({
+                        "name": concept["name"],
+                        "type": concept["type"],
+                        "description": concept["description"],
+                        "score": score
+                    })
+                return concepts
                 
         except Exception as e:
-            logger.error(f"Error getting system info: {str(e)}")
-            raise
-    
-    async def get_system_relationships(self, name: str) -> List[Dict]:
-        """Get relationships for an AI system."""
-        try:
-            query = """
-            MATCH (s:AISystem {name: $name})
-            OPTIONAL MATCH (s)-[r]->(other)
-            RETURN {
-                relationship_type: type(r),
-                target_type: labels(other)[0],
-                target_name: other.name,
-                target_id: other.id,
-                properties: {
-                    transition_date: CASE 
-                        WHEN r.transition_date IS NOT NULL 
-                        THEN toString(r.transition_date) 
-                        ELSE null 
-                    END,
-                    confidence: r.confidence,
-                    context: r.context
-                }
-            } as relationship
-            """
-            
-            async with self.driver.session() as session:
-                result = await session.run(query, name=name)
-                records = await result.fetch()
-                return [r["relationship"] for r in records]
-                
-        except Exception as e:
-            logger.error(f"Error getting system relationships: {str(e)}")
-            raise
-    
-    async def get_capabilities(self) -> List[Dict]:
-        """Get all capabilities in the system."""
-        try:
-            query = """
-            MATCH (c:Capability)
-            RETURN {
-                id: c.id,
-                type: c.type,
-                description: c.description,
-                confidence: c.confidence
-            } as capability
-            """
-            
-            async with self.driver.session() as session:
-                result = await session.run(query)
-                records = await result.fetch()
-                return [r["capability"] for r in records]
-                
-        except Exception as e:
-            logger.error(f"Error getting capabilities: {str(e)}")
-            raise
-
-    async def count_concepts(self) -> int:
-        """Get total number of concepts."""
-        try:
-            query = "MATCH (c:Concept) RETURN count(c) as count"
-            async with self.driver.session() as session:
-                result = await session.run(query)
-                record = await result.single()
-                return record["count"] if record else 0
-        except Exception as e:
-            logger.error(f"Error counting concepts: {str(e)}")
-            return 0
-    
-    async def cleanup(self) -> None:
-        """Clean up graph store."""
-        try:
-            # Delete all nodes and relationships
-            query = """
-            MATCH (n)
-            DETACH DELETE n
-            """
-            async with self.driver.session() as session:
-                await session.run(query)
-                logger.info("Cleaned up all nodes and relationships")
-            
-        except Exception as e:
-            logger.error(f"Error cleaning up graph store: {str(e)}")
-            raise
-    
-    def close(self) -> None:
-        """Close Neo4j connection."""
-        try:
-            self.driver.close()
-            logger.info("Closed Neo4j connection")
-        except Exception as e:
-            logger.error(f"Error closing Neo4j connection: {str(e)}")
-            raise
+            logger.error(f"Error searching concepts: {str(e)}")
+            return []

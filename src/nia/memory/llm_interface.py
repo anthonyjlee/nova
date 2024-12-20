@@ -2,13 +2,27 @@
 
 import logging
 import json
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from datetime import datetime
 import aiohttp
 from .memory_types import AgentResponse
-from .agents.parsing_agent import ParsingAgent
+
+if TYPE_CHECKING:
+    from .agents.parsing_agent import ParsingAgent
+    from .neo4j_store import Neo4jMemoryStore
+    from .vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
+
+# Reduce context length to avoid token limit issues
+MAX_TOKENS = 1024
+MAX_PROMPT_LENGTH = 2048
+
+def truncate_text(text: str, max_length: int = MAX_PROMPT_LENGTH) -> str:
+    """Truncate text to fit within token limits."""
+    if len(text) > max_length:
+        return text[:max_length] + "..."
+    return text
 
 class LLMInterface:
     """Interface for LLM operations."""
@@ -23,19 +37,33 @@ class LLMInterface:
         self.host = host
         self.port = port
         self.max_retries = max_retries
-        self.parser = None  # Will be initialized after Neo4j and vector stores
+        self._parser = None  # Will be initialized after Neo4j and vector stores
     
-    def initialize_parser(self, store, vector_store):
-        """Initialize parsing agent."""
-        self.parser = ParsingAgent(self, store, vector_store)
+    @property
+    def parser(self) -> Optional['ParsingAgent']:
+        """Get parser instance."""
+        return self._parser
+    
+    def initialize_parser(
+        self,
+        store: 'Neo4jMemoryStore',
+        vector_store: 'VectorStore'
+    ) -> None:
+        """Initialize parsing agent if not already initialized."""
+        if self._parser is None:
+            from .agents.parsing_agent import ParsingAgent
+            self._parser = ParsingAgent(self, store, vector_store)
     
     async def get_completion(self, prompt: str) -> str:
         """Get completion from LLM."""
         try:
+            # Truncate prompt
+            truncated_prompt = truncate_text(prompt)
+            
             # Format request
             request = {
-                "prompt": prompt,
-                "max_tokens": 2048,
+                "prompt": truncated_prompt,
+                "max_tokens": MAX_TOKENS,
                 "temperature": 0.7,
                 "top_p": 0.9,
                 "frequency_penalty": 0.0,
@@ -131,7 +159,7 @@ class LLMInterface:
             # Format request
             request = {
                 "messages": messages,
-                "max_tokens": 2048,
+                "max_tokens": MAX_TOKENS,
                 "temperature": 0.7,
                 "top_p": 0.9,
                 "frequency_penalty": 0.0,

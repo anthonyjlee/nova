@@ -1,43 +1,29 @@
-"""
-Memory system package.
-"""
+"""Memory system package."""
 
-from .llm_interface import LLMInterface
-from .neo4j_store import Neo4jMemoryStore
-from .vector_store import VectorStore
-from .memory_integration import MemorySystem
 from .memory_types import (
     Memory,
-    AISystem,
-    Capability,
-    Evolution,
+    Concept,
+    DialogueMessage,
+    DialogueContext,
     AgentResponse,
-    RelationshipTypes
+    JSONSerializable,
+    AISystem
 )
-from .agents import (
-    BeliefAgent,
-    DesireAgent,
-    EmotionAgent,
-    ReflectionAgent,
-    ResearchAgent,
-    MetaAgent
-)
+from .neo4j_store import Neo4jMemoryStore
+from .vector_store import VectorStore
+from .llm_interface import LLMInterface
+from .memory_integration import MemorySystem
 
 __all__ = [
-    'LLMInterface',
+    'Memory',
+    'Concept',
+    'DialogueMessage',
+    'DialogueContext',
+    'AgentResponse',
+    'JSONSerializable',
+    'AISystem',
     'Neo4jMemoryStore',
     'VectorStore',
-    'MemorySystem',
-    'Memory',
-    'AISystem',
-    'Capability',
-    'Evolution',
-    'AgentResponse',
-    'RelationshipTypes',
-    'BeliefAgent',
-    'DesireAgent',
-    'EmotionAgent',
-    'ReflectionAgent',
-    'ResearchAgent',
-    'MetaAgent'
+    'LLMInterface',
+    'MemorySystem'
 ]
