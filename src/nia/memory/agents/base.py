@@ -167,33 +167,51 @@ class BaseAgent(ABC):
             Content: {json.dumps(content)}
             Similar Memories: {json.dumps(similar_memories)}
             
-            Identify:
-            1. Relevant concepts
-            2. Important relationships
-            3. Key context elements
-            4. Potential implications
+            Provide analysis in this exact format:
+            {{
+                "concepts": [
+                    {{
+                        "name": "Concept name",
+                        "type": "concept type",
+                        "description": "Clear description",
+                        "related": ["Related concept names"]
+                    }}
+                ],
+                "relationships": [
+                    {{
+                        "from": "Concept name",
+                        "to": "Related concept name",
+                        "type": "relationship type",
+                        "description": "Clear description"
+                    }}
+                ],
+                "context_elements": [
+                    {{
+                        "type": "element type",
+                        "content": "element content",
+                        "importance": "high|medium|low"
+                    }}
+                ],
+                "implications": [
+                    {{
+                        "type": "implication type",
+                        "description": "Clear description",
+                        "confidence": 0.0 to 1.0
+                    }}
+                ]
+            }}"""
             
-            Provide analysis in JSON format."""
+            # Get context analysis through parsing agent
+            analysis = await self.llm.parser.parse_text(
+                await self.llm.get_completion(context_prompt)
+            )
             
-            # Get context analysis
-            context_analysis = await self.llm.get_completion(context_prompt)
-            
-            try:
-                analysis = json.loads(context_analysis)
-                
-                # Return enriched content
-                return {
-                    **content,
-                    "similar_memories": similar_memories,
-                    "context_analysis": analysis
-                }
-                
-            except json.JSONDecodeError:
-                logger.error("Failed to parse context analysis")
-                return {
-                    **content,
-                    "similar_memories": similar_memories
-                }
+            # Return enriched content
+            return {
+                **content,
+                "similar_memories": similar_memories,
+                "context_analysis": analysis.dict()
+            }
                 
         except Exception as e:
             logger.error(f"Error enriching content: {str(e)}")

@@ -23,6 +23,9 @@ from .agents import (
 
 logger = logging.getLogger(__name__)
 
+MAX_CONSOLIDATION_BATCH = 10  # Maximum memories to consolidate at once
+MAX_CONTENT_LENGTH = 4096  # Maximum content length for LLM
+
 def serialize_datetime(obj: Any) -> Any:
     """Serialize datetime objects to ISO format strings."""
     if isinstance(obj, datetime):
@@ -30,8 +33,14 @@ def serialize_datetime(obj: Any) -> Any:
     elif isinstance(obj, dict):
         return {k: serialize_datetime(v) for k, v in obj.items()}
     elif isinstance(obj, list):
-        return [serialize_datetime(item) for item in obj]  # Fixed list handling
+        return [serialize_datetime(item) for item in obj]
     return obj
+
+def truncate_content(content: str) -> str:
+    """Truncate content to fit LLM context window."""
+    if len(content) > MAX_CONTENT_LENGTH:
+        return content[:MAX_CONTENT_LENGTH]
+    return content
 
 class MemorySystem:
     """Integrated memory system with clean concept separation."""
@@ -50,13 +59,16 @@ class MemorySystem:
         self.consolidation_interval = consolidation_interval
         self.last_consolidation = datetime.now()
         
+        # Initialize LLM parser
+        self.llm.initialize_parser(store, vector_store)
+        
         # Initialize agents
-        self.belief_agent = BeliefAgent(llm, store, self.vector_store)
-        self.desire_agent = DesireAgent(llm, store, self.vector_store)
-        self.emotion_agent = EmotionAgent(llm, store, self.vector_store)
-        self.reflection_agent = ReflectionAgent(llm, store, self.vector_store)
-        self.research_agent = ResearchAgent(llm, store, self.vector_store)
-        self.meta_agent = MetaAgent(llm, store, self.vector_store)
+        self.belief_agent = BeliefAgent(llm, store, vector_store)
+        self.desire_agent = DesireAgent(llm, store, vector_store)
+        self.emotion_agent = EmotionAgent(llm, store, vector_store)
+        self.reflection_agent = ReflectionAgent(llm, store, vector_store)
+        self.research_agent = ResearchAgent(llm, store, vector_store)
+        self.meta_agent = MetaAgent(llm, store, vector_store)
     
     async def process_interaction(
         self,
@@ -75,13 +87,13 @@ class MemorySystem:
             # Store in episodic memory (raw interaction)
             await self.vector_store.store_vector(
                 content=serialize_datetime({
-                    'content': content,
-                    'timestamp': timestamp
+                    'content': truncate_content(content),
+                    'timestamp': timestamp,
+                    'type': 'interaction'
                 }),
                 metadata=serialize_datetime({
                     'id': memory_id,
                     'type': 'interaction',
-                    'layer': 'episodic',
                     **(metadata or {})
                 }),
                 layer="episodic"
@@ -92,7 +104,7 @@ class MemorySystem:
             
             # Process through agent system
             content_dict = {
-                'content': content,
+                'content': truncate_content(content),
                 'similar_memories': similar_memories
             }
             
@@ -118,11 +130,12 @@ class MemorySystem:
             # Store processed memory in semantic layer
             await self.vector_store.store_vector(
                 content=serialize_datetime({
-                    'content': content,
+                    'content': truncate_content(content),
                     'memory_id': memory_id,
                     'similar_memories': similar_memories,
                     'response': response.dict(),
-                    'timestamp': datetime.now()
+                    'timestamp': datetime.now(),
+                    'type': 'processed_memory'
                 }),
                 metadata=serialize_datetime({
                     'id': str(uuid.uuid4()),
@@ -169,49 +182,52 @@ class MemorySystem:
             # Get recent memories
             recent_memories = await self.vector_store.search_vectors(
                 content={'type': 'interaction'},
-                start_time=self.last_consolidation,
                 limit=100
             )
             
             if not recent_memories:
                 return
             
-            # Extract patterns and concepts
-            consolidation_content = {
-                'content': json.dumps(recent_memories),
-                'type': 'consolidation'
-            }
-            
-            # Process through reflection agent
-            reflection = await self.reflection_agent.process(consolidation_content)
-            
-            # Store consolidated insights in semantic layer
-            await self.vector_store.store_vector(
-                content=serialize_datetime({
-                    'type': 'consolidation',
-                    'timestamp': datetime.now(),
-                    'memories': [m.get('id') for m in recent_memories],
-                    'insights': reflection.dict()
-                }),
-                metadata={'type': 'consolidation'},
-                layer="semantic"
-            )
-            
-            # Store extracted concepts
-            for concept in reflection.concepts:
-                await self.store.store_concept(
-                    name=concept["name"],
-                    type=concept["type"],
-                    description=concept["description"]
+            # Process memories in batches to handle context length
+            for i in range(0, len(recent_memories), MAX_CONSOLIDATION_BATCH):
+                batch = recent_memories[i:i + MAX_CONSOLIDATION_BATCH]
+                
+                # Extract patterns and concepts
+                consolidation_content = {
+                    'content': truncate_content(json.dumps(batch)),
+                    'type': 'consolidation'
+                }
+                
+                # Process through reflection agent
+                reflection = await self.reflection_agent.process(consolidation_content)
+                
+                # Store consolidated insights in semantic layer
+                await self.vector_store.store_vector(
+                    content=serialize_datetime({
+                        'type': 'consolidation',
+                        'timestamp': datetime.now(),
+                        'memories': [m.get('id') for m in batch],
+                        'insights': reflection.dict()
+                    }),
+                    metadata={'type': 'consolidation'},
+                    layer="semantic"
                 )
                 
-                # Store concept relationships
-                for related in concept.get("related", []):
-                    await self.store.store_concept_relationship(
-                        concept["name"],
-                        related,
-                        "RELATED_TO"
+                # Store extracted concepts
+                for concept in reflection.concepts:
+                    await self.store.store_concept(
+                        name=concept["name"],
+                        type=concept["type"],
+                        description=concept["description"]
                     )
+                    
+                    # Store concept relationships
+                    for related in concept.get("related", []):
+                        await self.store.store_concept_relationship(
+                            concept["name"],
+                            related,
+                            "RELATED_TO"
+                        )
             
             logger.info(f"Consolidated {len(recent_memories)} memories")
             
@@ -225,15 +241,19 @@ class MemorySystem:
         """Find relevant memories from both layers."""
         # Search episodic memories
         episodic = await self.vector_store.search_vectors(
-            content=serialize_datetime({'content': content}),
-            layer="episodic",
+            content=serialize_datetime({
+                'content': truncate_content(content),
+                'type': 'interaction'
+            }),
             limit=3
         )
         
         # Search semantic memories
         semantic = await self.vector_store.search_vectors(
-            content=serialize_datetime({'content': content}),
-            layer="semantic",
+            content=serialize_datetime({
+                'content': truncate_content(content),
+                'type': 'processed_memory'
+            }),
             limit=3
         )
         
@@ -257,8 +277,10 @@ class MemorySystem:
             # Search episodic memories if requested
             if include_episodic:
                 episodic = await self.vector_store.search_vectors(
-                    content=serialize_datetime({'content': query}),
-                    layer="episodic",
+                    content=serialize_datetime({
+                        'content': truncate_content(query),
+                        'type': 'interaction'
+                    }),
                     limit=limit
                 )
                 results.extend([{**m, 'layer': 'episodic'} for m in episodic])
@@ -266,8 +288,10 @@ class MemorySystem:
             # Search semantic memories if requested
             if include_semantic:
                 semantic = await self.vector_store.search_vectors(
-                    content=serialize_datetime({'content': query}),
-                    layer="semantic",
+                    content=serialize_datetime({
+                        'content': truncate_content(query),
+                        'type': 'processed_memory'
+                    }),
                     limit=limit
                 )
                 results.extend([{**m, 'layer': 'semantic'} for m in semantic])
@@ -331,12 +355,12 @@ class MemorySystem:
     async def cleanup(self) -> None:
         """Clean up memory system."""
         try:
-            # Consolidate memories one last time
-            await self._consolidate_memories()
-            
             # Clean up stores
             await self.vector_store.cleanup()
             await self.store.cleanup()
+            
+            # Reset consolidation timer
+            self.last_consolidation = datetime.now()
             
             logger.info("Cleaned up memory system")
             

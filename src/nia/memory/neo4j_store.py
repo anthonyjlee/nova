@@ -39,24 +39,52 @@ class Neo4jMemoryStore:
     ) -> None:
         """Store concept in graph."""
         try:
+            # First try to find existing concept
             query = """
-                MERGE (c:Concept {
-                    id: $concept_name,
-                    type: $concept_type,
-                    description: $concept_desc
-                })
+                MATCH (c:Concept {id: $concept_name})
+                RETURN c
                 """
             
             async with self.driver.session() as session:
-                await session.run(
+                result = await session.run(
                     query,
-                    concept_name=name,
-                    concept_type=type,
-                    concept_desc=description
+                    concept_name=name
                 )
+                record = await result.single()
+                
+                if record:
+                    # Update existing concept if type or description changed
+                    update_query = """
+                        MATCH (c:Concept {id: $concept_name})
+                        SET c.type = $concept_type,
+                            c.description = $concept_desc,
+                            c.updated_at = datetime()
+                        """
+                    await session.run(
+                        update_query,
+                        concept_name=name,
+                        concept_type=type,
+                        concept_desc=description
+                    )
+                else:
+                    # Create new concept
+                    create_query = """
+                        CREATE (c:Concept {
+                            id: $concept_name,
+                            type: $concept_type,
+                            description: $concept_desc,
+                            created_at: datetime()
+                        })
+                        """
+                    await session.run(
+                        create_query,
+                        concept_name=name,
+                        concept_type=type,
+                        concept_desc=description
+                    )
                 
         except Exception as e:
-            logger.warning(f"Error creating concept {name}: {str(e)}")
+            logger.warning(f"Error creating/updating concept {name}: {str(e)}")
             raise
     
     async def store_concept_relationship(
@@ -67,12 +95,17 @@ class Neo4jMemoryStore:
     ) -> None:
         """Store relationship between concepts."""
         try:
+            # First ensure both concepts exist
+            await self.store_concept(concept_name, "concept", "Automatically created concept")
+            await self.store_concept(related_name, "concept", "Automatically created concept")
+            
+            # Then create relationship if it doesn't exist
             query = f"""
                     MATCH (c:Concept {{id: $concept_name}})
-                    MERGE (r:Concept {{id: $related_name}})
-                    MERGE (c)-[:{relationship_type} {{
-                        created_at: datetime()
-                    }}]->(r)
+                    MATCH (r:Concept {{id: $related_name}})
+                    MERGE (c)-[rel:{relationship_type}]->(r)
+                    ON CREATE SET rel.created_at = datetime()
+                    ON MATCH SET rel.updated_at = datetime()
                     """
             
             async with self.driver.session() as session:
@@ -100,9 +133,10 @@ class Neo4jMemoryStore:
             content = serialize_datetime(content)
             metadata = serialize_datetime(metadata) if metadata else {}
             
-            # Create memory node
+            # Create memory node with unique ID
             query = """
                 CREATE (m:Memory {
+                    id: randomUUID(),
                     type: $memory_type,
                     content: $content,
                     metadata: $metadata,
@@ -221,28 +255,14 @@ class Neo4jMemoryStore:
     async def cleanup(self) -> None:
         """Clean up graph store."""
         try:
-            # Delete all memory nodes
-            query = "MATCH (m:Memory) DETACH DELETE m"
+            # Delete all nodes and relationships
+            query = """
+            MATCH (n)
+            DETACH DELETE n
+            """
             async with self.driver.session() as session:
                 await session.run(query)
-            
-            # Clean up concepts
-            query = "MATCH (c:Concept) DETACH DELETE c"
-            async with self.driver.session() as session:
-                await session.run(query)
-                logger.info("Cleaned up concept nodes and relationships")
-            
-            # Clean up systems
-            query = "MATCH (s:AISystem) DETACH DELETE s"
-            async with self.driver.session() as session:
-                await session.run(query)
-                logger.info("Cleaned up system nodes and relationships")
-            
-            # Clean up capabilities
-            query = "MATCH (c:Capability) DETACH DELETE c"
-            async with self.driver.session() as session:
-                await session.run(query)
-                logger.info("Cleaned up capability nodes and relationships")
+                logger.info("Cleaned up all nodes and relationships")
             
         except Exception as e:
             logger.error(f"Error cleaning up graph store: {str(e)}")
