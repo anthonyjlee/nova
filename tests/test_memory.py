@@ -20,6 +20,9 @@ from nia.memory.agents.parsing_agent import ParsingAgent
 from nia.memory.neo4j_store import Neo4jMemoryStore
 from nia.memory.vector_store import VectorStore
 from nia.memory.embeddings import EmbeddingService
+from nia.memory.agents.task_agent import TaskAgent
+from nia.memory.agents.dialogue_agent import DialogueAgent
+from nia.memory.agents.context_agent import ContextAgent
 
 # Test data
 TEST_CONTENT = {
@@ -215,6 +218,78 @@ async def test_research_agent_response():
     
     # Verify research concepts
     valid_types = ["knowledge", "source", "connection", "gap"]
+    for concept in response.concepts:
+        assert concept["type"] in valid_types
+
+@pytest.mark.asyncio
+async def test_task_agent_response():
+    """Test task agent response structure and content."""
+    llm, store, vector_store = setup_test_llm()
+    task_agent = TaskAgent(llm, store, vector_store)
+    
+    response = await task_agent.process(TEST_CONTENT)
+    
+    # Verify response structure
+    assert isinstance(response, AgentResponse)
+    assert response.response
+    assert response.concepts
+    assert response.key_points
+    assert response.implications
+    assert response.uncertainties
+    assert response.reasoning
+    assert response.perspective
+    assert 0 <= response.confidence <= 1
+    
+    # Verify task concepts
+    valid_types = ["task", "step", "dependency", "milestone"]
+    for concept in response.concepts:
+        assert concept["type"] in valid_types
+
+@pytest.mark.asyncio
+async def test_dialogue_agent_response():
+    """Test dialogue agent response structure and content."""
+    llm, store, vector_store = setup_test_llm()
+    dialogue_agent = DialogueAgent(llm, store, vector_store)
+    
+    response = await dialogue_agent.process(TEST_CONTENT)
+    
+    # Verify response structure
+    assert isinstance(response, AgentResponse)
+    assert response.response
+    assert response.concepts
+    assert response.key_points
+    assert response.implications
+    assert response.uncertainties
+    assert response.reasoning
+    assert response.perspective
+    assert 0 <= response.confidence <= 1
+    
+    # Verify dialogue concepts
+    valid_types = ["interaction", "flow", "exchange", "dynamic"]
+    for concept in response.concepts:
+        assert concept["type"] in valid_types
+
+@pytest.mark.asyncio
+async def test_context_agent_response():
+    """Test context agent response structure and content."""
+    llm, store, vector_store = setup_test_llm()
+    context_agent = ContextAgent(llm, store, vector_store)
+    
+    response = await context_agent.process(TEST_CONTENT)
+    
+    # Verify response structure
+    assert isinstance(response, AgentResponse)
+    assert response.response
+    assert response.concepts
+    assert response.key_points
+    assert response.implications
+    assert response.uncertainties
+    assert response.reasoning
+    assert response.perspective
+    assert 0 <= response.confidence <= 1
+    
+    # Verify context concepts
+    valid_types = ["context", "situation", "environment", "condition"]
     for concept in response.concepts:
         assert concept["type"] in valid_types
 
