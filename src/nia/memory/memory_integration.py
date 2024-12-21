@@ -1,4 +1,4 @@
-"""Memory system integration."""
+"""Memory system integration with enhanced parsing capabilities."""
 
 import logging
 import json
@@ -15,6 +15,7 @@ from .agents.emotion_agent import EmotionAgent
 from .agents.reflection_agent import ReflectionAgent
 from .research_agent import ResearchAgent
 from .agents.meta_agent import MetaAgent
+from .agents.structure_agent import StructureAgent
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,24 @@ def serialize_datetime(obj: Any) -> Any:
     return obj
 
 class MemorySystem:
-    """Memory system integration."""
+    """Memory system integration with enhanced parsing capabilities.
+    
+    The system uses a multi-agent architecture for processing and understanding:
+    
+    Core Processing:
+    - ParsingAgent: Basic text and JSON parsing
+    - StructureAgent: Complex data structure analysis
+    
+    Understanding:
+    - BeliefAgent: Epistemological analysis
+    - DesireAgent: Goal and motivation analysis
+    - EmotionAgent: Emotional intelligence
+    - ReflectionAgent: Meta-learning and patterns
+    - ResearchAgent: Knowledge integration
+    
+    Integration:
+    - MetaAgent: Response synthesis and dialogue
+    """
     
     def __init__(
         self,
@@ -48,10 +66,16 @@ class MemorySystem:
         self.store = store
         self.vector_store = vector_store
         
-        # Initialize parser first
-        self.llm.initialize_parser(store, vector_store)
+        # Initialize core processing agents
+        self.structure_agent = StructureAgent(llm, store, vector_store)
         
-        # Initialize agents
+        # Initialize parser and connect structure agent
+        self.llm.initialize_parser(store, vector_store)
+        parser = self.llm.parser
+        if parser:
+            parser.set_structure_agent(self.structure_agent)
+        
+        # Initialize understanding agents
         self.belief_agent = BeliefAgent(llm, store, vector_store)
         self.desire_agent = DesireAgent(llm, store, vector_store)
         self.emotion_agent = EmotionAgent(llm, store, vector_store)
@@ -109,6 +133,10 @@ class MemorySystem:
                         'content': content,
                         'memories': memories
                     })
+                
+                # Analyze structure
+                structure_response = await self.structure_agent.analyze_structure(content)
+                responses['structure'] = structure_response
                 
                 # Synthesize responses
                 synthesis = await self.meta_agent.synthesize_dialogue({
@@ -226,6 +254,11 @@ class MemorySystem:
             ]:
                 responses[agent_type] = await agent.process(content_dict, metadata)
                 logger.info(f"{agent_type.capitalize()}Agent processed interaction")
+            
+            # Analyze structure
+            structure_response = await self.structure_agent.analyze_structure(content)
+            responses['structure'] = structure_response
+            logger.info("StructureAgent processed interaction")
             
             # Synthesize responses using dialogue format
             response = await self.meta_agent.synthesize_dialogue({
