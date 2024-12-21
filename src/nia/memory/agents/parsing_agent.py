@@ -165,6 +165,157 @@ def ensure_valid_concept(concept: Dict[str, Any]) -> Dict[str, Any]:
             }
         }
 
+def extract_structured_content(text: str) -> Dict[str, Any]:
+    """Extract structured content from text using multiple strategies.
+    
+    This function is used by both the ParsingAgent and tests to extract structured
+    content from text. It uses multiple strategies to handle different formats and
+    provides robust error handling.
+    
+    Args:
+        text: Text to extract structured content from
+        
+    Returns:
+        Dictionary containing extracted content with standard fields:
+        - response: Main response text
+        - concepts: List of concept dictionaries
+        - key_points: List of key points
+        - implications: List of implications
+        - uncertainties: List of uncertainties
+        - reasoning: List of reasoning steps
+    """
+    try:
+        if not text or not isinstance(text, str):
+            logger.warning("Invalid text input for content extraction")
+            return {
+                "response": "",
+                "concepts": [],
+                "key_points": [],
+                "implications": [],
+                "uncertainties": [],
+                "reasoning": []
+            }
+        
+        # Initialize default structure
+        structured = {
+            "response": "",
+            "concepts": [],
+            "key_points": [],
+            "implications": [],
+            "uncertainties": [],
+            "reasoning": []
+        }
+        
+        # Try JSON extraction first
+        json_content = extract_json_from_text(text)
+        if json_content:
+            # Update with extracted content
+            for key in structured.keys():
+                if key in json_content:
+                    structured[key] = json_content[key]
+            
+            # Validate concepts
+            structured["concepts"] = [
+                ensure_valid_concept(c)
+                for c in json_content.get("concepts", [])
+                if isinstance(c, dict)
+            ]
+            
+            return structured
+        
+        # Extract content using patterns
+        try:
+            # Extract response (everything before first section)
+            first_section = re.search(r'\n(?:Key points|Concepts|Implications|Uncertainties|Reasoning):', text)
+            if first_section:
+                structured["response"] = text[:first_section.start()].strip()
+            else:
+                structured["response"] = text.strip()
+            
+            # Extract sections
+            sections = {
+                "key_points": r'Key points?:?\s*(.*?)(?:\n\s*(?:[A-Z][\w\s]*:|$)|$)',
+                "implications": r'Implications:?\s*(.*?)(?:\n\s*(?:[A-Z][\w\s]*:|$)|$)',
+                "uncertainties": r'Uncertainties:?\s*(.*?)(?:\n\s*(?:[A-Z][\w\s]*:|$)|$)',
+                "reasoning": r'Reasoning:?\s*(.*?)(?:\n\s*(?:[A-Z][\w\s]*:|$)|$)'
+            }
+            
+            for section, pattern in sections.items():
+                match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+                if match:
+                    items = []
+                    for line in match.group(1).split('\n'):
+                        line = line.strip()
+                        if line:
+                            # Clean up line
+                            item = re.sub(r'^[-•*]\s*', '', line)  # Remove bullets
+                            item = re.sub(r'^\d+\.\s*', '', item)  # Remove numbers
+                            item = re.sub(r'^["\']|["\']$', '', item)  # Remove quotes
+                            if item:
+                                items.append(item)
+                    structured[section] = items
+            
+            # Extract concepts
+            concepts_match = re.search(r'(?:Concepts?|Extracted Concepts?):?\s*(.*?)(?:\n\s*(?:[A-Z][\w\s]*:|$)|$)', text, re.DOTALL | re.IGNORECASE)
+            if concepts_match:
+                concepts = []
+                current_concept = {}
+                
+                for line in concepts_match.group(1).split('\n'):
+                    line = line.strip()
+                    if not line:
+                        if current_concept:
+                            concepts.append(ensure_valid_concept(current_concept))
+                            current_concept = {}
+                        continue
+                    
+                    if line.startswith('-') or line.startswith('*'):
+                        line = line[1:].strip()
+                    
+                    if ':' in line:
+                        key, value = line.split(':', 1)
+                        key = key.strip().lower()
+                        value = value.strip()
+                        
+                        if key == 'name':
+                            if current_concept:
+                                concepts.append(ensure_valid_concept(current_concept))
+                            current_concept = {"name": value}
+                        elif key in ['type', 'description']:
+                            current_concept[key] = value
+                        elif key == 'related':
+                            current_concept['related'] = [r.strip() for r in value.split(',')]
+                    else:
+                        # If no key, treat as name of new concept
+                        if current_concept:
+                            concepts.append(ensure_valid_concept(current_concept))
+                        current_concept = {
+                            "name": line,
+                            "type": "pattern",
+                            "description": "Extracted from text"
+                        }
+                
+                if current_concept:
+                    concepts.append(ensure_valid_concept(current_concept))
+                structured["concepts"] = concepts
+            
+            return structured
+            
+        except Exception as e:
+            logger.error(f"Error extracting content using patterns: {str(e)}")
+            return structured
+            
+    except Exception as e:
+        logger.error(f"Error extracting structured content: {str(e)}")
+        return {
+            "response": text if isinstance(text, str) else "",
+            "concepts": [],
+            "key_points": [],
+            "implications": [],
+            "uncertainties": [],
+            "reasoning": []
+        }
+
 class ParsingAgent(BaseAgent):
     """Agent for parsing and structuring text."""
     
