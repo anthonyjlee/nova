@@ -9,6 +9,9 @@ from nia.memory.agents.belief_agent import BeliefAgent
 from nia.memory.agents.emotion_agent import EmotionAgent
 from nia.memory.agents.reflection_agent import ReflectionAgent
 from nia.memory.agents.meta_agent import MetaAgent
+from nia.memory.agents.task_agent import TaskAgent
+from nia.memory.agents.dialogue_agent import DialogueAgent
+from nia.memory.agents.context_agent import ContextAgent
 from nia.memory.llm_interface import LLMInterface
 from nia.memory.neo4j_store import Neo4jMemoryStore
 from nia.memory.vector_store import VectorStore
@@ -42,6 +45,9 @@ def setup_test_agents():
         'belief': BeliefAgent(llm, store, vector_store),
         'emotion': EmotionAgent(llm, store, vector_store),
         'reflection': ReflectionAgent(llm, store, vector_store),
+        'task': TaskAgent(llm, store, vector_store),
+        'dialogue': DialogueAgent(llm, store, vector_store),
+        'context': ContextAgent(llm, store, vector_store),
         'nova': MetaAgent(llm, store, vector_store)
     }
     
@@ -123,6 +129,8 @@ async def test_concept_validation():
     nova = agents['nova']
     belief_agent = agents['belief']
     emotion_agent = agents['emotion']
+    task_agent = agents['task']
+    context_agent = agents['context']
     
     # Create and set dialogue context
     dialogue = DialogueContext(
@@ -145,11 +153,23 @@ async def test_concept_validation():
         references=["AI Cognition"]
     )
     
+    await task_agent.provide_insight(
+        "This suggests specific implementation steps",
+        references=["AI Implementation"]
+    )
+    
+    await context_agent.provide_insight(
+        "Environmental factors support this approach",
+        references=["System Context"]
+    )
+    
     # Verify dialogue flow
-    assert len(dialogue.messages) == 2
+    assert len(dialogue.messages) == 4
     assert dialogue.messages[0].agent_type == "belief"
     assert dialogue.messages[1].agent_type == "emotion"
-    assert len(dialogue.participants) == 2
+    assert dialogue.messages[2].agent_type == "task"
+    assert dialogue.messages[3].agent_type == "context"
+    assert len(dialogue.participants) == 4
 
 @pytest.mark.asyncio
 async def test_dialogue_synthesis():
@@ -160,6 +180,7 @@ async def test_dialogue_synthesis():
     belief_agent = agents['belief']
     emotion_agent = agents['emotion']
     reflection_agent = agents['reflection']
+    dialogue_agent = agents['dialogue']
     
     # Create and set dialogue context
     dialogue = DialogueContext(
@@ -184,10 +205,53 @@ async def test_dialogue_synthesis():
         "This suggests a new paradigm for understanding AI cognition"
     )
     
+    await dialogue_agent.provide_insight(
+        "The conversation flow indicates key patterns"
+    )
+    
+    # Verify dialogue state
+    assert len(dialogue.messages) == 4
+    assert len(dialogue.participants) == 4
+    assert all(m.message_type == "insight" for m in dialogue.messages)
+
+@pytest.mark.asyncio
+async def test_task_planning_dialogue():
+    """Test task planning in dialogue."""
+    # Set up components
+    agents = setup_test_agents()
+    task_agent = agents['task']
+    context_agent = agents['context']
+    dialogue_agent = agents['dialogue']
+    
+    # Create dialogue context
+    dialogue = DialogueContext(
+        topic="Implementation Planning",
+        status="active"
+    )
+    
+    # Set dialogue context for agents
+    for agent in [task_agent, context_agent, dialogue_agent]:
+        agent.current_dialogue = dialogue
+    
+    # Add planning messages
+    await task_agent.provide_insight(
+        "Breaking down implementation into steps"
+    )
+    
+    await context_agent.provide_insight(
+        "System environment supports these steps"
+    )
+    
+    await dialogue_agent.provide_insight(
+        "Communication flow aligns with plan"
+    )
+    
     # Verify dialogue state
     assert len(dialogue.messages) == 3
     assert len(dialogue.participants) == 3
-    assert all(m.message_type == "insight" for m in dialogue.messages)
+    assert dialogue.messages[0].agent_type == "task"
+    assert dialogue.messages[1].agent_type == "context"
+    assert dialogue.messages[2].agent_type == "dialogue"
 
 @pytest.mark.asyncio
 async def test_collaborative_dialogue():
