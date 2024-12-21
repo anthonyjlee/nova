@@ -16,6 +16,9 @@ from .agents.reflection_agent import ReflectionAgent
 from .research_agent import ResearchAgent
 from .agents.meta_agent import MetaAgent
 from .agents.structure_agent import StructureAgent
+from .agents.task_agent import TaskAgent
+from .agents.dialogue_agent import DialogueAgent
+from .agents.context_agent import ContextAgent
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +54,11 @@ class MemorySystem:
     - ReflectionAgent: Meta-learning and patterns
     - ResearchAgent: Knowledge integration
     
+    Task Management:
+    - TaskAgent: Planning and execution
+    - DialogueAgent: Conversation flow
+    - ContextAgent: Environmental understanding
+    
     Integration:
     - MetaAgent: Response synthesis and dialogue
     """
@@ -81,6 +89,13 @@ class MemorySystem:
         self.emotion_agent = EmotionAgent(llm, store, vector_store)
         self.reflection_agent = ReflectionAgent(llm, store, vector_store)
         self.research_agent = ResearchAgent(llm, store, vector_store)
+        
+        # Initialize task management agents
+        self.task_agent = TaskAgent(llm, store, vector_store)
+        self.dialogue_agent = DialogueAgent(llm, store, vector_store)
+        self.context_agent = ContextAgent(llm, store, vector_store)
+        
+        # Initialize integration agent
         self.meta_agent = MetaAgent(llm, store, vector_store)
         
         # Track consolidation
@@ -123,12 +138,22 @@ class MemorySystem:
                 # Process through agents
                 responses = {}
                 content_dict = {'content': content, 'memories': memories}
+                
+                # Process through understanding agents
                 for agent_type, agent in [
                     ('belief', self.belief_agent),
                     ('desire', self.desire_agent),
                     ('emotion', self.emotion_agent),
                     ('reflection', self.reflection_agent),
                     ('research', self.research_agent)
+                ]:
+                    responses[agent_type] = await agent.process(content_dict)
+                
+                # Process through task management agents
+                for agent_type, agent in [
+                    ('task', self.task_agent),
+                    ('dialogue', self.dialogue_agent),
+                    ('context', self.context_agent)
                 ]:
                     responses[agent_type] = await agent.process(content_dict)
                 
@@ -244,12 +269,23 @@ class MemorySystem:
             
             # Get agent responses
             responses = {}
+            
+            # Process through understanding agents
             for agent_type, agent in [
                 ('belief', self.belief_agent),
                 ('desire', self.desire_agent),
                 ('emotion', self.emotion_agent),
                 ('reflection', self.reflection_agent),
                 ('research', self.research_agent)
+            ]:
+                responses[agent_type] = await agent.process(content_dict)
+                logger.info(f"{agent_type.capitalize()}Agent processed interaction")
+            
+            # Process through task management agents
+            for agent_type, agent in [
+                ('task', self.task_agent),
+                ('dialogue', self.dialogue_agent),
+                ('context', self.context_agent)
             ]:
                 responses[agent_type] = await agent.process(content_dict)
                 logger.info(f"{agent_type.capitalize()}Agent processed interaction")

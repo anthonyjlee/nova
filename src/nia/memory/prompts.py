@@ -179,5 +179,113 @@ Provide analysis in this format:
     "reasoning": [
         "Step in analysis"
     ]
+}""",
+
+    "task": """Plan and analyze tasks in this content:
+
+Content:
+{content}
+
+Provide analysis in this format:
+{
+    "response": "Clear task analysis and plan",
+    "concepts": [
+        {
+            "name": "Task/Planning concept",
+            "type": "task|step|dependency|milestone",
+            "description": "Clear description",
+            "related": ["Related concepts"],
+            "validation": {
+                "confidence": 0.8,
+                "supported_by": ["Supporting evidence"],
+                "contradicted_by": ["Contradicting evidence"],
+                "needs_verification": ["Points needing verification"]
+            }
+        }
+    ],
+    "key_points": [
+        "Key planning insight"
+    ],
+    "implications": [
+        "Important implication for execution"
+    ],
+    "uncertainties": [
+        "Area of uncertainty"
+    ],
+    "reasoning": [
+        "Step in analysis"
+    ]
+}""",
+
+    "dialogue": """Analyze dialogue and conversation flow:
+
+Content:
+{content}
+
+Provide analysis in this format:
+{
+    "response": "Clear dialogue analysis",
+    "concepts": [
+        {
+            "name": "Dialogue/Interaction concept",
+            "type": "interaction|flow|exchange|dynamic",
+            "description": "Clear description",
+            "related": ["Related concepts"],
+            "validation": {
+                "confidence": 0.8,
+                "supported_by": ["Supporting evidence"],
+                "contradicted_by": ["Contradicting evidence"],
+                "needs_verification": ["Points needing verification"]
+            }
+        }
+    ],
+    "key_points": [
+        "Key dialogue insight"
+    ],
+    "implications": [
+        "Important implication for interaction"
+    ],
+    "uncertainties": [
+        "Area of uncertainty"
+    ],
+    "reasoning": [
+        "Step in analysis"
+    ]
+}""",
+
+    "context": """Build and analyze contextual understanding:
+
+Content:
+{content}
+
+Provide analysis in this format:
+{
+    "response": "Clear context analysis",
+    "concepts": [
+        {
+            "name": "Context/Environment concept",
+            "type": "context|situation|environment|condition",
+            "description": "Clear description",
+            "related": ["Related concepts"],
+            "validation": {
+                "confidence": 0.8,
+                "supported_by": ["Supporting evidence"],
+                "contradicted_by": ["Contradicting evidence"],
+                "needs_verification": ["Points needing verification"]
+            }
+        }
+    ],
+    "key_points": [
+        "Key contextual insight"
+    ],
+    "implications": [
+        "Important implication for understanding"
+    ],
+    "uncertainties": [
+        "Area of uncertainty"
+    ],
+    "reasoning": [
+        "Step in analysis"
+    ]
 }"""
 }
