@@ -4,6 +4,7 @@ import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from ..memory_types import AgentResponse, DialogueMessage
+from ..prompts import AGENT_PROMPTS
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +25,14 @@ class BaseAgent:
         self.vector_store = vector_store
         self.agent_type = agent_type
         self.current_dialogue = None
+        
+        # Get prompt template for this agent type
+        if agent_type not in AGENT_PROMPTS:
+            raise ValueError(f"No prompt template found for agent type: {agent_type}")
+        self.prompt_template = AGENT_PROMPTS[agent_type]
     
     def _format_prompt(self, content: Dict[str, Any]) -> str:
-        """Format prompt for agent.
+        """Format prompt for agent using template.
         
         Args:
             content: Content to format prompt for
@@ -34,7 +40,13 @@ class BaseAgent:
         Returns:
             Formatted prompt string
         """
-        raise NotImplementedError("Subclasses must implement _format_prompt")
+        # Extract content from dictionary
+        content_str = content.get('content', '')
+        if isinstance(content_str, dict):
+            content_str = content_str.get('content', '')
+        
+        # Format prompt template
+        return self.prompt_template.format(content=content_str)
     
     async def process(
         self,
