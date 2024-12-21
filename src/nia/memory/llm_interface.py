@@ -1,12 +1,14 @@
 """Interface for LLM interactions."""
 
 import logging
-from typing import Dict, Any, Optional, TYPE_CHECKING
+from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from datetime import datetime
 from .memory_types import AgentResponse
 
 if TYPE_CHECKING:
     from .agents.parsing_agent import ParsingAgent
+    from .neo4j_store import Neo4jMemoryStore
+    from .vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +18,24 @@ class LLMInterface:
     def __init__(self):
         """Initialize LLM interface."""
         self.parser = None  # Will be set after initialization
+        
+    def initialize_parser(
+        self,
+        store: 'Neo4jMemoryStore',
+        vector_store: 'VectorStore'
+    ) -> None:
+        """Initialize parsing agent.
+        
+        This method creates a new ParsingAgent instance and sets it as the parser
+        for this LLM interface. The parser is used to extract structured content
+        from LLM responses.
+        
+        Args:
+            store: Neo4j store for concept storage
+            vector_store: Vector store for embeddings
+        """
+        from .agents.parsing_agent import ParsingAgent
+        self.parser = ParsingAgent(self, store, vector_store)
         
     def set_parser(self, parser: 'ParsingAgent'):
         """Set parsing agent."""
