@@ -1,13 +1,8 @@
 """Dialogue management agent for handling conversation flow and participants."""
 
 import logging
-import json
-import re
 from typing import Dict, List, Any, Optional
 from datetime import datetime
-from ..llm_interface import LLMInterface
-from ..neo4j_store import Neo4jMemoryStore
-from ..vector_store import VectorStore
 from ..memory_types import AgentResponse, DialogueContext, DialogueMessage
 from .base import BaseAgent
 
@@ -16,87 +11,106 @@ logger = logging.getLogger(__name__)
 class DialogueAgent(BaseAgent):
     """Agent for managing dialogue flow and participants."""
     
-    def __init__(
-        self,
-        llm: LLMInterface,
-        store: Neo4jMemoryStore,
-        vector_store: VectorStore
-    ):
+    def __init__(self, *args, **kwargs):
         """Initialize dialogue agent."""
-        super().__init__(llm, store, vector_store, agent_type="dialogue")
+        super().__init__(*args, agent_type="dialogue", **kwargs)
     
     def _format_prompt(self, content: Dict[str, Any]) -> str:
         """Format prompt for dialogue management."""
-        return f"""You are a dialogue management agent. Your task is to understand and track conversation flow, participants, and their interactions.
+        # Get content text
+        text = content.get('content', '')
+        
+        # Format current dialogue state
+        dialogue = content.get('dialogue_context')
+        if dialogue:
+            state = [
+                f"Topic: {dialogue.topic}",
+                f"Status: {dialogue.status}",
+                f"Participants: {', '.join(dialogue.participants)}",
+                "\nMessages:"
+            ]
+            
+            for msg in dialogue.messages:
+                state.append(
+                    f"- {msg.agent_type}: {msg.content} "
+                    f"({msg.message_type})"
+                )
+            
+            dialogue_state = "\n".join(state)
+        else:
+            dialogue_state = "No active dialogue"
+        
+        # Format prompt
+        prompt = f"""You are a dialogue management agent. Your task is to understand and track conversation flow, participants, and their interactions.
+
+Current Content:
+{text}
 
 Current Dialogue State:
-{self._format_dialogue_state(content)}
+{dialogue_state}
 
-Your task is to:
-1. Identify all participants in the conversation
-2. Track who is speaking to whom
-3. Understand the relationships between messages
-4. Maintain conversation coherence
-5. Ensure proper turn-taking
-
-IMPORTANT: You must respond with ONLY valid JSON, no other text. Here is an example of the exact format required:
-
+Provide analysis in this exact format:
 {{
+    "response": "Dialogue management analysis",
+    "concepts": [
+        {{
+            "name": "Participant or interaction name",
+            "type": "participant|interaction|pattern",
+            "description": "Clear description of the dialogue element",
+            "related": ["Related elements"],
+            "validation": {{
+                "confidence": 0.8,
+                "supported_by": ["evidence"],
+                "contradicted_by": [],
+                "needs_verification": []
+            }}
+        }}
+    ],
+    "key_points": [
+        "Key dialogue insight"
+    ],
+    "implications": [
+        "Dialogue management implication"
+    ],
+    "uncertainties": [
+        "Dialogue uncertainty"
+    ],
+    "reasoning": [
+        "Dialogue management step"
+    ],
     "participants": [
         {{
-            "name": "belief",
-            "role": "expert",
-            "type": "agent"
-        }},
-        {{
-            "name": "emotion",
-            "role": "specialist",
-            "type": "agent"
-        }},
-        {{
-            "name": "reflection",
-            "role": "analyst",
-            "type": "agent"
+            "name": "participant name",
+            "role": "participant role",
+            "type": "participant type"
         }}
     ],
     "messages": [
         {{
-            "from": "belief",
-            "to": "emotion",
-            "content": "How do you process emotional patterns?",
-            "type": "question"
+            "from": "sender",
+            "to": "recipient",
+            "content": "message content",
+            "type": "message type"
         }}
     ],
     "next_actions": [
         {{
-            "action": "respond to question",
-            "participant": "emotion"
+            "action": "what should happen",
+            "participant": "who should act"
         }}
     ]
 }}
 
-Remember: Your response must be ONLY the JSON object shown above, with no other text or formatting. Include all relevant agents that should participate in the dialogue."""
-    
-    def _format_dialogue_state(self, content: Dict[str, Any]) -> str:
-        """Format current dialogue state for prompt."""
-        dialogue = content.get('dialogue_context')
-        if not dialogue:
-            return "No active dialogue"
+Focus on:
+1. Identifying all participants
+2. Tracking who is speaking to whom
+3. Understanding message relationships
+4. Maintaining conversation coherence
+5. Ensuring proper turn-taking
+
+Return ONLY the JSON object, no other text."""
         
-        state = [
-            f"Topic: {dialogue.topic}",
-            f"Status: {dialogue.status}",
-            f"Participants: {', '.join(dialogue.participants)}",
-            "\nMessages:"
-        ]
-        
-        for msg in dialogue.messages:
-            state.append(
-                f"- {msg.agent_type}: {msg.content} "
-                f"({msg.message_type})"
-            )
-        
-        return "\n".join(state)
+        return prompt
     
     async def process_dialogue(
         self,
@@ -112,119 +126,37 @@ Remember: Your response must be ONLY the JSON object shown above, with no other 
                     status="active"
                 )
             
-            # Get dialogue analysis
-            analysis = await self.llm.get_completion(
-                self._format_prompt({
-                    'content': text,
-                    'dialogue_context': dialogue
-                })
-            )
+            # Get dialogue analysis through base agent
+            response = await self.process({
+                'content': text,
+                'dialogue_context': dialogue
+            })
             
-            # Try to parse JSON response
-            try:
-                structured = json.loads(analysis)
-            except json.JSONDecodeError:
-                # If not valid JSON, try to extract JSON from markdown
-                json_match = re.search(r'```json\s*(.*?)\s*```', analysis, re.DOTALL)
-                if json_match:
-                    try:
-                        structured = json.loads(json_match.group(1))
-                    except json.JSONDecodeError:
-                        # If still not valid, ask LLM to fix it
-                        fix_prompt = f"""The previous response was not valid JSON. Format the following text as JSON matching this example exactly:
-
-{{
-    "participants": [
-        {{
-            "name": "belief",
-            "role": "expert",
-            "type": "agent"
-        }}
-    ],
-    "messages": [
-        {{
-            "from": "belief",
-            "content": "How do you process emotions?",
-            "type": "question"
-        }}
-    ],
-    "next_actions": [
-        {{
-            "action": "respond to question",
-            "participant": "emotion"
-        }}
-    ]
-}}
-
-Text to format:
-{analysis}
-
-Return ONLY the JSON object, no other text."""
-                        
-                        fixed_response = await self.llm.get_completion(fix_prompt)
-                        structured = json.loads(fixed_response)
-                else:
-                    # If no JSON found, ask LLM to fix it
-                    fix_prompt = f"""The previous response was not valid JSON. Format the following text as JSON matching this example exactly:
-
-{{
-    "participants": [
-        {{
-            "name": "belief",
-            "role": "expert",
-            "type": "agent"
-        }}
-    ],
-    "messages": [
-        {{
-            "from": "belief",
-            "content": "How do you process emotions?",
-            "type": "question"
-        }}
-    ],
-    "next_actions": [
-        {{
-            "action": "respond to question",
-            "participant": "emotion"
-        }}
-    ]
-}}
-
-Text to format:
-{analysis}
-
-Return ONLY the JSON object, no other text."""
-                    
-                    fixed_response = await self.llm.get_completion(fix_prompt)
-                    structured = json.loads(fixed_response)
-            
-            # Add participants
-            for participant in structured.get('participants', []):
-                name = participant.get('name')
-                if name and name not in dialogue.participants:
-                    dialogue.add_participant(name)
-            
-            # Add messages
-            for message in structured.get('messages', []):
-                if 'from' in message and 'content' in message:
-                    msg = DialogueMessage(
-                        agent_type=message['from'],
-                        content=message['content'],
-                        message_type=message.get('type', 'message'),
-                        metadata={'to': message.get('to')} if message.get('to') else {}
-                    )
-                    dialogue.add_message(msg)
+            # Update dialogue based on response
+            if isinstance(response, AgentResponse):
+                # Add participants
+                for participant in response.metadata.get('participants', []):
+                    name = participant.get('name')
+                    if name and name not in dialogue.participants:
+                        dialogue.add_participant(name)
+                
+                # Add messages
+                for message in response.metadata.get('messages', []):
+                    if 'from' in message and 'content' in message:
+                        msg = DialogueMessage(
+                            agent_type=message['from'],
+                            content=message['content'],
+                            message_type=message.get('type', 'message'),
+                            metadata={'to': message.get('to')} if message.get('to') else {}
+                        )
+                        dialogue.add_message(msg)
             
             # Add default agents if no participants yet
             if len(dialogue.participants) <= 1:
-                default_agents = [
-                    {"name": "belief", "role": "expert", "type": "agent"},
-                    {"name": "emotion", "role": "specialist", "type": "agent"},
-                    {"name": "reflection", "role": "analyst", "type": "agent"}
-                ]
+                default_agents = ['belief', 'emotion', 'reflection']
                 for agent in default_agents:
-                    if agent["name"] not in dialogue.participants:
-                        dialogue.add_participant(agent["name"])
+                    if agent not in dialogue.participants:
+                        dialogue.add_participant(agent)
             
             return dialogue
             
@@ -241,40 +173,23 @@ Return ONLY the JSON object, no other text."""
     ) -> str:
         """Suggest next action in dialogue."""
         try:
-            prompt = f"""Given this dialogue state, what should happen next?
-            Consider:
-            - Who should speak next
-            - What type of message is needed
-            - How to maintain conversation flow
+            # Get next action through base agent
+            response = await self.process({
+                'content': 'What should happen next in this dialogue?',
+                'dialogue_context': dialogue
+            })
             
-Dialogue State:
-{self._format_dialogue_state({'dialogue_context': dialogue})}
-
-IMPORTANT: You must respond with ONLY valid JSON, no other text. The JSON must follow this exact structure:
-
-{{
-    "next_action": {{
-        "speaker": "who should speak",
-        "type": "type of message",
-        "content": "suggested content",
-        "purpose": "why this action"
-    }}
-}}"""
+            if isinstance(response, AgentResponse):
+                next_actions = response.metadata.get('next_actions', [])
+                if next_actions:
+                    action = next_actions[0]
+                    return (
+                        f"Next Action:\n"
+                        f"- Action: {action.get('action', 'unknown')}\n"
+                        f"- Participant: {action.get('participant', 'unknown')}"
+                    )
             
-            response = await self.llm.get_completion(prompt)
-            
-            try:
-                structured = json.loads(response)
-                next_action = structured.get('next_action', {})
-                return (
-                    f"Next Action:\n"
-                    f"- Speaker: {next_action.get('speaker', 'unknown')}\n"
-                    f"- Type: {next_action.get('type', 'unknown')}\n"
-                    f"- Content: {next_action.get('content', '')}\n"
-                    f"- Purpose: {next_action.get('purpose', '')}"
-                )
-            except json.JSONDecodeError:
-                return response
+            return response.response
             
         except Exception as e:
             logger.error(f"Error suggesting next action: {str(e)}")

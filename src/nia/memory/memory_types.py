@@ -1,6 +1,6 @@
 """Memory system types."""
 
-from typing import Dict, List, Any, Optional, Protocol, runtime_checkable, Set
+from typing import Dict, List, Any, Optional, Protocol, runtime_checkable
 from datetime import datetime
 from dataclasses import dataclass, field
 
@@ -96,12 +96,13 @@ class DialogueContext(JSONSerializable):
     messages: List[DialogueMessage] = field(default_factory=list)
     metadata: Optional[Dict] = None
     created_at: datetime = field(default_factory=datetime.now)
-    participants: Set[str] = field(default_factory=set)
+    participants: List[str] = field(default_factory=list)  # Changed from set to list
     
     def add_message(self, message: DialogueMessage) -> None:
         """Add message to dialogue."""
         self.messages.append(message)
-        self.participants.add(message.agent_type)
+        if message.agent_type not in self.participants:
+            self.participants.append(message.agent_type)
     
     def dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
@@ -111,7 +112,7 @@ class DialogueContext(JSONSerializable):
             "messages": [m.dict() for m in self.messages],
             "metadata": self.metadata,
             "created_at": self.created_at.isoformat(),
-            "participants": list(self.participants)
+            "participants": self.participants
         }
 
 @dataclass

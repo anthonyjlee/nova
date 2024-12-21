@@ -1,13 +1,7 @@
 """Task planner agent implementation."""
 
 import logging
-import json
-from typing import Dict, List, Any, Optional
-from datetime import datetime
-from ..llm_interface import LLMInterface
-from ..neo4j_store import Neo4jMemoryStore
-from ..vector_store import VectorStore
-from ..memory_types import AgentResponse, DialogueContext
+from typing import Dict, Any, Optional
 from .base import BaseAgent
 
 logger = logging.getLogger(__name__)
@@ -15,40 +9,72 @@ logger = logging.getLogger(__name__)
 class TaskPlannerAgent(BaseAgent):
     """Task planner agent for creating and managing task plans."""
     
-    def __init__(
-        self,
-        llm: LLMInterface,
-        store: Neo4jMemoryStore,
-        vector_store: VectorStore
-    ):
+    def __init__(self, *args, **kwargs):
         """Initialize task planner agent."""
-        super().__init__(llm, store, vector_store, agent_type="task_planner")
+        super().__init__(*args, agent_type="task_planner", **kwargs)
         self.task_graphs = {}  # Store task graphs by ID
     
     def _format_prompt(self, content: Dict[str, Any]) -> str:
         """Format prompt for task planning."""
+        # Get content text
+        text = content.get('content', '')
+        
         # Get dialogue context if available
         dialogue = content.get('dialogue_context')
         dialogue_text = ""
-        if dialogue and isinstance(dialogue, DialogueContext):
+        if dialogue:
             dialogue_text = "\n".join([
                 f"{m.agent_type}: {m.content}"
                 for m in dialogue.messages[-5:]  # Last 5 messages
             ])
             dialogue_text = f"\nCurrent Dialogue:\n{dialogue_text}\n"
         
+        # Get relevant concepts
+        concepts = content.get('relevant_concepts', [])
+        concept_text = '\n'.join([
+            f"Concept {i+1}: {c.get('name')} ({c.get('type')}) - {c.get('description')}"
+            for i, c in enumerate(concepts)
+        ])
+        
         # Format prompt
-        return f"""You are a task planner agent. Create a plan to accomplish the given task.
+        prompt = f"""You are a task planner agent. Create a plan to accomplish the given task.
         
         Task Content:
-        {json.dumps(content.get('content', ''))}
+        {text}
         {dialogue_text}
         
-        Context:
-        {json.dumps(content.get('context_analysis', {}))}
+        Known Concepts:
+        {concept_text}
         
-        Create a task plan in this exact format:
+        Provide analysis in this exact format:
         {{
+            "response": "Task planning analysis",
+            "concepts": [
+                {{
+                    "name": "Task name",
+                    "type": "task|milestone|dependency",
+                    "description": "Clear description of the task",
+                    "related": ["Related task names"],
+                    "validation": {{
+                        "confidence": 0.8,
+                        "supported_by": ["evidence"],
+                        "contradicted_by": [],
+                        "needs_verification": []
+                    }}
+                }}
+            ],
+            "key_points": [
+                "Key task planning insight"
+            ],
+            "implications": [
+                "Task planning implication"
+            ],
+            "uncertainties": [
+                "Task planning uncertainty"
+            ],
+            "reasoning": [
+                "Task planning step"
+            ],
             "tasks": [
                 {{
                     "id": "unique_id",
@@ -61,9 +87,8 @@ class TaskPlannerAgent(BaseAgent):
                 }}
             ],
             "metadata": {{
-                "total_tasks": number,
-                "estimated_total_time": "time in minutes",
-                "confidence": 0.0-1.0 score
+                "total_tasks": "number",
+                "estimated_total_time": "time in minutes"
             }}
         }}
         
@@ -74,52 +99,9 @@ class TaskPlannerAgent(BaseAgent):
         4. Priority reflects importance
         5. Plan is achievable
         
-        Respond with properly formatted JSON only."""
-    
-    async def calculate_plan_confidence(
-        self,
-        plan: Dict[str, Any],
-        context: Optional[Dict] = None
-    ) -> float:
-        """Calculate confidence in task plan."""
-        try:
-            # Format prompt for confidence analysis
-            prompt = f"""Analyze this task plan and calculate confidence:
-            
-            Plan:
-            {json.dumps(plan)}
-            
-            Context:
-            {json.dumps(context) if context else "No additional context"}
-            
-            Consider:
-            1. Task clarity and specificity
-            2. Dependency relationships
-            3. Time estimates
-            4. Priority assignments
-            5. Overall achievability
-            
-            Provide confidence score in this format:
-            {{
-                "confidence": 0.0-1.0 score,
-                "reasoning": ["List of reasons"]
-            }}
-            
-            Respond with properly formatted JSON only."""
-            
-            # Get confidence analysis
-            response = await self.llm.get_completion(prompt)
-            
-            try:
-                result = json.loads(response)
-                return float(result.get("confidence", 0.5))
-            except (json.JSONDecodeError, ValueError):
-                logger.error("Failed to parse confidence analysis")
-                return 0.5
-                
-        except Exception as e:
-            logger.error(f"Error calculating plan confidence: {str(e)}")
-            return 0.5
+        Return ONLY the JSON object, no other text."""
+        
+        return prompt
     
     def get_graph(self, graph_id: str) -> Optional[Dict[str, Any]]:
         """Get task graph by ID."""

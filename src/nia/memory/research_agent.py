@@ -3,9 +3,7 @@ Enhanced research agent implementation using LLMs for all operations.
 """
 
 import logging
-import json
-from typing import Dict, List, Any, Optional
-from datetime import datetime
+from typing import Dict, Any
 from .agents.base import BaseAgent
 from .memory_types import AgentResponse
 
@@ -50,22 +48,36 @@ class ResearchAgent(BaseAgent):
         Known Concepts:
         {concept_text}
         
-        Provide a structured analysis with:
-
-        1. Concepts in this exact format:
-        [
-          {{
-            "name": "Concept name",
-            "type": "knowledge|source|connection|gap",
-            "description": "Clear description of the concept",
-            "related": ["Related concept names"]
-          }}
-        ]
-
-        2. Key points about information gathered (as list of strings)
-        3. Implications for knowledge integration (as list of strings)
-        4. Uncertainties requiring further research (as list of strings)
-        5. Reasoning steps in research process (as list of strings)
+        Provide analysis in this exact format:
+        {{
+            "response": "Detailed analysis from research perspective",
+            "concepts": [
+                {{
+                    "name": "Concept name",
+                    "type": "knowledge|source|connection|gap",
+                    "description": "Clear description of the research concept",
+                    "related": ["Related concept names"],
+                    "validation": {{
+                        "confidence": 0.8,
+                        "supported_by": ["evidence"],
+                        "contradicted_by": [],
+                        "needs_verification": []
+                    }}
+                }}
+            ],
+            "key_points": [
+                "Key point about information gathered"
+            ],
+            "implications": [
+                "Implication for knowledge integration"
+            ],
+            "uncertainties": [
+                "Uncertainty requiring further research"
+            ],
+            "reasoning": [
+                "Step in research process"
+            ]
+        }}
         
         Focus on:
         - Knowledge gaps and research needs
@@ -74,138 +86,9 @@ class ResearchAgent(BaseAgent):
         - Verification requirements
         - Research priorities
         
-        Ensure all outputs are properly formatted as lists and JSON objects.
-        Avoid nesting beyond one level in JSON structures."""
+        Return ONLY the JSON object, no other text."""
         
         return prompt
-
-    async def _process_llm_response(
-        self,
-        llm_response: Any,
-        content: Dict[str, Any]
-    ) -> AgentResponse:
-        """Process LLM response with research-specific perspective."""
-        try:
-            # Analyze knowledge gaps using LLM
-            gaps_prompt = f"""Analyze knowledge gaps in:
-            Response: {llm_response.response}
-            Key Points: {llm_response.key_points}
-            Uncertainties: {llm_response.uncertainties}
-            
-            Identify areas needing further research, missing information, and verification needs.
-            Provide analysis in JSON format."""
-            
-            gaps_analysis = await self.llm.get_completion(gaps_prompt)
-            
-            # Analyze information quality using LLM
-            quality_prompt = f"""Analyze information quality of:
-            Concepts: {llm_response.concepts}
-            Implications: {llm_response.implications}
-            Reasoning: {llm_response.reasoning}
-            
-            Assess reliability, completeness, and verification status.
-            Provide analysis in JSON format."""
-            
-            quality_analysis = await self.llm.get_completion(quality_prompt)
-            
-            # Analyze integration opportunities using LLM
-            integration_prompt = f"""Analyze integration opportunities between:
-            New Information: {llm_response.response}
-            Existing Knowledge: {content.get('similar_memories', [])}
-            
-            Identify connection points, synthesis opportunities, and potential conflicts.
-            Provide analysis in JSON format."""
-            
-            integration_analysis = await self.llm.get_completion(integration_prompt)
-            
-            # Create enhanced response
-            response = AgentResponse(
-                # Core response synthesizing research analysis
-                response=llm_response.response,
-                concepts=llm_response.concepts,
-                
-                # Research-specific analysis
-                key_points=llm_response.key_points,
-                implications=llm_response.implications,
-                uncertainties=llm_response.uncertainties,
-                reasoning=llm_response.reasoning,
-                
-                # Research agent perspective
-                perspective="Knowledge acquisition and integration analysis",
-                
-                # Confidence based on information quality
-                confidence=await self._calculate_confidence(
-                    llm_response,
-                    gaps_analysis,
-                    quality_analysis,
-                    integration_analysis
-                ),
-                
-                # Additional metadata
-                metadata={
-                    "knowledge_gaps": len(llm_response.uncertainties),
-                    "information_sources": sum(1 for c in llm_response.concepts if c.get("type") == "source"),
-                    "integration_opportunities": len(llm_response.implications),
-                    "timestamp": datetime.now().isoformat()
-                }
-            )
-            
-            return response
-            
-        except Exception as e:
-            logger.error(f"Error processing research response: {str(e)}")
-            return AgentResponse(
-                response="Error processing research analysis",
-                concepts=[],
-                perspective="research",
-                confidence=0.0
-            )
-    
-    async def _calculate_confidence(
-        self,
-        llm_response: Any,
-        gaps_analysis: str,
-        quality_analysis: str,
-        integration_analysis: str
-    ) -> float:
-        """Calculate confidence using LLM analysis."""
-        try:
-            # Use LLM to analyze confidence
-            confidence_prompt = f"""Analyze the quality and confidence of this research:
-            
-            Response: {llm_response.response}
-            Gaps Analysis: {gaps_analysis}
-            Quality Analysis: {quality_analysis}
-            Integration Analysis: {integration_analysis}
-            
-            Provide confidence assessment in this format:
-            {{
-                "confidence": 0.0 to 1.0 score,
-                "explanation": "Detailed explanation of score",
-                "factors": ["List of contributing factors"]
-            }}
-            
-            Consider:
-            - Information completeness
-            - Source reliability
-            - Verification status
-            - Integration potential
-            
-            Respond with properly formatted JSON only."""
-            
-            # Get confidence analysis
-            analysis = await self.llm.get_completion(confidence_prompt)
-            
-            try:
-                result = json.loads(analysis)
-                return float(result.get("confidence", 0.5))
-            except (json.JSONDecodeError, ValueError):
-                logger.error("Failed to parse confidence analysis")
-                return 0.5
-                
-        except Exception as e:
-            logger.error(f"Error calculating research confidence: {str(e)}")
-            return 0.5
     
     async def research_topic(
         self,

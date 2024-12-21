@@ -1,10 +1,9 @@
 """Meta agent for synthesizing responses from other agents."""
 
 import logging
-import json
-from typing import Dict, List, Any, Optional, TYPE_CHECKING
+from typing import Dict, Any, Optional, TYPE_CHECKING
 from datetime import datetime
-from ..memory_types import AgentResponse, DialogueContext
+from ..memory_types import AgentResponse
 from .base import BaseAgent
 
 if TYPE_CHECKING:
@@ -37,9 +36,9 @@ class MetaAgent(BaseAgent):
         # Format agent responses
         response_text = '\n\n'.join([
             f"{agent_type.capitalize()} Agent Response:\n{response.response}\n"
-            f"Concepts: {json.dumps(response.concepts)}\n"
-            f"Key Points: {json.dumps(response.key_points)}\n"
-            f"Implications: {json.dumps(response.implications)}"
+            f"Concepts: {response.concepts}\n"
+            f"Key Points: {response.key_points}\n"
+            f"Implications: {response.implications}"
             for agent_type, response in responses.items()
         ])
         
@@ -110,10 +109,8 @@ Return ONLY the JSON object, no other text."""
     ) -> AgentResponse:
         """Synthesize dialogue from agent responses."""
         try:
-            # Get structured completion
-            response = await self.llm.get_structured_completion(
-                self._format_prompt(content)
-            )
+            # Process through base agent which uses parsing agent
+            response = await self.process(content)
             
             # Add dialogue context if available
             if content.get('dialogue_context'):
@@ -177,7 +174,7 @@ Return ONLY the JSON object, no other text."""
                 implications=[],
                 uncertainties=[],
                 reasoning=[],
-                perspective="meta",
+                perspective="error",
                 confidence=0.0,
                 timestamp=datetime.now()
             )

@@ -7,6 +7,7 @@ from typing import Dict, List, Any
 from datetime import datetime
 
 from ..persistence import MemoryStore
+from ..memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +29,16 @@ class ContextBuilder:
                 lines.append(f"- Input: {memory_content['input']}")
                 if 'synthesis' in memory_content:
                     synthesis = memory_content['synthesis']
-                    if isinstance(synthesis, dict):
-                        if synthesis.get('response'):
-                            lines.append(f"- Response: {synthesis['response']}")
-                        if synthesis.get('key_points'):
+                    if isinstance(synthesis, (dict, AgentResponse)):
+                        # Handle both dict and AgentResponse formats
+                        response = synthesis.response if isinstance(synthesis, AgentResponse) else synthesis.get('response')
+                        key_points = synthesis.key_points if isinstance(synthesis, AgentResponse) else synthesis.get('key_points', [])
+                        
+                        if response:
+                            lines.append(f"- Response: {response}")
+                        if key_points:
                             lines.append("- Key points:")
-                            for point in synthesis['key_points']:
+                            for point in key_points:
                                 lines.append(f"  * {point}")
         
         return lines
@@ -43,9 +48,17 @@ class ContextBuilder:
         lines = []
         memory_content = memory.get('content', {})
         
-        if isinstance(memory_content, dict) and 'beliefs' in memory_content:
-            beliefs = memory_content['beliefs']
-            if isinstance(beliefs, dict):
+        if isinstance(memory_content, (dict, AgentResponse)):
+            # Handle both dict and AgentResponse formats
+            if isinstance(memory_content, AgentResponse):
+                beliefs = {
+                    'core_belief': memory_content.response,
+                    'supporting_evidence': memory_content.key_points
+                }
+            else:
+                beliefs = memory_content.get('beliefs', {})
+            
+            if beliefs:
                 lines.append(f"Previous belief ({memory['time_ago']}):")
                 if beliefs.get('core_belief'):
                     lines.append(f"- Core: {beliefs['core_belief']}")
@@ -65,17 +78,35 @@ class ContextBuilder:
         if 'beliefs' in context:
             context_lines.append("Current Beliefs:")
             for belief in context['beliefs'][-3:]:  # Last 3 beliefs
-                context_lines.append(f"- {belief}")
+                if isinstance(belief, (str, dict, AgentResponse)):
+                    if isinstance(belief, str):
+                        context_lines.append(f"- {belief}")
+                    elif isinstance(belief, AgentResponse):
+                        context_lines.append(f"- {belief.response}")
+                    else:
+                        context_lines.append(f"- {belief.get('response', '')}")
         
         if 'insights' in context:
             context_lines.append("Recent Insights:")
             for insight in context['insights'][-2:]:  # Last 2 insights
-                context_lines.append(f"- {insight}")
+                if isinstance(insight, (str, dict, AgentResponse)):
+                    if isinstance(insight, str):
+                        context_lines.append(f"- {insight}")
+                    elif isinstance(insight, AgentResponse):
+                        context_lines.append(f"- {insight.response}")
+                    else:
+                        context_lines.append(f"- {insight.get('response', '')}")
         
         if 'findings' in context:
             context_lines.append("Recent Findings:")
             for finding in context['findings'][-2:]:  # Last 2 findings
-                context_lines.append(f"- {finding}")
+                if isinstance(finding, (str, dict, AgentResponse)):
+                    if isinstance(finding, str):
+                        context_lines.append(f"- {finding}")
+                    elif isinstance(finding, AgentResponse):
+                        context_lines.append(f"- {finding.response}")
+                    else:
+                        context_lines.append(f"- {finding.get('response', '')}")
         
         return context_lines
     
@@ -95,8 +126,12 @@ class ContextBuilder:
             unique_interactions = []
             for memory in similar_interactions:
                 memory_content = memory.get('content', {})
-                if isinstance(memory_content, dict):
-                    input_content = memory_content.get('input', '')
+                if isinstance(memory_content, (dict, AgentResponse)):
+                    input_content = (
+                        memory_content.get('input', '')
+                        if isinstance(memory_content, dict)
+                        else memory_content.response
+                    )
                     if input_content and input_content not in seen_inputs:
                         seen_inputs.add(input_content)
                         unique_interactions.append(memory)
@@ -114,13 +149,15 @@ class ContextBuilder:
             unique_beliefs = []
             for memory in similar_beliefs:
                 memory_content = memory.get('content', {})
-                if isinstance(memory_content, dict) and 'beliefs' in memory_content:
-                    beliefs = memory_content['beliefs']
-                    if isinstance(beliefs, dict):
-                        core_belief = beliefs.get('core_belief', '')
-                        if core_belief and core_belief not in seen_beliefs:
-                            seen_beliefs.add(core_belief)
-                            unique_beliefs.append(memory)
+                if isinstance(memory_content, (dict, AgentResponse)):
+                    core_belief = (
+                        memory_content.get('beliefs', {}).get('core_belief', '')
+                        if isinstance(memory_content, dict)
+                        else memory_content.response
+                    )
+                    if core_belief and core_belief not in seen_beliefs:
+                        seen_beliefs.add(core_belief)
+                        unique_beliefs.append(memory)
             
             # Format context sections
             context_sections = []

@@ -33,13 +33,23 @@ class BaseAgent:
     
     async def _enrich_content(
         self,
-        content: Dict[str, Any],
+        content: Union[str, Dict[str, Any]],
         metadata: Optional[Dict] = None
     ) -> Dict[str, Any]:
         """Enrich content with additional context."""
         try:
-            # Get similar memories
-            if isinstance(content, dict) and content.get('content'):
+            # Convert string content to dict if needed
+            if isinstance(content, str):
+                content = {'content': content}
+            elif not isinstance(content, dict):
+                content = {'content': str(content)}
+            
+            # Ensure content field exists
+            if 'content' not in content:
+                content['content'] = ''
+            
+            # Get similar memories if content exists
+            if content['content']:
                 similar = await self.vector_store.search_vectors(
                     content=content['content'],
                     limit=5
@@ -58,18 +68,30 @@ class BaseAgent:
             
         except Exception as e:
             logger.error(f"Error enriching content: {str(e)}")
-            return content
+            return {'content': str(content)}
     
     async def _process_llm_response(
         self,
         llm_response: Any,
         content: Dict[str, Any]
     ) -> AgentResponse:
-        """Process LLM response. Override in subclasses."""
+        """Process LLM response."""
         try:
-            # Parse response
+            # Parse response using parser if available
             if self.llm.parser:
-                parsed = await self.llm.parser.parse_text(llm_response)
+                parsed = await self.llm.parser.parse_text(str(llm_response))
+                
+                # Add agent-specific metadata
+                parsed.perspective = self.agent_type
+                if content.get('metadata'):
+                    parsed.metadata.update(content['metadata'])
+                
+                # Add relevant concepts from memory
+                if content.get('relevant_concepts'):
+                    for concept in content['relevant_concepts']:
+                        if concept not in parsed.concepts:
+                            parsed.concepts.append(concept)
+                
                 return parsed
             
             # Fallback if parser not initialized
@@ -88,7 +110,7 @@ class BaseAgent:
         except Exception as e:
             logger.error(f"Error in {self.agent_type} agent: {str(e)}")
             return AgentResponse(
-                response=str(llm_response),
+                response=f"Error in {self.agent_type} agent",
                 concepts=[],
                 key_points=[],
                 implications=[],
@@ -106,12 +128,6 @@ class BaseAgent:
     ) -> AgentResponse:
         """Process content through agent."""
         try:
-            # Convert string content to dict
-            if isinstance(content, str):
-                content = {'content': content}
-            elif not isinstance(content, dict):
-                raise ValueError(f"Content must be string or dict, got {type(content)}")
-            
             # Enrich content
             enriched = await self._enrich_content(content, metadata)
             
