@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-def clean_json_text(text: str) -> str:
+def _clean_json_text(text: str) -> str:
     """Clean JSON text to handle common formatting issues."""
     try:
         if not text or not isinstance(text, str):
@@ -65,7 +65,7 @@ def clean_json_text(text: str) -> str:
         logger.error(f"Error cleaning JSON text: {str(e)}")
         return "{}"
 
-def extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
+def _extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
     """Extract JSON object from text."""
     try:
         if not text or not isinstance(text, str):
@@ -73,7 +73,7 @@ def extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
             return None
             
         # Clean up text
-        text = clean_json_text(text)
+        text = _clean_json_text(text)
         
         # Try multiple parsing strategies
         strategies = [
@@ -113,7 +113,7 @@ def extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
         logger.error(f"Error extracting JSON: {str(e)}")
         return None
 
-def ensure_valid_concept(concept: Dict[str, Any]) -> Dict[str, Any]:
+def _ensure_valid_concept(concept: Dict[str, Any]) -> Dict[str, Any]:
     """Ensure concept has all required fields with valid values."""
     try:
         if not isinstance(concept, dict):
@@ -165,25 +165,8 @@ def ensure_valid_concept(concept: Dict[str, Any]) -> Dict[str, Any]:
             }
         }
 
-def extract_structured_content(text: str) -> Dict[str, Any]:
-    """Extract structured content from text using multiple strategies.
-    
-    This function is used by both the ParsingAgent and tests to extract structured
-    content from text. It uses multiple strategies to handle different formats and
-    provides robust error handling.
-    
-    Args:
-        text: Text to extract structured content from
-        
-    Returns:
-        Dictionary containing extracted content with standard fields:
-        - response: Main response text
-        - concepts: List of concept dictionaries
-        - key_points: List of key points
-        - implications: List of implications
-        - uncertainties: List of uncertainties
-        - reasoning: List of reasoning steps
-    """
+def _extract_structured_content(text: str) -> Dict[str, Any]:
+    """Extract structured content from text using multiple strategies."""
     try:
         if not text or not isinstance(text, str):
             logger.warning("Invalid text input for content extraction")
@@ -207,7 +190,7 @@ def extract_structured_content(text: str) -> Dict[str, Any]:
         }
         
         # Try JSON extraction first
-        json_content = extract_json_from_text(text)
+        json_content = _extract_json_from_text(text)
         if json_content:
             # Update with extracted content
             for key in structured.keys():
@@ -216,7 +199,7 @@ def extract_structured_content(text: str) -> Dict[str, Any]:
             
             # Validate concepts
             structured["concepts"] = [
-                ensure_valid_concept(c)
+                _ensure_valid_concept(c)
                 for c in json_content.get("concepts", [])
                 if isinstance(c, dict)
             ]
@@ -265,7 +248,7 @@ def extract_structured_content(text: str) -> Dict[str, Any]:
                     line = line.strip()
                     if not line:
                         if current_concept:
-                            concepts.append(ensure_valid_concept(current_concept))
+                            concepts.append(_ensure_valid_concept(current_concept))
                             current_concept = {}
                         continue
                     
@@ -279,7 +262,7 @@ def extract_structured_content(text: str) -> Dict[str, Any]:
                         
                         if key == 'name':
                             if current_concept:
-                                concepts.append(ensure_valid_concept(current_concept))
+                                concepts.append(_ensure_valid_concept(current_concept))
                             current_concept = {"name": value}
                         elif key in ['type', 'description']:
                             current_concept[key] = value
@@ -288,7 +271,7 @@ def extract_structured_content(text: str) -> Dict[str, Any]:
                     else:
                         # If no key, treat as name of new concept
                         if current_concept:
-                            concepts.append(ensure_valid_concept(current_concept))
+                            concepts.append(_ensure_valid_concept(current_concept))
                         current_concept = {
                             "name": line,
                             "type": "pattern",
@@ -296,7 +279,7 @@ def extract_structured_content(text: str) -> Dict[str, Any]:
                         }
                 
                 if current_concept:
-                    concepts.append(ensure_valid_concept(current_concept))
+                    concepts.append(_ensure_valid_concept(current_concept))
                 structured["concepts"] = concepts
             
             return structured
@@ -381,7 +364,18 @@ Guidelines:
 Return ONLY the JSON object, no other text."""
     
     async def parse_text(self, text: str) -> AgentResponse:
-        """Parse text into structured format."""
+        """Parse text into structured format.
+        
+        This is the main public method for parsing text. It uses multiple strategies
+        including direct parsing, pattern matching, and LLM-based parsing to extract
+        structured content from text.
+        
+        Args:
+            text: Text to parse
+            
+        Returns:
+            AgentResponse containing structured content
+        """
         try:
             if not text or not isinstance(text, str):
                 logger.warning("Invalid text input for parsing")
@@ -398,7 +392,7 @@ Return ONLY the JSON object, no other text."""
                 )
             
             # Try to extract structured content
-            structured = extract_structured_content(text)
+            structured = _extract_structured_content(text)
             
             # If extraction failed and structure agent is available, try structure analysis
             if (not structured or not structured.get("response")) and self.structure_agent:
@@ -425,7 +419,7 @@ Return ONLY the JSON object, no other text."""
                     if isinstance(structured_text, dict):
                         structured = structured_text
                     else:
-                        structured = extract_structured_content(structured_text)
+                        structured = _extract_structured_content(structured_text)
                 except Exception as e:
                     logger.error(f"Error getting LLM completion: {str(e)}")
                     structured = None
@@ -448,7 +442,7 @@ Return ONLY the JSON object, no other text."""
             # Validate all fields
             response = structured.get("response", "")
             concepts = [
-                ensure_valid_concept(c)
+                _ensure_valid_concept(c)
                 for c in structured.get("concepts", [])
                 if isinstance(c, dict)
             ]
@@ -516,7 +510,7 @@ Return ONLY the JSON object, no other text."""
                     "neutral": 1.0
                 }
             
-            structured = extract_structured_content(text)
+            structured = _extract_structured_content(text)
             if isinstance(structured, dict) and "sentiment" in structured:
                 sentiment = structured["sentiment"]
                 if isinstance(sentiment, dict):

@@ -16,7 +16,7 @@ from nia.memory.research_agent import ResearchAgent
 from nia.memory.agents.meta_agent import MetaAgent
 from nia.memory.memory_integration import MemorySystem
 from nia.memory.llm_interface import LLMInterface
-from nia.memory.agents.parsing_agent import extract_structured_content
+from nia.memory.agents.parsing_agent import ParsingAgent
 from nia.memory.neo4j_store import Neo4jMemoryStore
 from nia.memory.vector_store import VectorStore
 from nia.memory.embeddings import EmbeddingService
@@ -320,8 +320,12 @@ async def test_memory_search():
     assert all(m["layer"] == "semantic" for m in semantic_only)
 
 @pytest.mark.asyncio
-async def test_structured_content_extraction():
-    """Test extraction of structured content from text."""
+async def test_parsing_agent_response():
+    """Test parsing agent response structure and content."""
+    llm = LLMInterface()
+    store, vector_store = setup_test_stores()
+    parsing_agent = ParsingAgent(llm, store, vector_store)
+    
     test_response = """
     [
       {
@@ -349,24 +353,28 @@ async def test_structured_content_extraction():
     2. Considered information flow
     """
     
-    content = extract_structured_content(test_response)
+    response = await parsing_agent.parse_text(test_response)
     
     # Verify structure
-    assert "concepts" in content
-    assert "key_points" in content
-    assert "implications" in content
-    assert "uncertainties" in content
-    assert "reasoning" in content
+    assert isinstance(response, AgentResponse)
+    assert response.response
+    assert response.concepts
+    assert response.key_points
+    assert response.implications
+    assert response.uncertainties
+    assert response.reasoning
+    assert response.perspective == "parsing"
+    assert 0 <= response.confidence <= 1
     
     # Verify content
-    assert len(content["concepts"]) > 0
-    assert len(content["key_points"]) > 0
-    assert len(content["implications"]) > 0
-    assert len(content["uncertainties"]) > 0
-    assert len(content["reasoning"]) > 0
+    assert len(response.concepts) > 0
+    assert len(response.key_points) > 0
+    assert len(response.implications) > 0
+    assert len(response.uncertainties) > 0
+    assert len(response.reasoning) > 0
     
     # Verify concept structure
-    concept = content["concepts"][0]
+    concept = response.concepts[0]
     assert "name" in concept
     assert "type" in concept
     assert "description" in concept
