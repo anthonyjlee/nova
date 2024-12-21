@@ -41,11 +41,57 @@ class LLMInterface:
         """Set parsing agent."""
         self.parser = parser
     
-    async def get_completion(self, prompt: str) -> str:
+    def _get_mock_concept(self, agent_type: str) -> Dict[str, Any]:
+        """Get mock concept based on agent type."""
+        if agent_type == "belief":
+            return {
+                "name": "Knowledge Structure",
+                "type": "belief",
+                "description": "Understanding of knowledge organization",
+                "related": ["Learning", "Memory"]
+            }
+        elif agent_type == "emotion":
+            return {
+                "name": "Emotional Response",
+                "type": "emotion",
+                "description": "Pattern of emotional reaction",
+                "related": ["Affect", "Behavior"]
+            }
+        elif agent_type == "desire":
+            return {
+                "name": "Achievement Drive",
+                "type": "goal",
+                "description": "Motivation to accomplish objectives",
+                "related": ["Motivation", "Success"]
+            }
+        elif agent_type == "reflection":
+            return {
+                "name": "Learning Pattern",
+                "type": "pattern",
+                "description": "Recurring learning behavior",
+                "related": ["Growth", "Development"]
+            }
+        elif agent_type == "research":
+            return {
+                "name": "Information Source",
+                "type": "source",
+                "description": "Origin of knowledge",
+                "related": ["Data", "Evidence"]
+            }
+        else:
+            return {
+                "name": "Generic Concept",
+                "type": "pattern",
+                "description": "Basic pattern or concept",
+                "related": []
+            }
+    
+    async def get_completion(self, prompt: str, agent_type: str = "default") -> str:
         """Get LLM completion.
         
         Args:
             prompt: Prompt for LLM
+            agent_type: Type of agent making request
             
         Returns:
             LLM completion text
@@ -53,15 +99,16 @@ class LLMInterface:
         try:
             # TODO: Implement actual LLM call
             # For now return mock response
+            concept = self._get_mock_concept(agent_type)
             return (
                 '{\n'
                 '    "response": "Mock LLM response",\n'
                 '    "concepts": [\n'
                 '        {\n'
-                '            "name": "Mock concept",\n'
-                '            "type": "pattern",\n'
-                '            "description": "A mock concept for testing",\n'
-                '            "related": [],\n'
+                f'            "name": "{concept["name"]}",\n'
+                f'            "type": "{concept["type"]}",\n'
+                f'            "description": "{concept["description"]}",\n'
+                f'            "related": {concept["related"]},\n'
                 '            "validation": {\n'
                 '                "confidence": 0.8,\n'
                 '                "supported_by": [],\n'
@@ -84,12 +131,14 @@ class LLMInterface:
     async def get_structured_completion(
         self,
         prompt: str,
+        agent_type: str = "default",
         metadata: Optional[Dict] = None
     ) -> AgentResponse:
         """Get structured LLM completion.
         
         Args:
             prompt: Prompt for LLM
+            agent_type: Type of agent making request
             metadata: Optional metadata
             
         Returns:
@@ -97,7 +146,7 @@ class LLMInterface:
         """
         try:
             # Get raw completion
-            completion = await self.get_completion(prompt)
+            completion = await self.get_completion(prompt, agent_type)
             
             # Parse through parsing agent
             if self.parser:
@@ -112,7 +161,7 @@ class LLMInterface:
                     implications=[],
                     uncertainties=[],
                     reasoning=[],
-                    perspective="llm",
+                    perspective=agent_type,
                     confidence=0.5,
                     timestamp=datetime.now()
                 )
@@ -134,7 +183,7 @@ class LLMInterface:
                 implications=[],
                 uncertainties=[],
                 reasoning=[],
-                perspective="llm",
+                perspective=agent_type,
                 confidence=0.0,
                 timestamp=datetime.now()
             )

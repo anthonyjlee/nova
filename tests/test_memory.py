@@ -41,11 +41,17 @@ def setup_test_stores():
     store = Neo4jMemoryStore()
     return store, vector_store
 
+def setup_test_llm():
+    """Set up test LLM with parser."""
+    store, vector_store = setup_test_stores()
+    llm = LLMInterface()
+    llm.initialize_parser(store, vector_store)
+    return llm, store, vector_store
+
 @pytest.mark.asyncio
 async def test_memory_system_separation():
     """Test clean separation between memories and concepts."""
-    llm = LLMInterface()
-    store, vector_store = setup_test_stores()
+    llm, store, vector_store = setup_test_llm()
     memory_system = MemorySystem(llm, store, vector_store)
     
     # Process interaction
@@ -68,8 +74,7 @@ async def test_memory_system_separation():
 @pytest.mark.asyncio
 async def test_memory_consolidation():
     """Test memory consolidation and concept extraction."""
-    llm = LLMInterface()
-    store, vector_store = setup_test_stores()
+    llm, store, vector_store = setup_test_llm()
     memory_system = MemorySystem(llm, store, vector_store)
     
     # Store multiple memories
@@ -93,8 +98,7 @@ async def test_memory_consolidation():
 @pytest.mark.asyncio
 async def test_belief_agent_response():
     """Test belief agent response structure and content."""
-    llm = LLMInterface()
-    store, vector_store = setup_test_stores()
+    llm, store, vector_store = setup_test_llm()
     belief_agent = BeliefAgent(llm, store, vector_store)
     
     response = await belief_agent.process(TEST_CONTENT)
@@ -121,8 +125,7 @@ async def test_belief_agent_response():
 @pytest.mark.asyncio
 async def test_emotion_agent_response():
     """Test emotion agent response structure and content."""
-    llm = LLMInterface()
-    store, vector_store = setup_test_stores()
+    llm, store, vector_store = setup_test_llm()
     emotion_agent = EmotionAgent(llm, store, vector_store)
     
     response = await emotion_agent.process(TEST_CONTENT)
@@ -146,8 +149,7 @@ async def test_emotion_agent_response():
 @pytest.mark.asyncio
 async def test_desire_agent_response():
     """Test desire agent response structure and content."""
-    llm = LLMInterface()
-    store, vector_store = setup_test_stores()
+    llm, store, vector_store = setup_test_llm()
     desire_agent = DesireAgent(llm, store, vector_store)
     
     response = await desire_agent.process(TEST_CONTENT)
@@ -171,8 +173,7 @@ async def test_desire_agent_response():
 @pytest.mark.asyncio
 async def test_reflection_agent_response():
     """Test reflection agent response structure and content."""
-    llm = LLMInterface()
-    store, vector_store = setup_test_stores()
+    llm, store, vector_store = setup_test_llm()
     reflection_agent = ReflectionAgent(llm, store, vector_store)
     
     response = await reflection_agent.process(TEST_CONTENT)
@@ -196,8 +197,7 @@ async def test_reflection_agent_response():
 @pytest.mark.asyncio
 async def test_research_agent_response():
     """Test research agent response structure and content."""
-    llm = LLMInterface()
-    store, vector_store = setup_test_stores()
+    llm, store, vector_store = setup_test_llm()
     research_agent = ResearchAgent(llm, store, vector_store)
     
     response = await research_agent.process(TEST_CONTENT)
@@ -221,8 +221,7 @@ async def test_research_agent_response():
 @pytest.mark.asyncio
 async def test_meta_agent_synthesis():
     """Test meta agent synthesis capabilities."""
-    llm = LLMInterface()
-    store, vector_store = setup_test_stores()
+    llm, store, vector_store = setup_test_llm()
     meta_agent = MetaAgent(llm, store, vector_store)
     
     # Create mock agent responses
@@ -289,8 +288,7 @@ async def test_meta_agent_synthesis():
 @pytest.mark.asyncio
 async def test_memory_search():
     """Test memory search across layers."""
-    llm = LLMInterface()
-    store, vector_store = setup_test_stores()
+    llm, store, vector_store = setup_test_llm()
     memory_system = MemorySystem(llm, store, vector_store)
     
     # Store some test memories
@@ -322,8 +320,7 @@ async def test_memory_search():
 @pytest.mark.asyncio
 async def test_parsing_agent_response():
     """Test parsing agent response structure and content."""
-    llm = LLMInterface()
-    store, vector_store = setup_test_stores()
+    llm, store, vector_store = setup_test_llm()
     parsing_agent = ParsingAgent(llm, store, vector_store)
     
     test_response = """

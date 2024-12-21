@@ -1,90 +1,115 @@
-"""
-Enhanced reflection agent implementation using LLMs for all operations.
-"""
+"""Reflection agent for meta-learning and pattern analysis."""
 
 import logging
-from typing import Dict, Any
+from typing import Dict, List, Any, Optional
+from datetime import datetime
+from ..memory_types import AgentResponse, DialogueMessage
 from .base import BaseAgent
 
 logger = logging.getLogger(__name__)
 
 class ReflectionAgent(BaseAgent):
-    """Agent for meta-learning and reflection."""
+    """Agent for analyzing patterns and meta-learning."""
     
-    def __init__(self, *args, **kwargs):
+    def __init__(self, llm, store, vector_store):
         """Initialize reflection agent."""
-        super().__init__(*args, agent_type="reflection", **kwargs)
+        super().__init__(llm, store, vector_store, "reflection")
+        self.current_dialogue = None
     
     def _format_prompt(self, content: Dict[str, Any]) -> str:
-        """Format prompt for LLM."""
-        # Get content text
-        text = content.get('content', '')
-        
-        # Get similar memories for historical context
-        memories = content.get('similar_memories', [])
-        memory_text = '\n'.join([
-            f"Memory {i+1}: {m.get('content', {}).get('content', '')}"
-            for i, m in enumerate(memories)
-        ])
-        
-        # Get relevant concepts
-        concepts = content.get('relevant_concepts', [])
-        concept_text = '\n'.join([
-            f"Concept {i+1}: {c.get('name')} ({c.get('type')}) - {c.get('description')}"
-            for i, c in enumerate(concepts)
-        ])
-        
-        # Format prompt
-        prompt = f"""Analyze the following content from a reflective and meta-learning perspective.
-        Consider patterns, insights, learning opportunities, and system evolution.
-        
-        Current Content:
-        {text}
-        
-        Historical Context:
-        {memory_text}
-        
-        Known Concepts:
-        {concept_text}
-        
-        Provide analysis in this exact format:
+        """Format prompt for reflection analysis."""
+        return f"""Analyze the patterns and meta-learning aspects in this content:
+
+Content:
+{content.get('content', '')}
+
+Provide analysis in this format:
+{{
+    "response": "Clear analysis of patterns and learning",
+    "concepts": [
         {{
-            "response": "Detailed analysis from reflection perspective",
-            "concepts": [
-                {{
-                    "name": "Concept name",
-                    "type": "pattern|insight|learning|evolution",
-                    "description": "Clear description of the reflective concept",
-                    "related": ["Related concept names"],
-                    "validation": {{
-                        "confidence": 0.8,
-                        "supported_by": ["evidence"],
-                        "contradicted_by": [],
-                        "needs_verification": []
-                    }}
-                }}
-            ],
-            "key_points": [
-                "Key point about patterns and insights"
-            ],
-            "implications": [
-                "Implication for learning and evolution"
-            ],
-            "uncertainties": [
-                "Uncertainty in current understanding"
-            ],
-            "reasoning": [
-                "Step in reflection analysis"
-            ]
+            "name": "Pattern/Learning concept",
+            "type": "pattern|insight|learning|evolution",
+            "description": "Clear description",
+            "related": ["Related concepts"],
+            "validation": {{
+                "confidence": 0.8,
+                "supported_by": ["Supporting evidence"],
+                "contradicted_by": ["Contradicting evidence"],
+                "needs_verification": ["Points needing verification"]
+            }}
         }}
+    ],
+    "key_points": [
+        "Key pattern or learning insight"
+    ],
+    "implications": [
+        "Important implication for learning/growth"
+    ],
+    "uncertainties": [
+        "Area of uncertainty"
+    ],
+    "reasoning": [
+        "Step in analysis"
+    ]
+}}"""
+
+    async def provide_insight(
+        self,
+        content: str,
+        references: Optional[List[str]] = None
+    ) -> DialogueMessage:
+        """Provide insight into current dialogue.
         
-        Focus on:
-        - Recurring patterns across experiences
-        - Learning opportunities from past interactions
-        - Evolution of understanding over time
-        - Meta-level insights about the system
-        - Growth indicators and potential
+        Args:
+            content: Insight content
+            references: Optional list of referenced concepts/messages
+            
+        Returns:
+            New dialogue message
+        """
+        if not self.current_dialogue:
+            logger.warning("No active dialogue for insight")
+            return None
+            
+        message = DialogueMessage(
+            content=content,
+            message_type="insight",
+            agent_type=self.agent_type,
+            references=references or [],
+            timestamp=datetime.now()
+        )
         
-        Return ONLY the JSON object, no other text."""
+        self.current_dialogue.add_message(message)
+        return message
+    
+    async def send_message(
+        self,
+        content: str,
+        message_type: str,
+        references: Optional[List[str]] = None
+    ) -> DialogueMessage:
+        """Send message to current dialogue.
         
-        return prompt
+        Args:
+            content: Message content
+            message_type: Type of message
+            references: Optional list of referenced concepts/messages
+            
+        Returns:
+            New dialogue message
+        """
+        if not self.current_dialogue:
+            logger.warning("No active dialogue for message")
+            return None
+            
+        message = DialogueMessage(
+            content=content,
+            message_type=message_type,
+            agent_type=self.agent_type,
+            references=references or [],
+            timestamp=datetime.now()
+        )
+        
+        self.current_dialogue.add_message(message)
+        return message

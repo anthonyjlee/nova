@@ -32,7 +32,7 @@ def serialize_datetime(obj: Any) -> Any:
     elif isinstance(obj, dict):
         return {k: serialize_datetime(v) for k, v in obj.items()}
     elif isinstance(obj, list):
-        return [serialize_datetime(v) for v in v]
+        return [serialize_datetime(item) for item in obj]
     return obj
 
 class MemorySystem:
@@ -122,6 +122,7 @@ class MemorySystem:
                 
                 # Process through agents
                 responses = {}
+                content_dict = {'content': content, 'memories': memories}
                 for agent_type, agent in [
                     ('belief', self.belief_agent),
                     ('desire', self.desire_agent),
@@ -129,10 +130,7 @@ class MemorySystem:
                     ('reflection', self.reflection_agent),
                     ('research', self.research_agent)
                 ]:
-                    responses[agent_type] = await agent.process({
-                        'content': content,
-                        'memories': memories
-                    })
+                    responses[agent_type] = await agent.process(content_dict)
                 
                 # Analyze structure
                 structure_response = await self.structure_agent.analyze_structure(content)
@@ -240,7 +238,8 @@ class MemorySystem:
             # Process through agent system
             content_dict = {
                 'content': truncate_content(content),
-                'similar_memories': similar_memories
+                'similar_memories': similar_memories,
+                **(metadata or {})
             }
             
             # Get agent responses
@@ -252,7 +251,7 @@ class MemorySystem:
                 ('reflection', self.reflection_agent),
                 ('research', self.research_agent)
             ]:
-                responses[agent_type] = await agent.process(content_dict, metadata)
+                responses[agent_type] = await agent.process(content_dict)
                 logger.info(f"{agent_type.capitalize()}Agent processed interaction")
             
             # Analyze structure

@@ -75,7 +75,7 @@ Provide analysis in this format:
         message = DialogueMessage(
             content=content,
             message_type="insight",
-            agent=self.agent_type,
+            agent_type=self.agent_type,
             references=references or [],
             timestamp=datetime.now()
         )
@@ -106,7 +106,7 @@ Provide analysis in this format:
         message = DialogueMessage(
             content=content,
             message_type=message_type,
-            agent=self.agent_type,
+            agent_type=self.agent_type,
             references=references or [],
             timestamp=datetime.now()
         )
