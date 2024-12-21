@@ -1,6 +1,4 @@
-"""
-Enhanced desire agent implementation using LLMs for all operations.
-"""
+"""Desire agent for goal and motivation analysis."""
 
 import logging
 from typing import Dict, Any
@@ -9,83 +7,46 @@ from .base import BaseAgent
 logger = logging.getLogger(__name__)
 
 class DesireAgent(BaseAgent):
-    """Agent for analyzing goals, motivations, and aspirations."""
+    """Agent for analyzing goals and motivations."""
     
-    def __init__(self, *args, **kwargs):
+    def __init__(self, llm, store, vector_store):
         """Initialize desire agent."""
-        super().__init__(*args, agent_type="desire", **kwargs)
+        super().__init__(llm, store, vector_store, "desire")
     
     def _format_prompt(self, content: Dict[str, Any]) -> str:
-        """Format prompt for LLM."""
-        # Get content text
-        text = content.get('content', '')
-        
-        # Get similar memories for goal context
-        memories = content.get('similar_memories', [])
-        memory_text = '\n'.join([
-            f"Memory {i+1}: {m.get('content', {}).get('content', '')}"
-            for i, m in enumerate(memories)
-        ])
-        
-        # Get relevant concepts
-        concepts = content.get('relevant_concepts', [])
-        concept_text = '\n'.join([
-            f"Concept {i+1}: {c.get('name')} ({c.get('type')}) - {c.get('description')}"
-            for i, c in enumerate(concepts)
-        ])
-        
-        # Format prompt
-        prompt = f"""Analyze the following content from a motivational and goal-oriented perspective.
-        Consider desires, aspirations, objectives, and underlying motivations.
-        
-        Content:
-        {text}
-        
-        Goal Context:
-        {memory_text}
-        
-        Known Concepts:
-        {concept_text}
-        
-        Provide analysis in this exact format:
+        """Format prompt for desire analysis."""
+        return f"""Analyze the goals, motivations, and desires in this content:
+
+Content:
+{content.get('content', '')}
+
+Provide analysis in this format:
+{{
+    "response": "Clear analysis of goals and motivations",
+    "concepts": [
         {{
-            "response": "Detailed analysis from desire perspective",
-            "concepts": [
-                {{
-                    "name": "Concept name",
-                    "type": "goal|motivation|aspiration|desire",
-                    "description": "Clear description of the motivational concept",
-                    "related": ["Related concept names"],
-                    "validation": {{
-                        "confidence": 0.8,
-                        "supported_by": ["evidence"],
-                        "contradicted_by": [],
-                        "needs_verification": []
-                    }}
-                }}
-            ],
-            "key_points": [
-                "Key point about goals and motivations"
-            ],
-            "implications": [
-                "Implication for goal pursuit"
-            ],
-            "uncertainties": [
-                "Uncertainty in motivation analysis"
-            ],
-            "reasoning": [
-                "Step in desire analysis"
-            ]
+            "name": "Goal/Motivation concept",
+            "type": "goal|motivation|aspiration|desire",
+            "description": "Clear description",
+            "related": ["Related concepts"],
+            "validation": {{
+                "confidence": 0.8,
+                "supported_by": ["Supporting evidence"],
+                "contradicted_by": ["Contradicting evidence"],
+                "needs_verification": ["Points needing verification"]
+            }}
         }}
-        
-        Focus on:
-        - Short and long-term goals
-        - Underlying motivations
-        - Goal relationships and dependencies
-        - Progress indicators
-        - Potential obstacles
-        - Growth aspirations
-        
-        Return ONLY the JSON object, no other text."""
-        
-        return prompt
+    ],
+    "key_points": [
+        "Key motivational insight"
+    ],
+    "implications": [
+        "Important implication for goals/desires"
+    ],
+    "uncertainties": [
+        "Area of uncertainty"
+    ],
+    "reasoning": [
+        "Step in analysis"
+    ]
+}}"""
