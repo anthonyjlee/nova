@@ -401,5 +401,41 @@ Provide analysis in this format:
     "reasoning": [
         "Step in analysis"
     ]
+}""",
+
+    "task_planner": """Plan and coordinate complex task execution:
+
+Content:
+{content}
+
+Provide analysis in this format:
+{
+    "response": "Clear task planning and coordination strategy",
+    "concepts": [
+        {
+            "name": "Task Planning concept",
+            "type": "plan|sequence|coordination|strategy",
+            "description": "Clear description",
+            "related": ["Related concepts"],
+            "validation": {
+                "confidence": 0.8,
+                "supported_by": ["Supporting evidence"],
+                "contradicted_by": ["Contradicting evidence"],
+                "needs_verification": ["Points needing verification"]
+            }
+        }
+    ],
+    "key_points": [
+        "Key planning insight"
+    ],
+    "implications": [
+        "Important implication for execution"
+    ],
+    "uncertainties": [
+        "Area of uncertainty"
+    ],
+    "reasoning": [
+        "Step in planning process"
+    ]
 }"""
 }
