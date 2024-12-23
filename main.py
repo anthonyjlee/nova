@@ -22,12 +22,12 @@ from nia.memory.agents.task_planner_agent import TaskPlannerAgent
 
 async def main():
     """Main entry point."""
+    # Setup logging
+    configure_logging()
+    logger = logging.getLogger(__name__)
+    logger.info("Starting NIA system")
+    
     try:
-        # Setup logging
-        configure_logging()
-        logger = logging.getLogger(__name__)
-        logger.info("Starting NIA system")
-        
         # Initialize core components
         llm = LLMInterface()
         store = Neo4jMemoryStore()
@@ -87,12 +87,28 @@ async def main():
                 if user_input.lower() == 'status':
                     status = await nova.get_status()
                     print(f"\nSystem Status:")
-                    print(f"Vector Store: {status['vector_store']}")
-                    print(f"Neo4j: {status['neo4j']}")
+                    print("Vector Store:")
+                    print(f"  - Episodic Layer: {status['vector_store'].get('episodic_count', 0)} memories")
+                    print(f"  - Semantic Layer: {status['vector_store'].get('semantic_count', 0)} memories")
+                    print(f"  - Last Consolidation: {status['vector_store'].get('last_consolidation', 'Never')}")
+                    print("\nNeo4j:")
+                    print(f"  - Concepts: {status['neo4j'].get('concept_count', 0)} stored")
+                    print(f"  - Relationships: {status['neo4j'].get('relationship_count', 0)} mapped")
+                    print("\nActive Agents:")
+                    for agent in status.get('active_agents', []):
+                        print(f"  - {agent}")
+                    print("\nMemory Consolidation:")
+                    next_consolidation = status['vector_store'].get('next_consolidation', 'Unknown')
+                    print(f"  - Next scheduled: {next_consolidation}")
                     continue
                     
                 if user_input.lower() == 'reset':
-                    print("\nResetting memory stores...")
+                    print("\nResetting system...")
+                    print("- Clearing episodic memories...")
+                    print("- Clearing semantic memories...")
+                    print("- Resetting concept storage...")
+                    print("- Resetting consolidation timer...")
+                    print("- Clearing agent states...")
                     await nova.cleanup()
                     print("Reset complete")
                     continue
@@ -100,9 +116,10 @@ async def main():
                 if user_input.lower() == 'help':
                     print("\nAvailable commands:")
                     print("- exit: Quit the system")
-                    print("- status: Check system status")
-                    print("- search <query>: Search memories")
-                    print("- reset: Reset memory stores")
+                    print("- status: Check detailed system status (memory layers, concepts, agents)")
+                    print("- search <query>: Search memories across layers with relevance scores")
+                    print("- reset: Reset all memory stores and system state")
+                    print("- consolidate: Force memory consolidation")
                     print("- help: Show this help message")
                     continue
                     
@@ -111,9 +128,23 @@ async def main():
                     memories = await nova.search_memories(query)
                     print(f"\nFound {len(memories)} related memories:")
                     for i, memory in enumerate(memories, 1):
-                        print(f"\n{i}. Score: {memory['score']:.3f}")
-                        print(f"Content: {memory['content']}")
-                        print(f"Metadata: {memory['metadata']}")
+                        print(f"\n{i}. Layer: {memory.get('layer', 'unknown')}")
+                        print(f"   Score: {memory.get('score', 0):.3f}")
+                        print(f"   Type: {memory.get('type', 'unknown')}")
+                        print(f"   Content: {memory.get('content', '')}")
+                        if memory.get('layer') == 'semantic':
+                            print(f"   Related Concepts: {', '.join(c['name'] for c in memory.get('concepts', []))}")
+                        print(f"   Metadata: {memory.get('metadata', {})}")
+                    continue
+
+                if user_input.lower() == 'consolidate':
+                    print("\nForcing memory consolidation...")
+                    await nova._consolidate_memories()
+                    status = await nova.get_status()
+                    print("\nConsolidation complete:")
+                    print(f"- Semantic memories: {status['vector_store'].get('semantic_count', 0)}")
+                    print(f"- Concepts stored: {status['neo4j'].get('concept_count', 0)}")
+                    print(f"- Next consolidation: {status['vector_store'].get('next_consolidation', 'Unknown')}")
                     continue
                 
                 # Process through Nova
@@ -135,7 +166,7 @@ async def main():
                         validation = concept.get('validation', {})
                         supporters = len(validation.get('supported_by', []))
                         contradictors = len(validation.get('contradicted_by', []))
-                        print(f"\n- {concept['name']} ({concept['type']}, confidence: {concept.get('confidence', 0):.2f})")
+                        print(f"\n- {concept['name']} ({concept['type']}, confidence: {validation.get('confidence', 0):.2f})")
                         print(f"  Description: {concept['description']}")
                         print(f"  Support: {supporters} for, {contradictors} against")
                         if concept.get('related'):
