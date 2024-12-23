@@ -20,23 +20,19 @@ class MetaAgent(BaseAgent):
         self,
         llm: 'LLMInterface',
         store: 'Neo4jMemoryStore',
-        vector_store: 'VectorStore'
+        vector_store: 'VectorStore',
+        agents: Dict[str, BaseAgent]
     ):
         """Initialize meta agent."""
         super().__init__(llm, store, vector_store, agent_type="meta")
         
-        # Initialize sub-agents
-        from .belief_agent import BeliefAgent
-        from .desire_agent import DesireAgent
-        from .emotion_agent import EmotionAgent
-        from .reflection_agent import ReflectionAgent
-        from .research_agent import ResearchAgent
-        
-        self.belief_agent = BeliefAgent(llm, store, vector_store)
-        self.desire_agent = DesireAgent(llm, store, vector_store)
-        self.emotion_agent = EmotionAgent(llm, store, vector_store)
-        self.reflection_agent = ReflectionAgent(llm, store, vector_store)
-        self.research_agent = ResearchAgent(llm, store, vector_store)
+        # Store sub-agents
+        self.belief_agent = agents.get('belief')
+        self.desire_agent = agents.get('desire')
+        self.emotion_agent = agents.get('emotion')
+        self.reflection_agent = agents.get('reflection')
+        self.research_agent = agents.get('research')
+        self.task_planner_agent = agents.get('task_planner')
         
         # Initialize dialogue context
         from ..memory_types import DialogueContext
@@ -184,7 +180,7 @@ Return ONLY the JSON object, no other text."""
             }
             
             # Get agent responses
-            for agent_type in ['belief', 'desire', 'emotion', 'reflection', 'research']:
+            for agent_type in ['belief', 'desire', 'emotion', 'reflection', 'research', 'task_planner']:
                 agent = getattr(self, f"{agent_type}_agent", None)
                 if agent:
                     content_dict['agent_responses'][agent_type] = await agent.process(

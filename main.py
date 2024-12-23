@@ -55,12 +55,12 @@ async def main():
         reflection_agent = ReflectionAgent(llm, store, vector_store)
         research_agent = ResearchAgent(llm, store, vector_store)
         
-        # Initialize MetaAgent (Nova) with other agents
+        # Initialize MetaAgent (Nova) with agents
         nova = MetaAgent(
             llm=llm,
             store=store,
             vector_store=vector_store,
-            other_agents={
+            agents={
                 'belief': belief_agent,
                 'desire': desire_agent,
                 'emotion': emotion_agent,
