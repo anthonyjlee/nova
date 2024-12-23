@@ -30,10 +30,15 @@ def setup_test_stores():
     store = Neo4jMemoryStore()
     return store, vector_store
 
-def setup_test_llm():
-    """Set up test LLM with parser."""
+def setup_test_llm(use_mock: bool = False):
+    """Set up test LLM with parser.
+    
+    Args:
+        use_mock: Whether to use mock responses (for testing)
+        Default is False to use real LMStudio for integration testing
+    """
     store, vector_store = setup_test_stores()
-    llm = LLMInterface()
+    llm = LLMInterface(use_mock=use_mock)
     llm.initialize_parser(store, vector_store)
     return llm, store, vector_store
 

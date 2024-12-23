@@ -4,8 +4,15 @@ Tests for memory system components.
 
 import pytest
 import json
+import logging
 from datetime import datetime
 from typing import Dict, List, Any
+
+logger = logging.getLogger(__name__)
+
+@pytest.fixture
+def use_mock(request):
+    return request.config.getoption("use_mock")
 
 from nia.memory.memory_types import AgentResponse, Memory
 from nia.memory.agents.belief_agent import BeliefAgent
@@ -37,17 +44,29 @@ TEST_CONTENT = {
     }
 }
 
+class MockEmbeddingService(EmbeddingService):
+    """Mock embedding service that returns consistent embeddings."""
+    async def get_embedding(self, text: str) -> List[float]:
+        """Return a consistent embedding for testing."""
+        # Return a fixed-size vector of 384 dimensions (same as default)
+        return [0.1] * 384
+
 def setup_test_stores():
     """Set up test stores with mock embedding service."""
-    embedding_service = EmbeddingService()
+    embedding_service = MockEmbeddingService()
     vector_store = VectorStore(embedding_service)
     store = Neo4jMemoryStore()
     return store, vector_store
 
-def setup_test_llm():
-    """Set up test LLM with parser."""
+def setup_test_llm(use_mock: bool = False):
+    """Set up test LLM with parser.
+    
+    Args:
+        use_mock: Whether to use mock responses (for testing)
+        Default is False to use real LMStudio for integration testing
+    """
     store, vector_store = setup_test_stores()
-    llm = LLMInterface()
+    llm = LLMInterface(use_mock=use_mock)
     llm.initialize_parser(store, vector_store)
     return llm, store, vector_store
 
@@ -99,12 +118,25 @@ async def test_memory_consolidation():
     assert any(m.get("type") == "consolidation" for m in semantic_memories)
 
 @pytest.mark.asyncio
-async def test_belief_agent_response():
+async def test_belief_agent_response(use_mock, capfd):
     """Test belief agent response structure and content."""
-    llm, store, vector_store = setup_test_llm()
+    llm, store, vector_store = setup_test_llm(use_mock=use_mock)
     belief_agent = BeliefAgent(llm, store, vector_store)
     
+    logger.debug(f"Test content: {TEST_CONTENT}")
     response = await belief_agent.process(TEST_CONTENT)
+    
+    # Print response for inspection
+    logger.debug(f"Raw response: {response}")
+    print("\nBelief Agent Response:")
+    print(f"Response: {response.response}")
+    print("\nConcepts:")
+    for concept in response.concepts:
+        print(f"- {concept['name']} ({concept['type']}): {concept['description']}")
+    print("\nKey Points:", response.key_points)
+    print("Implications:", response.implications)
+    print("Uncertainties:", response.uncertainties)
+    print("Reasoning:", response.reasoning)
     
     # Verify response structure
     assert isinstance(response, AgentResponse)
@@ -117,13 +149,30 @@ async def test_belief_agent_response():
     assert response.perspective
     assert 0 <= response.confidence <= 1
     
-    # Verify concept structure
+    # Verify concept structure and content
     for concept in response.concepts:
-        assert "name" in concept
-        assert "type" in concept
-        assert "description" in concept
-        assert "related" in concept
-        assert isinstance(concept["related"], list)
+        # Structure validation
+        assert "name" in concept, "Concept missing name field"
+        assert "type" in concept, "Concept missing type field"
+        assert "description" in concept, "Concept missing description field"
+        assert "related" in concept, "Concept missing related field"
+        assert isinstance(concept["related"], list), "Related field must be a list"
+        assert "validation" in concept, "Concept missing validation field"
+        
+        # Content validation
+        assert len(concept["name"]) > 0, "Concept name cannot be empty"
+        assert len(concept["description"]) > 0, "Concept description cannot be empty"
+        assert concept["type"] in ["belief", "philosophical_concept", "theory", "understanding"], \
+            f"Invalid concept type: {concept['type']}"
+        
+        # Validation field structure
+        validation = concept["validation"]
+        assert "confidence" in validation, "Validation missing confidence score"
+        assert isinstance(validation["confidence"], (int, float)), "Confidence must be numeric"
+        assert 0 <= validation["confidence"] <= 1, "Confidence must be between 0 and 1"
+        assert "supported_by" in validation, "Validation missing supported_by field"
+        assert "contradicted_by" in validation, "Validation missing contradicted_by field"
+        assert "needs_verification" in validation, "Validation missing needs_verification field"
 
 @pytest.mark.asyncio
 async def test_emotion_agent_response():
@@ -144,10 +193,39 @@ async def test_emotion_agent_response():
     assert response.perspective
     assert 0 <= response.confidence <= 1
     
-    # Verify emotional concepts
-    valid_types = ["emotion", "affect", "pattern", "response"]
+    # Verify concept structure and content
     for concept in response.concepts:
-        assert concept["type"] in valid_types
+        # Structure validation
+        assert "name" in concept, "Concept missing name field"
+        assert "type" in concept, "Concept missing type field"
+        assert "description" in concept, "Concept missing description field"
+        assert "related" in concept, "Concept missing related field"
+        assert isinstance(concept["related"], list), "Related field must be a list"
+        assert "validation" in concept, "Concept missing validation field"
+        
+        # Content validation
+        assert len(concept["name"]) > 0, "Concept name cannot be empty"
+        assert len(concept["description"]) > 0, "Concept description cannot be empty"
+        assert concept["type"] in ["emotion", "affect", "pattern", "response"], \
+            f"Invalid concept type: {concept['type']}"
+        
+        # Validation field structure
+        validation = concept["validation"]
+        assert "confidence" in validation, "Validation missing confidence score"
+        assert isinstance(validation["confidence"], (int, float)), "Confidence must be numeric"
+        assert 0 <= validation["confidence"] <= 1, "Confidence must be between 0 and 1"
+        assert "supported_by" in validation, "Validation missing supported_by field"
+        assert "contradicted_by" in validation, "Validation missing contradicted_by field"
+        assert "needs_verification" in validation, "Validation missing needs_verification field"
+        
+        # Emotion-specific validation
+        if concept["type"] == "emotion":
+            assert len(concept["related"]) > 0, "Emotion concept must have related terms"
+            assert any("intensity" in field.lower() or 
+                      "strength" in field.lower() or 
+                      "valence" in field.lower() 
+                      for field in concept["description"].split()), \
+                "Emotion description should include intensity/strength/valence"
 
 @pytest.mark.asyncio
 async def test_desire_agent_response():
