@@ -2,7 +2,7 @@
 
 import logging
 from typing import Dict, Any, Optional, TYPE_CHECKING
-from datetime import datetime
+from datetime import datetime, timedelta
 from ..memory_types import AgentResponse
 from .base import BaseAgent
 
@@ -40,6 +40,61 @@ class MetaAgent(BaseAgent):
             topic="Meta Dialogue",
             status="active"
         )
+        
+        # Track consolidation
+        self.last_consolidation = datetime.now()
+        self.consolidation_interval = timedelta(hours=1)
+    
+    async def get_status(self) -> Dict[str, Any]:
+        """Get system status."""
+        try:
+            # Get vector store status
+            episodic_count = await self.vector_store.count_vectors(layer="episodic")
+            semantic_count = await self.vector_store.count_vectors(layer="semantic")
+            
+            # Get Neo4j status
+            concept_count = await self.store.count_concepts()
+            relationship_count = await self.store.count_relationships()
+            
+            # Calculate next consolidation
+            next_consolidation = self.last_consolidation + self.consolidation_interval
+            
+            return {
+                'vector_store': {
+                    'episodic_count': episodic_count,
+                    'semantic_count': semantic_count,
+                    'last_consolidation': self.last_consolidation.isoformat(),
+                    'next_consolidation': next_consolidation.isoformat()
+                },
+                'neo4j': {
+                    'concept_count': concept_count,
+                    'relationship_count': relationship_count
+                },
+                'active_agents': [
+                    'belief',
+                    'desire',
+                    'emotion',
+                    'reflection',
+                    'research',
+                    'task_planner'
+                ]
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting status: {str(e)}")
+            return {
+                'vector_store': {
+                    'episodic_count': 0,
+                    'semantic_count': 0,
+                    'last_consolidation': 'Never',
+                    'next_consolidation': 'Unknown'
+                },
+                'neo4j': {
+                    'concept_count': 0,
+                    'relationship_count': 0
+                },
+                'active_agents': []
+            }
     
     def _format_prompt(self, content: Dict[str, Any]) -> str:
         """Format prompt for LLM."""
@@ -91,18 +146,18 @@ Provide synthesis in this exact format:
 {{
     "response": "Comprehensive synthesis explaining how different agent perspectives combine and relate",
     "concepts": [
-        {
+        {{
             "name": "Synthesized concept name",
             "type": "synthesis|integration|coordination",
             "description": "Description that references multiple agent perspectives",
             "related": ["Concepts from different agent responses"],
-            "validation": {
+            "validation": {{
                 "confidence": 0.8,
                 "supported_by": ["Evidence from multiple agents"],
-                "contradicted_by": ["Any conflicting views"],
-                "needs_verification": ["Areas needing additional input"]
-            }
-        }
+                "contradicted_by": ["Any conflicting agent views"],
+                "needs_verification": ["Areas needing additional agent input"]
+            }}
+        }}
     ],
     "key_points": [
         "Key insight or observation"
