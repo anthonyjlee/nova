@@ -106,6 +106,15 @@ class BaseAgent:
                     response.metadata = {}
                 response.metadata.update(metadata)
             
+            # Store concepts in Neo4j
+            for concept in response.concepts:
+                await self.store.store_concept(
+                    name=concept["name"],
+                    type=concept["type"],
+                    description=concept["description"],
+                    related=concept.get("related", [])
+                )
+            
             return response
             
         except Exception as e:
@@ -155,7 +164,7 @@ class BaseAgent:
                 }
                 
                 error_concept = {
-                    "name": "Error",
+                    "name": f"{self.agent_type.title()} Error",
                     "type": concept_types.get(self.agent_type, "error"),
                     "description": error_msg,
                     "related": [],
@@ -163,9 +172,20 @@ class BaseAgent:
                         "confidence": 0.0,
                         "supported_by": [],
                         "contradicted_by": [],
-                        "needs_verification": []
+                        "needs_verification": ["Error handling and recovery"]
                     }
                 }
+                
+                # Store error concept
+                try:
+                    await self.store.store_concept(
+                        name=error_concept["name"],
+                        type=error_concept["type"],
+                        description=error_concept["description"],
+                        related=error_concept["related"]
+                    )
+                except Exception as store_error:
+                    logger.error(f"Error storing error concept: {str(store_error)}")
                 
                 return AgentResponse(
                     response=error_msg,

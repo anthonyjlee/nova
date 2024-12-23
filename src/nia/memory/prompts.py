@@ -78,40 +78,42 @@ Provide analysis in this format:
 Content:
 {content}
 
-Analyze the responses from different agents and synthesize them into a coherent understanding. Look for:
-- Common themes and patterns across agent perspectives
-- Complementary insights that build on each other
-- Potential conflicts or contradictions to resolve
-- Emergent insights from combining perspectives
+Analysis Guidelines:
+1. Check which agents returned errors vs successful responses
+2. Focus on extracting a clear answer from working agents
+3. Keep the response simple and direct
+4. Only add context if it directly helps answer the question
+5. If most agents error, provide a graceful fallback response
 
 Provide synthesis in this format:
 {
-    "response": "Clear synthesis explaining how different agent perspectives combine and relate",
+    "response": "Start with a clear, direct answer to the user's question in one sentence. If needed, add 1-2 sentences of relevant context from working agents.",
     "concepts": [
         {
-            "name": "Synthesized concept",
-            "type": "synthesis|integration|coordination",
-            "description": "Clear description that references insights from multiple agents",
-            "related": ["Must include concepts from different agent responses"],
+            "name": "Most relevant concept to the question",
+            "type": "synthesis",
+            "description": "Brief description that helps answer the question",
+            "related": ["Only directly relevant concepts"],
             "validation": {
                 "confidence": 0.8,
-                "supported_by": ["Evidence from multiple agent perspectives"],
-                "contradicted_by": ["Any conflicting agent views"],
-                "needs_verification": ["Areas needing additional agent input"]
+                "supported_by": ["Working agent responses"],
+                "contradicted_by": [],
+                "needs_verification": ["Critical uncertainties"]
             }
         }
     ],
     "key_points": [
-        "Key synthesis insight"
+        "The direct answer",
+        "Only essential supporting points"
     ],
     "implications": [
-        "Important implication from synthesis"
+        "Most important implication for the user"
     ],
     "uncertainties": [
-        "Area of uncertainty"
+        "Only mention if it affects the answer"
     ],
     "reasoning": [
-        "Step in synthesis"
+        "Brief explanation of how you arrived at the answer"
     ]
 }""",
 

@@ -43,8 +43,8 @@ async def main():
     logger.info("Starting NIA system")
     
     try:
-        # Initialize core components
-        llm = LLMInterface()
+        # Initialize core components with real LMStudio
+        llm = LLMInterface(use_mock=False)
         store = Neo4jMemoryStore()
         embedding_service = EmbeddingService()
         vector_store = VectorStore(embedding_service=embedding_service)
@@ -120,8 +120,14 @@ async def main():
                     print(f"  - Semantic Layer: {Fore.YELLOW}{status['vector_store'].get('semantic_count', 0)}{Style.RESET_ALL} memories")
                     print(f"  - Last Consolidation: {Fore.YELLOW}{status['vector_store'].get('last_consolidation', 'Never')}{Style.RESET_ALL}")
                     print(f"\n{Fore.MAGENTA}Neo4j:{Style.RESET_ALL}")
-                    print(f"  - Concepts: {Fore.YELLOW}{status['neo4j'].get('concept_count', 0)}{Style.RESET_ALL} stored")
-                    print(f"  - Relationships: {Fore.YELLOW}{status['neo4j'].get('relationship_count', 0)}{Style.RESET_ALL} mapped")
+                    # Get concept counts by label
+                    concept_counts = await store.count_concepts_by_label()
+                    print(f"  - Total Concepts: {Fore.YELLOW}{concept_counts.get('Total', 0)}{Style.RESET_ALL}")
+                    print(f"  - Relationships: {Fore.YELLOW}{status['neo4j'].get('relationship_count', 0)}{Style.RESET_ALL}")
+                    print(f"\n{Fore.MAGENTA}Concept Types:{Style.RESET_ALL}")
+                    for label, count in concept_counts.items():
+                        if label != 'Total' and count > 0:
+                            print(f"  - {label}: {Fore.YELLOW}{count}{Style.RESET_ALL}")
                     print(f"\n{Fore.MAGENTA}Active Agents:{Style.RESET_ALL}")
                     for agent in status.get('active_agents', []):
                         print(f"  - {Fore.YELLOW}{agent}{Style.RESET_ALL}")

@@ -176,7 +176,149 @@ class LLMInterface:
                                 if "choices" not in result or not result["choices"]:
                                     raise Exception("No choices in LMStudio response")
                                 
-                                break  # Success - exit retry loop
+                                content = result["choices"][0]["message"]["content"]
+                                self.logger.debug(f"Raw LLM Content: {content}")
+                                
+                                # Try to parse as JSON first
+                                try:
+                                    # Clean up common formatting issues
+                                    content = content.strip()
+                                    if content.startswith("```json"):
+                                        content = content[7:]
+                                    if content.endswith("```"):
+                                        content = content[:-3]
+                                    content = content.strip()
+                                    
+                                    parsed = json.loads(content)
+                                    
+                                    # Ensure base structure
+                                    if not isinstance(parsed, dict):
+                                        raise ValueError("Response must be a JSON object")
+                                        
+                                    # Validate and fix required fields
+                                    required_fields = {
+                                        "response": str,
+                                        "concepts": list,
+                                        "key_points": list,
+                                        "implications": list,
+                                        "uncertainties": list,
+                                        "reasoning": list
+                                    }
+                                    
+                                    # Add missing fields with defaults
+                                    for field, field_type in required_fields.items():
+                                        if field not in parsed:
+                                            if field_type == str:
+                                                parsed[field] = ""
+                                            else:
+                                                parsed[field] = []
+                                                
+                                    # Validate concepts
+                                    if parsed["concepts"]:
+                                        validated_concepts = []
+                                        for concept in parsed["concepts"]:
+                                            if not isinstance(concept, dict):
+                                                continue
+                                                
+                                            # Ensure required concept fields
+                                            concept_template = {
+                                                "name": str(concept.get("name", "Unnamed Concept")),
+                                                "type": str(concept.get("type", "concept")),
+                                                "description": str(concept.get("description", "")),
+                                                "related": list(concept.get("related", [])),
+                                                "validation": {
+                                                    "confidence": float(concept.get("validation", {}).get("confidence", 0.5)),
+                                                    "supported_by": list(concept.get("validation", {}).get("supported_by", [])),
+                                                    "contradicted_by": list(concept.get("validation", {}).get("contradicted_by", [])),
+                                                    "needs_verification": list(concept.get("validation", {}).get("needs_verification", []))
+                                                }
+                                            }
+                                            validated_concepts.append(concept_template)
+                                            
+                                        parsed["concepts"] = validated_concepts
+                                    
+                                    return json.dumps(parsed)
+                                    
+                                except (json.JSONDecodeError, ValueError) as e:
+                                    self.logger.warning(f"Error parsing LLM response: {str(e)}")
+                                    self.logger.warning("Attempting to fix response format")
+                                    
+                                    # More robust JSON extraction
+                                    import re
+                                    
+                                    # Clean up common JSON formatting issues
+                                    content = content.replace('\n', ' ').strip()
+                                    
+                                    # Fix JSON structure
+                                    content = re.sub(r'}\s*{', '},{', content)  # Fix adjacent objects
+                                    content = re.sub(r']\s*{', '],{', content)  # Fix array followed by object
+                                    content = re.sub(r'}\s*\[', '},[', content)  # Fix object followed by array
+                                    content = re.sub(r',\s*}', '}', content)  # Remove trailing commas
+                                    content = re.sub(r',\s*]', ']', content)  # Remove trailing commas in arrays
+                                    
+                                    # Fix property names and values
+                                    content = re.sub(r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', content)  # Quote property names
+                                    content = re.sub(r':\s*"([^"]*)"(?=\s*[},])', r':"\1"', content)  # Fix string values
+                                    content = re.sub(r':\s*([^",\s\]}]+)(?=\s*[},])', r':"\1"', content)  # Quote unquoted values
+                                    content = re.sub(r':\s*(\d+\.?\d*)\s*(?=[,}])', r':\1', content)  # Preserve numeric values
+                                    content = re.sub(r':\s*(true|false)\s*(?=[,}])', r':\1', content)  # Preserve boolean values
+                                    
+                                    # Normalize whitespace and structure
+                                    content = re.sub(r'\s+', ' ', content)  # Normalize whitespace
+                                    content = re.sub(r'"\s*,\s*"', '","', content)  # Fix array string spacing
+                                    content = re.sub(r'\[\s*"', '["', content)  # Fix array start spacing
+                                    content = re.sub(r'"\s*\]', '"]', content)  # Fix array end spacing
+                                    content = re.sub(r',\s*([}\]])', r'\1', content)  # Remove trailing commas
+                                    
+                                    # Ensure proper JSON structure
+                                    if not content.startswith('{'):
+                                        content = '{' + content
+                                    if not content.endswith('}'):
+                                        content = content + '}'
+                                    
+                                    try:
+                                        parsed = json.loads(content)
+                                        if isinstance(parsed, dict) and any(key in parsed for key in ["response", "concepts"]):
+                                            return json.dumps(parsed)
+                                    except json.JSONDecodeError:
+                                        self.logger.warning("Could not parse JSON directly, attempting extraction")
+                                        
+                                        # Try to find JSON-like content
+                                        json_pattern = r'(\{(?:[^{}]|(?:\{[^{}]*\}))*\})'
+                                        matches = list(re.finditer(json_pattern, content))
+                                        
+                                        for match in matches:
+                                            try:
+                                                potential_json = match.group(0)
+                                                parsed = json.loads(potential_json)
+                                                if isinstance(parsed, dict) and any(key in parsed for key in ["response", "concepts"]):
+                                                    return json.dumps(parsed)
+                                            except json.JSONDecodeError:
+                                                continue
+                                    
+                                    self.logger.warning("Could not extract valid JSON, using fallback")
+                                    
+                                    # Wrap in proper JSON structure
+                                    return json.dumps({
+                                        "response": content,
+                                        "concepts": [{
+                                            "name": "LLM Response",
+                                            "type": "belief",
+                                            "description": content,
+                                            "related": [],
+                                            "validation": {
+                                                "confidence": 0.5,
+                                                "supported_by": [],
+                                                "contradicted_by": [],
+                                                "needs_verification": ["Response format needs validation"]
+                                            }
+                                        }],
+                                        "key_points": ["LLM provided response"],
+                                        "implications": ["Response needs proper structuring"],
+                                        "uncertainties": ["Response format", "Content structure"],
+                                        "reasoning": ["Attempted to parse LLM output", 
+                                                    "Applied fallback formatting"]
+                                    })
                                 
                         except aiohttp.ClientError as e:
                             if retry < 2:  # Try again if not last attempt
@@ -184,82 +326,6 @@ class LLMInterface:
                                 continue
                             raise  # Re-raise if all retries failed
                             
-                        content = result["choices"][0]["message"]["content"]
-                        self.logger.debug(f"Raw LLM Content: {content}")
-                        
-                        # Try to parse as JSON first
-                        try:
-                            parsed = json.loads(content)
-                            # Validate required fields
-                            required_fields = ["response", "concepts", "key_points", 
-                                            "implications", "uncertainties", "reasoning"]
-                            missing_fields = [f for f in required_fields if f not in parsed]
-                            if missing_fields:
-                                raise ValueError(f"Missing required fields: {missing_fields}")
-                                
-                            # Validate concept structure
-                            for concept in parsed["concepts"]:
-                                required_concept_fields = ["name", "type", "description", 
-                                                        "related", "validation"]
-                                missing_concept_fields = [f for f in required_concept_fields 
-                                                        if f not in concept]
-                                if missing_concept_fields:
-                                    raise ValueError(f"Concept missing fields: {missing_concept_fields}")
-                                    
-                                # Validate validation structure
-                                validation = concept["validation"]
-                                required_validation_fields = ["confidence", "supported_by",
-                                                           "contradicted_by", "needs_verification"]
-                                missing_validation_fields = [f for f in required_validation_fields 
-                                                          if f not in validation]
-                                if missing_validation_fields:
-                                    raise ValueError(f"Validation missing fields: {missing_validation_fields}")
-                            
-                            return json.dumps(parsed)
-                            
-                        except (json.JSONDecodeError, ValueError) as e:
-                            self.logger.warning(f"Error parsing LLM response: {str(e)}")
-                            self.logger.warning("Attempting to fix response format")
-                            
-                            # More robust JSON extraction
-                            import re
-                            
-                            # Try to find JSON-like content with nested structures
-                            json_pattern = r'(\{(?:[^{}]|(?:\{[^{}]*\}))*\}|\[(?:[^\[\]]|(?:\[[^\[\]]*\]))*\])'
-                            json_matches = re.finditer(json_pattern, content)
-                            
-                            # Try each match until we find valid JSON
-                            for match in json_matches:
-                                try:
-                                    potential_json = match.group(0)
-                                    parsed = json.loads(potential_json)
-                                    if isinstance(parsed, dict) and any(key in parsed for key in ["response", "concepts"]):
-                                        content = potential_json
-                                        break
-                                except json.JSONDecodeError:
-                                    continue
-                            
-                            # Wrap in proper JSON structure
-                            return json.dumps({
-                                "response": content,
-                                "concepts": [{
-                                    "name": "LLM Response",
-                                    "type": "belief",
-                                    "description": content,
-                                    "related": [],
-                                    "validation": {
-                                        "confidence": 0.5,
-                                        "supported_by": [],
-                                        "contradicted_by": [],
-                                        "needs_verification": ["Response format needs validation"]
-                                    }
-                                }],
-                                "key_points": ["LLM provided response"],
-                                "implications": ["Response needs proper structuring"],
-                                "uncertainties": ["Response format", "Content structure"],
-                                "reasoning": ["Attempted to parse LLM output", 
-                                            "Applied fallback formatting"]
-                            })
                 except aiohttp.ClientError as e:
                     self.logger.error(f"LMStudio connection error: {str(e)}. Is LMStudio running?")
                     return json.dumps({
@@ -281,6 +347,7 @@ class LLMInterface:
                         "uncertainties": ["LMStudio availability"],
                         "reasoning": ["Connection attempt failed"]
                     })
+                    
         except Exception as e:
             self.logger.error(f"Error making LLM request: {str(e)}")
             return json.dumps({
@@ -344,36 +411,45 @@ class LLMInterface:
                 messages = [
                     {
                         "role": "system",
-                        "content": f"""You are an AI agent specialized in {agent_type} analysis. You must respond with ONLY a JSON object, no other text.
+                        "content": f"""You are an AI agent specialized in {agent_type} analysis. Your response MUST be a single valid JSON object with NO additional text or formatting.
 
-The JSON must follow this EXACT format (do not add any fields or change the structure):
+REQUIRED FORMAT:
 {{
-    "response": "Your main response analyzing the input from a {agent_type} perspective",
+    "response": "Your detailed analysis from a {agent_type} perspective",
     "concepts": [
         {{
-            "name": "Name of an important concept identified",
+            "name": "Concept name (required)",
             "type": "{agent_type}",
-            "description": "Clear description of the concept",
-            "related": ["Related", "Concept", "Terms"],
+            "description": "Clear description (required)",
+            "related": ["Term1", "Term2"],
             "validation": {{
                 "confidence": 0.8,
-                "supported_by": ["Supporting evidence"],
+                "supported_by": ["Evidence1"],
                 "contradicted_by": [],
                 "needs_verification": []
             }}
         }}
     ],
-    "key_points": ["Key insight 1", "Key insight 2"],
-    "implications": ["Implication 1", "Implication 2"],
-    "uncertainties": ["Uncertainty 1", "Uncertainty 2"],
-    "reasoning": ["Reasoning step 1", "Reasoning step 2"]
+    "key_points": ["Key insight 1"],
+    "implications": ["Implication 1"],
+    "uncertainties": ["Uncertainty 1"],
+    "reasoning": ["Reasoning step 1"]
 }}
 
-Remember:
-1. Respond with ONLY the JSON object
-2. No explanation text before or after
-3. Ensure it's valid JSON (use double quotes, no trailing commas)
-4. Keep the exact field names and structure"""
+CRITICAL RULES:
+1. Response MUST be ONLY the JSON object - no markdown, no code blocks
+2. Use DOUBLE QUOTES for ALL strings and property names
+3. NO trailing commas after last item in arrays/objects
+4. ALL property names must match exactly as shown
+5. ALL arrays and objects must be properly closed
+6. Concepts array MUST contain at least one concept
+7. ALL fields shown are required - do not omit any
+8. ALL arrays must contain at least one item
+9. Validation object is required for each concept with exact structure shown
+10. Numbers must be raw numeric values without quotes (e.g. confidence: 0.8 not "0.8")
+11. Boolean values must be raw true/false without quotes
+12. Arrays must use square brackets even for single items
+13. Validation confidence must be between 0.0 and 1.0"""
                     },
                     {
                         "role": "user",

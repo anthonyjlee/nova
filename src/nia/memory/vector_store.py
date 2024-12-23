@@ -134,15 +134,6 @@ class VectorStore:
                     )
                 )
             
-            # Add type filter for semantic layer
-            if layer == "semantic":
-                filter_conditions.append(
-                    models.FieldCondition(
-                        key="metadata.type",
-                        match=models.MatchValue(value="consolidation")
-                    )
-                )
-            
             # Create filter if conditions exist
             search_filter = None
             if filter_conditions:
