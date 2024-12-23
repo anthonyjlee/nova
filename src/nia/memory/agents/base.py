@@ -41,12 +41,27 @@ class BaseAgent:
             Formatted prompt string
         """
         # Extract content from dictionary
-        content_str = content.get('content', '')
-        if isinstance(content_str, dict):
-            content_str = content_str.get('content', '')
-        
+        if not content:
+            content_str = ""
+        elif isinstance(content, str):
+            content_str = content
+        elif isinstance(content, dict):
+            # Handle nested content
+            if 'content' in content:
+                content_str = content['content']
+                if isinstance(content_str, dict) and 'content' in content_str:
+                    content_str = content_str['content']
+                elif isinstance(content_str, str):
+                    content_str = content_str.strip()
+                else:
+                    content_str = str(content_str)
+            else:
+                content_str = str(content)
+        else:
+            content_str = str(content)
+            
         # Format prompt template
-        return self.prompt_template.format(content=content_str)
+        return self.prompt_template.format(content=content_str.strip())
     
     async def process(
         self,
@@ -63,31 +78,106 @@ class BaseAgent:
             Agent response
         """
         try:
-            # Get structured completion
+            # Format prompt and get structured completion
+            prompt = self._format_prompt(content)
+            logger.debug(f"Formatted prompt: {prompt}")
+            
             response = await self.llm.get_structured_completion(
-                self._format_prompt(content),
+                prompt,
                 agent_type=self.agent_type,
                 metadata=metadata
             )
+            logger.debug(f"LLM response: {response}")
             
-            # Add agent perspective
+            # Add agent perspective and dialogue context
             response.perspective = self.agent_type
+            if self.current_dialogue:
+                response.dialogue_context = self.current_dialogue
+                
+                # Add message to dialogue
+                await self.provide_insight(
+                    content=response.response,
+                    references=[c["name"] for c in response.concepts]
+                )
+            
+            # Add metadata if provided
+            if metadata:
+                if not response.metadata:
+                    response.metadata = {}
+                response.metadata.update(metadata)
             
             return response
             
         except Exception as e:
-            logger.error(f"Error in {self.agent_type} agent: {str(e)}")
-            return AgentResponse(
-                response=str(e),
-                concepts=[],
-                key_points=[],
-                implications=[],
-                uncertainties=[],
-                reasoning=[],
-                perspective=self.agent_type,
-                confidence=0.0,
-                timestamp=datetime.now()
-            )
+            error_msg = f"Error in {self.agent_type} agent: {str(e)}"
+            logger.error(error_msg)
+            
+            # If using mock mode, return mock response
+            if hasattr(self.llm, 'use_mock') and self.llm.use_mock:
+                concept = self.llm._get_mock_concept(self.agent_type)
+                mock_concept = {
+                    "name": concept["name"],
+                    "type": concept["type"],
+                    "description": concept["description"],
+                    "related": concept["related"],
+                    "validation": {
+                        "confidence": 0.8,
+                        "supported_by": ["Evidence 1"],
+                        "contradicted_by": [],
+                        "needs_verification": []
+                    }
+                }
+                
+                return AgentResponse(
+                    response=f"Mock {self.agent_type} response",
+                    concepts=[mock_concept],
+                    key_points=["Mock key point"],
+                    implications=["Mock implication"],
+                    uncertainties=["Mock uncertainty"],
+                    reasoning=["Mock reasoning step"],
+                    perspective=self.agent_type,
+                    confidence=0.8,
+                    timestamp=datetime.now()
+                )
+            else:
+                # Create error response with appropriate concept type
+                concept_types = {
+                    "belief": "belief",
+                    "emotion": "emotion",
+                    "desire": "goal",
+                    "reflection": "pattern",
+                    "research": "knowledge",
+                    "task": "task",
+                    "dialogue": "interaction",
+                    "context": "context",
+                    "parsing": "pattern",
+                    "meta": "synthesis"
+                }
+                
+                error_concept = {
+                    "name": "Error",
+                    "type": concept_types.get(self.agent_type, "error"),
+                    "description": error_msg,
+                    "related": [],
+                    "validation": {
+                        "confidence": 0.0,
+                        "supported_by": [],
+                        "contradicted_by": [],
+                        "needs_verification": []
+                    }
+                }
+                
+                return AgentResponse(
+                    response=error_msg,
+                    concepts=[error_concept],
+                    key_points=["Error occurred during processing"],
+                    implications=["System may need attention"],
+                    uncertainties=["Root cause needs investigation"],
+                    reasoning=["Error handling activated"],
+                    perspective=self.agent_type,
+                    confidence=0.0,
+                    timestamp=datetime.now()
+                )
     
     async def provide_insight(
         self,
