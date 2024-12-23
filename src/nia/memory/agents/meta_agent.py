@@ -3,7 +3,7 @@
 import logging
 from typing import Dict, Any, Optional, TYPE_CHECKING
 from datetime import datetime, timedelta
-from ..memory_types import AgentResponse
+from ..memory_types import AgentResponse, DialogueContext
 from .base import BaseAgent
 
 if TYPE_CHECKING:
@@ -35,7 +35,6 @@ class MetaAgent(BaseAgent):
         self.task_planner_agent = agents.get('task_planner')
         
         # Initialize dialogue context
-        from ..memory_types import DialogueContext
         self.current_dialogue = DialogueContext(
             topic="Meta Dialogue",
             status="active"
@@ -219,7 +218,33 @@ Return ONLY the JSON object, no other text."""
                 confidence=0.0,
                 timestamp=datetime.now()
             )
-    
+            
+    async def cleanup(self) -> None:
+        """Clean up resources."""
+        try:
+            # Clear vector store
+            await self.vector_store.clear_vectors(layer="episodic")
+            await self.vector_store.clear_vectors(layer="semantic")
+            
+            # Clear Neo4j store
+            await self.store.clear_concepts()
+            await self.store.clear_relationships()
+            
+            # Reset consolidation timer
+            self.last_consolidation = datetime.now()
+            
+            # Clear dialogue context
+            self.current_dialogue = DialogueContext(
+                topic="Meta Dialogue",
+                status="active"
+            )
+            
+            logger.info("Cleanup complete")
+            
+        except Exception as e:
+            logger.error(f"Error during cleanup: {str(e)}")
+            raise
+
     async def process_interaction(
         self,
         content: str,
