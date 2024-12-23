@@ -12,7 +12,28 @@ logger = logging.getLogger(__name__)
 
 @pytest.fixture
 def use_mock(request):
-    return request.config.getoption("use_mock")
+    """Fixture to control mock vs real LMStudio usage.
+    
+    Add --use-mock flag to pytest command to use mocks instead of real LMStudio.
+    Default is to use real LMStudio for integration testing.
+    """
+    return request.config.getoption("--use-mock", default=False)
+
+@pytest.fixture
+def lmstudio_available():
+    """Check if LMStudio is available."""
+    import aiohttp
+    import asyncio
+    
+    async def check_lmstudio():
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get("http://localhost:1234/v1/models") as response:
+                    return response.status == 200
+        except:
+            return False
+    
+    return asyncio.run(check_lmstudio())
 
 from nia.memory.memory_types import AgentResponse, Memory
 from nia.memory.agents.belief_agent import BeliefAgent
@@ -70,10 +91,11 @@ def setup_test_llm(use_mock: bool = False):
     llm.initialize_parser(store, vector_store)
     return llm, store, vector_store
 
+@pytest.mark.requires_lmstudio
 @pytest.mark.asyncio
-async def test_memory_system_separation():
+async def test_memory_system_separation(use_mock):
     """Test clean separation between memories and concepts."""
-    llm, store, vector_store = setup_test_llm()
+    llm, store, vector_store = setup_test_llm(use_mock=use_mock)
     memory_system = MemorySystem(llm, store, vector_store)
     
     # Process interaction
@@ -93,10 +115,11 @@ async def test_memory_system_separation():
         assert "description" in concept
         assert "related" in concept
 
+@pytest.mark.requires_lmstudio
 @pytest.mark.asyncio
-async def test_memory_consolidation():
+async def test_memory_consolidation(use_mock):
     """Test memory consolidation and concept extraction."""
-    llm, store, vector_store = setup_test_llm()
+    llm, store, vector_store = setup_test_llm(use_mock=use_mock)
     memory_system = MemorySystem(llm, store, vector_store)
     
     # Store multiple memories
@@ -118,7 +141,7 @@ async def test_memory_consolidation():
     assert any(m.get("type") == "consolidation" for m in semantic_memories)
 
 @pytest.mark.asyncio
-async def test_belief_agent_response(use_mock, capfd):
+async def test_belief_agent_response(use_mock, lmstudio_available, capfd):
     """Test belief agent response structure and content."""
     llm, store, vector_store = setup_test_llm(use_mock=use_mock)
     belief_agent = BeliefAgent(llm, store, vector_store)
@@ -174,10 +197,11 @@ async def test_belief_agent_response(use_mock, capfd):
         assert "contradicted_by" in validation, "Validation missing contradicted_by field"
         assert "needs_verification" in validation, "Validation missing needs_verification field"
 
+@pytest.mark.requires_lmstudio
 @pytest.mark.asyncio
-async def test_emotion_agent_response():
+async def test_emotion_agent_response(use_mock):
     """Test emotion agent response structure and content."""
-    llm, store, vector_store = setup_test_llm()
+    llm, store, vector_store = setup_test_llm(use_mock=use_mock)
     emotion_agent = EmotionAgent(llm, store, vector_store)
     
     response = await emotion_agent.process(TEST_CONTENT)
@@ -227,10 +251,11 @@ async def test_emotion_agent_response():
                       for field in concept["description"].split()), \
                 "Emotion description should include intensity/strength/valence"
 
+@pytest.mark.requires_lmstudio
 @pytest.mark.asyncio
-async def test_desire_agent_response():
+async def test_desire_agent_response(use_mock):
     """Test desire agent response structure and content."""
-    llm, store, vector_store = setup_test_llm()
+    llm, store, vector_store = setup_test_llm(use_mock=use_mock)
     desire_agent = DesireAgent(llm, store, vector_store)
     
     response = await desire_agent.process(TEST_CONTENT)
@@ -251,10 +276,11 @@ async def test_desire_agent_response():
     for concept in response.concepts:
         assert concept["type"] in valid_types
 
+@pytest.mark.requires_lmstudio
 @pytest.mark.asyncio
-async def test_reflection_agent_response():
+async def test_reflection_agent_response(use_mock):
     """Test reflection agent response structure and content."""
-    llm, store, vector_store = setup_test_llm()
+    llm, store, vector_store = setup_test_llm(use_mock=use_mock)
     reflection_agent = ReflectionAgent(llm, store, vector_store)
     
     response = await reflection_agent.process(TEST_CONTENT)
@@ -275,10 +301,11 @@ async def test_reflection_agent_response():
     for concept in response.concepts:
         assert concept["type"] in valid_types
 
+@pytest.mark.requires_lmstudio
 @pytest.mark.asyncio
-async def test_research_agent_response():
+async def test_research_agent_response(use_mock):
     """Test research agent response structure and content."""
-    llm, store, vector_store = setup_test_llm()
+    llm, store, vector_store = setup_test_llm(use_mock=use_mock)
     research_agent = ResearchAgent(llm, store, vector_store)
     
     response = await research_agent.process(TEST_CONTENT)
@@ -299,10 +326,11 @@ async def test_research_agent_response():
     for concept in response.concepts:
         assert concept["type"] in valid_types
 
+@pytest.mark.requires_lmstudio
 @pytest.mark.asyncio
-async def test_task_agent_response():
+async def test_task_agent_response(use_mock):
     """Test task agent response structure and content."""
-    llm, store, vector_store = setup_test_llm()
+    llm, store, vector_store = setup_test_llm(use_mock=use_mock)
     task_agent = TaskAgent(llm, store, vector_store)
     
     response = await task_agent.process(TEST_CONTENT)
@@ -323,10 +351,11 @@ async def test_task_agent_response():
     for concept in response.concepts:
         assert concept["type"] in valid_types
 
+@pytest.mark.requires_lmstudio
 @pytest.mark.asyncio
-async def test_dialogue_agent_response():
+async def test_dialogue_agent_response(use_mock):
     """Test dialogue agent response structure and content."""
-    llm, store, vector_store = setup_test_llm()
+    llm, store, vector_store = setup_test_llm(use_mock=use_mock)
     dialogue_agent = DialogueAgent(llm, store, vector_store)
     
     response = await dialogue_agent.process(TEST_CONTENT)
@@ -347,10 +376,11 @@ async def test_dialogue_agent_response():
     for concept in response.concepts:
         assert concept["type"] in valid_types
 
+@pytest.mark.requires_lmstudio
 @pytest.mark.asyncio
-async def test_context_agent_response():
+async def test_context_agent_response(use_mock):
     """Test context agent response structure and content."""
-    llm, store, vector_store = setup_test_llm()
+    llm, store, vector_store = setup_test_llm(use_mock=use_mock)
     context_agent = ContextAgent(llm, store, vector_store)
     
     response = await context_agent.process(TEST_CONTENT)
@@ -371,10 +401,11 @@ async def test_context_agent_response():
     for concept in response.concepts:
         assert concept["type"] in valid_types
 
+@pytest.mark.requires_lmstudio
 @pytest.mark.asyncio
-async def test_meta_agent_synthesis():
+async def test_meta_agent_synthesis(use_mock):
     """Test meta agent synthesis capabilities."""
-    llm, store, vector_store = setup_test_llm()
+    llm, store, vector_store = setup_test_llm(use_mock=use_mock)
     meta_agent = MetaAgent(llm, store, vector_store)
     
     # Create mock agent responses
@@ -438,8 +469,9 @@ async def test_meta_agent_synthesis():
     assert len(synthesis.uncertainties) > 0
     assert len(synthesis.reasoning) > 0
 
+@pytest.mark.requires_lmstudio
 @pytest.mark.asyncio
-async def test_memory_search():
+async def test_memory_search(use_mock):
     """Test memory search across layers."""
     llm, store, vector_store = setup_test_llm()
     memory_system = MemorySystem(llm, store, vector_store)
@@ -471,9 +503,11 @@ async def test_memory_search():
     assert all(m["layer"] == "semantic" for m in semantic_only)
 
 @pytest.mark.asyncio
-async def test_parsing_agent_response():
+@pytest.mark.requires_lmstudio
+@pytest.mark.asyncio
+async def test_parsing_agent_response(use_mock):
     """Test parsing agent response structure and content."""
-    llm, store, vector_store = setup_test_llm()
+    llm, store, vector_store = setup_test_llm(use_mock=use_mock)
     parsing_agent = ParsingAgent(llm, store, vector_store)
     
     test_response = """

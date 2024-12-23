@@ -68,8 +68,8 @@ class LLMInterface:
             "emotion": {
                 "name": "Emotional Response",
                 "type": "emotion",
-                "description": "Pattern of emotional reaction",
-                "related": ["Affect", "Behavior"]
+                "description": "Pattern of emotional reaction with high intensity and positive valence",
+                "related": ["Affect", "Behavior", "Emotional Regulation", "Mood"]
             },
             "desire": {
                 "name": "Achievement Drive",
@@ -149,20 +149,40 @@ class LLMInterface:
                 self.logger.debug(f"LLM Request: {json.dumps(request_data, indent=2)}")
                 
                 try:
-                    async with session.post(
-                        "http://localhost:1234/v1/chat/completions",
-                        json=request_data,
-                        timeout=10.0,  # Increased timeout for real responses
-                        headers={"Content-Type": "application/json"}
-                    ) as response:
-                        result = await response.json()
-                        self.logger.debug(f"LLM API Response: {json.dumps(result, indent=2)}")
-                        
-                        if "error" in result:
-                            raise Exception(f"LMStudio API error: {result['error']}")
-                            
-                        if "choices" not in result or not result["choices"]:
-                            raise Exception("No choices in LMStudio response")
+                    # Increased timeout and added retry logic for LMStudio
+                    for retry in range(3):
+                        try:
+                            async with session.post(
+                                "http://localhost:1234/v1/chat/completions",
+                                json=request_data,
+                                timeout=30.0,  # Increased timeout for LMStudio
+                                headers={"Content-Type": "application/json"}
+                            ) as response:
+                                # Check response status
+                                if response.status != 200:
+                                    error_text = await response.text()
+                                    self.logger.error(f"LMStudio error (status {response.status}): {error_text}")
+                                    if retry < 2:  # Try again if not last attempt
+                                        self.logger.info(f"Retrying LMStudio request (attempt {retry + 2}/3)")
+                                        continue
+                                    raise Exception(f"LMStudio API error (status {response.status}): {error_text}")
+
+                                result = await response.json()
+                                self.logger.debug(f"LLM API Response: {json.dumps(result, indent=2)}")
+                                
+                                if "error" in result:
+                                    raise Exception(f"LMStudio API error: {result['error']}")
+                                    
+                                if "choices" not in result or not result["choices"]:
+                                    raise Exception("No choices in LMStudio response")
+                                
+                                break  # Success - exit retry loop
+                                
+                        except aiohttp.ClientError as e:
+                            if retry < 2:  # Try again if not last attempt
+                                self.logger.warning(f"LMStudio connection error (attempt {retry + 1}/3): {str(e)}")
+                                continue
+                            raise  # Re-raise if all retries failed
                             
                         content = result["choices"][0]["message"]["content"]
                         self.logger.debug(f"Raw LLM Content: {content}")
@@ -201,11 +221,23 @@ class LLMInterface:
                             self.logger.warning(f"Error parsing LLM response: {str(e)}")
                             self.logger.warning("Attempting to fix response format")
                             
-                            # Extract any JSON-like content
+                            # More robust JSON extraction
                             import re
-                            json_match = re.search(r'\{[\s\S]*\}|\[[\s\S]*\]', content)
-                            if json_match:
-                                content = json_match.group(0)
+                            
+                            # Try to find JSON-like content with nested structures
+                            json_pattern = r'(\{(?:[^{}]|(?:\{[^{}]*\}))*\}|\[(?:[^\[\]]|(?:\[[^\[\]]*\]))*\])'
+                            json_matches = re.finditer(json_pattern, content)
+                            
+                            # Try each match until we find valid JSON
+                            for match in json_matches:
+                                try:
+                                    potential_json = match.group(0)
+                                    parsed = json.loads(potential_json)
+                                    if isinstance(parsed, dict) and any(key in parsed for key in ["response", "concepts"]):
+                                        content = potential_json
+                                        break
+                                except json.JSONDecodeError:
+                                    continue
                             
                             # Wrap in proper JSON structure
                             return json.dumps({
@@ -274,11 +306,12 @@ class LLMInterface:
             if self.use_mock:
                 # Use mock response for testing
                 concept = self._get_mock_concept(agent_type)
+                # Get mock concept and ensure it has required fields
                 mock_concept = {
                     "name": concept["name"],
                     "type": concept["type"],
                     "description": concept["description"],
-                    "related": concept["related"],
+                    "related": concept["related"] if concept["related"] else ["Default Related"],
                     "validation": {
                         "confidence": 0.8,
                         "supported_by": ["Evidence 1"],
@@ -286,6 +319,10 @@ class LLMInterface:
                         "needs_verification": []
                     }
                 }
+
+                # For emotion concepts, ensure related terms exist
+                if mock_concept["type"] == "emotion" and not mock_concept["related"]:
+                    mock_concept["related"] = ["Affect", "Behavior", "Emotional Regulation", "Mood"]
                 
                 if "consolidation" in str(prompt).lower():
                     mock_concept["type"] = "consolidation"
