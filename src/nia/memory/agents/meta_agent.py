@@ -247,14 +247,14 @@ Return ONLY the JSON object, no other text."""
 
     async def process_interaction(
         self,
-        content: str,
+        text: str,
         metadata: Optional[Dict] = None
     ) -> AgentResponse:
         """Process interaction through meta agent."""
         try:
             # Create content dict
             content_dict = {
-                'content': {'content': content},
+                'content': {'content': text},
                 'dialogue_context': self.current_dialogue,
                 'agent_responses': {}
             }
