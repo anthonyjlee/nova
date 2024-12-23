@@ -131,7 +131,8 @@ class MemorySystem:
             for group_type, memories in groups.items():
                 # Extract content
                 content = "\n".join([
-                    m.get("content", "")
+                    m.get("content", {}).get("content", "") if isinstance(m.get("content"), dict)
+                    else str(m.get("content", ""))
                     for m in memories
                 ])
                 
@@ -168,20 +169,34 @@ class MemorySystem:
                 })
                 
                 # Store consolidated memory
+                memory_id = str(uuid.uuid4())
+                timestamp = datetime.now()
+                
+                # Create memory content with consolidation type
+                memory_content = {
+                    'content': truncate_content(content),
+                    'synthesis': synthesis.dict(),
+                    'original_memories': [m.get('id') for m in memories],
+                    'timestamp': timestamp,
+                    'type': 'consolidation',  # Explicitly set type
+                    'id': memory_id,
+                    'group_type': group_type
+                }
+                
+                # Create metadata with consolidation type
+                memory_metadata = {
+                    'id': memory_id,
+                    'type': 'consolidation',  # Explicitly set type
+                    'group_type': group_type,
+                    'original_count': len(memories),
+                    'layer': 'semantic',
+                    'timestamp': timestamp
+                }
+                
+                # Store in vector store
                 await self.vector_store.store_vector(
-                    content=serialize_datetime({
-                        'content': truncate_content(content),
-                        'synthesis': synthesis.dict(),
-                        'original_memories': [m.get('id') for m in memories],
-                        'timestamp': datetime.now(),
-                        'type': 'consolidation'
-                    }),
-                    metadata=serialize_datetime({
-                        'id': str(uuid.uuid4()),
-                        'type': 'consolidation',
-                        'group_type': group_type,
-                        'original_count': len(memories)
-                    }),
+                    content=serialize_datetime(memory_content),
+                    metadata=serialize_datetime(memory_metadata),
                     layer="semantic"
                 )
                 
@@ -247,11 +262,13 @@ class MemorySystem:
                 content=serialize_datetime({
                     'content': truncate_content(content),
                     'timestamp': timestamp,
-                    'type': 'interaction'
+                    'type': 'interaction',
+                    'layer': 'episodic'  # Explicitly set layer in content
                 }),
                 metadata=serialize_datetime({
                     'id': memory_id,
                     'type': 'interaction',
+                    'layer': 'episodic',  # Explicitly set layer in metadata
                     **(metadata or {})
                 }),
                 layer="episodic"
@@ -310,12 +327,14 @@ class MemorySystem:
                     'similar_memories': similar_memories,
                     'response': response.dict(),
                     'timestamp': datetime.now(),
-                    'type': 'processed_memory'
+                    'type': 'processed_memory',
+                    'layer': 'semantic'  # Explicitly set layer in content
                 }),
                 metadata=serialize_datetime({
                     'id': str(uuid.uuid4()),
                     'type': 'processed_memory',
                     'original_memory_id': memory_id,
+                    'layer': 'semantic',  # Explicitly set layer in metadata
                     **(metadata or {})
                 }),
                 layer="semantic"
@@ -371,8 +390,11 @@ class MemorySystem:
                 semantic = await self.vector_store.search_vectors(
                     content=query,
                     limit=limit,
-                    layer="semantic"
+                    layer="semantic",
+                    include_metadata=True  # Ensure metadata is included
                 )
+                # Filter out non-semantic memories
+                semantic = [m for m in semantic if m.get("layer") == "semantic"]
                 results.extend(semantic)
             
             # Sort by relevance

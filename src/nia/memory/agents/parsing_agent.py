@@ -72,12 +72,20 @@ def _extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
             logger.warning("Invalid text input for JSON extraction")
             return None
             
+        # Try direct JSON parsing first
+        try:
+            # Remove any leading/trailing quotes and escape characters
+            text = text.strip().strip("'").strip('"')
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+            
         # Clean up text
         text = _clean_json_text(text)
         
         # Try multiple parsing strategies
         strategies = [
-            # Strategy 1: Direct JSON parsing
+            # Strategy 1: Direct JSON parsing after cleaning
             lambda t: json.loads(t),
             
             # Strategy 2: Extract JSON object using regex
@@ -391,38 +399,176 @@ Return ONLY the JSON object, no other text."""
                     timestamp=datetime.now()
                 )
             
-            # Try to extract structured content
-            structured = _extract_structured_content(text)
-            
-            # If extraction failed and structure agent is available, try structure analysis
-            if (not structured or not structured.get("response")) and self.structure_agent:
+            # Try to parse as JSON first
+            try:
+                # Remove any leading/trailing quotes and escape characters
+                text = text.strip().strip("'").strip('"').strip()
+                
+                # Try direct JSON parsing
                 try:
-                    structure_response = await self.structure_agent.analyze_structure(text)
-                    if isinstance(structure_response, AgentResponse):
-                        structured = {
-                            "response": structure_response.response,
-                            "concepts": structure_response.concepts,
-                            "key_points": structure_response.key_points,
-                            "implications": structure_response.implications,
-                            "uncertainties": structure_response.uncertainties,
-                            "reasoning": structure_response.reasoning
-                        }
-                except Exception as e:
-                    logger.error(f"Error using structure agent: {str(e)}")
-            
-            # If still no structure, try LLM
-            if not structured or not structured.get("response"):
-                try:
-                    structured_text = await self.llm.get_completion(
-                        self._format_prompt({'content': text})
+                    logger.debug(f"Attempting to parse text: {text}")
+                    if "LMStudio is not running" in text or "Error in belief agent" in text:
+                        return AgentResponse(
+                            response="LMStudio is not running or not accessible",
+                            concepts=[{
+                                "name": "LMStudio Error",
+                                "type": "error",
+                                "description": "Could not connect to LMStudio API",
+                                "related": [],
+                                "validation": {
+                                    "confidence": 0.0,
+                                    "supported_by": [],
+                                    "contradicted_by": [],
+                                    "needs_verification": []
+                                }
+                            }],
+                            key_points=["LMStudio connection failed"],
+                            implications=["System cannot process requests"],
+                            uncertainties=["LMStudio availability"],
+                            reasoning=["Connection attempt failed"],
+                            perspective="parsing",
+                            confidence=0.0,
+                            timestamp=datetime.now()
+                        )
+                    structured = json.loads(text)
+                except json.JSONDecodeError as e:
+                    logger.debug(f"Initial JSON parse failed: {e}")
+                    # Try cleaning the text first
+                    text = _clean_json_text(text)
+                    logger.debug(f"Cleaned text: {text}")
+                    structured = json.loads(text)
+                if isinstance(structured, dict):
+                    # Validate all fields
+                    response = structured.get("response", "")
+                    concepts = [
+                        _ensure_valid_concept(c)
+                        for c in structured.get("concepts", [])
+                        if isinstance(c, dict)
+                    ]
+                    key_points = [
+                        str(p) for p in structured.get("key_points", [])
+                        if p and isinstance(p, (str, int, float))
+                    ]
+                    implications = [
+                        str(i) for i in structured.get("implications", [])
+                        if i and isinstance(i, (str, int, float))
+                    ]
+                    uncertainties = [
+                        str(u) for u in structured.get("uncertainties", [])
+                        if u and isinstance(u, (str, int, float))
+                    ]
+                    reasoning = [
+                        str(r) for r in structured.get("reasoning", [])
+                        if r and isinstance(r, (str, int, float))
+                    ]
+                    
+                    # Calculate confidence based on content quality
+                    confidence = min(1.0, max(0.1, (
+                        (0.3 if concepts else 0.0) +
+                        (0.2 if key_points else 0.0) +
+                        (0.2 if implications else 0.0) +
+                        (0.15 if uncertainties else 0.0) +
+                        (0.15 if reasoning else 0.0)
+                    )))
+                    
+                    return AgentResponse(
+                        response=response,
+                        concepts=concepts,
+                        key_points=key_points or ["No key points extracted"],
+                        implications=implications or ["No implications found"],
+                        uncertainties=uncertainties or ["No uncertainties identified"],
+                        reasoning=reasoning or ["No reasoning steps recorded"],
+                        perspective="parsing",
+                        confidence=confidence,
+                        timestamp=datetime.now()
                     )
-                    if isinstance(structured_text, dict):
-                        structured = structured_text
-                    else:
-                        structured = _extract_structured_content(structured_text)
-                except Exception as e:
-                    logger.error(f"Error getting LLM completion: {str(e)}")
-                    structured = None
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.warning(f"Failed to parse JSON: {str(e)}")
+                
+                # Try to extract concepts from the text
+                concepts = []
+                if "[" in text and "]" in text:
+                    try:
+                        # Extract text between first [ and last ]
+                        concept_text = text[text.find("["):text.rfind("]")+1]
+                        # Fix JSON formatting issues
+                        concept_text = concept_text.replace("'", '"')
+                        concept_text = re.sub(r'(\w+):', r'"\1":', concept_text)
+                        concept_text = re.sub(r',\s*([}\]])', r'\1', concept_text)
+                        concept_text = re.sub(r'"\s*"', '", "', concept_text)
+                        # Parse as JSON
+                        concept_data = json.loads(concept_text)
+                        if isinstance(concept_data, list):
+                            concepts = [
+                                _ensure_valid_concept(c)
+                                for c in concept_data
+                                if isinstance(c, dict)
+                            ]
+                    except Exception as e:
+                        logger.warning(f"Failed to extract concepts: {str(e)}")
+                        
+                # Try to extract sections using patterns
+                key_points = []
+                implications = []
+                uncertainties = []
+                reasoning = []
+                
+                # Extract key points
+                if "Key points:" in text:
+                    points_text = text[text.find("Key points:"):].split("\n")
+                    for line in points_text[1:]:
+                        if line.strip().startswith("-"):
+                            key_points.append(line.strip("- ").strip())
+                        elif line.strip() and not any(s in line for s in ["Implications:", "Uncertainties:", "Reasoning:"]):
+                            key_points.append(line.strip())
+                        elif any(s in line for s in ["Implications:", "Uncertainties:", "Reasoning:"]):
+                            break
+                
+                # Extract implications
+                if "Implications:" in text:
+                    impl_text = text[text.find("Implications:"):].split("\n")
+                    for line in impl_text[1:]:
+                        if line.strip().startswith("-"):
+                            implications.append(line.strip("- ").strip())
+                        elif line.strip() and not any(s in line for s in ["Uncertainties:", "Reasoning:"]):
+                            implications.append(line.strip())
+                        elif any(s in line for s in ["Uncertainties:", "Reasoning:"]):
+                            break
+                
+                # Extract uncertainties
+                if "Uncertainties:" in text:
+                    uncert_text = text[text.find("Uncertainties:"):].split("\n")
+                    for line in uncert_text[1:]:
+                        if line.strip().startswith("-"):
+                            uncertainties.append(line.strip("- ").strip())
+                        elif line.strip() and not any(s in line for s in ["Reasoning:"]):
+                            uncertainties.append(line.strip())
+                        elif "Reasoning:" in line:
+                            break
+                
+                # Extract reasoning
+                if "Reasoning:" in text:
+                    reason_text = text[text.find("Reasoning:"):].split("\n")
+                    for line in reason_text[1:]:
+                        if line.strip().startswith("1.") or line.strip().startswith("2."):
+                            reasoning.append(line.strip("12. ").strip())
+                        elif line.strip():
+                            reasoning.append(line.strip())
+                
+                return AgentResponse(
+                    response=text,
+                    concepts=concepts,
+                    key_points=key_points or ["No key points extracted"],
+                    implications=implications or ["No implications found"],
+                    uncertainties=uncertainties or ["No uncertainties identified"],
+                    reasoning=reasoning or ["No reasoning steps recorded"],
+                    perspective="parsing",
+                    confidence=0.1,
+                    timestamp=datetime.now()
+                )
+            
+            # If JSON parsing failed, try pattern matching
+            structured = _extract_structured_content(text)
             
             # If still no structure, create minimal response
             if not structured:

@@ -123,16 +123,30 @@ class VectorStore:
             embedding = await self.embedding_service.get_embedding(content_str)
             
             # Build search filter
-            search_filter = None
+            filter_conditions = []
+            
+            # Add layer filter
             if layer:
-                search_filter = models.Filter(
-                    must=[
-                        models.FieldCondition(
-                            key="layer",
-                            match=models.MatchValue(value=layer)
-                        )
-                    ]
+                filter_conditions.append(
+                    models.FieldCondition(
+                        key="layer",
+                        match=models.MatchValue(value=layer)
+                    )
                 )
+            
+            # Add type filter for semantic layer
+            if layer == "semantic":
+                filter_conditions.append(
+                    models.FieldCondition(
+                        key="metadata.type",
+                        match=models.MatchValue(value="consolidation")
+                    )
+                )
+            
+            # Create filter if conditions exist
+            search_filter = None
+            if filter_conditions:
+                search_filter = models.Filter(must=filter_conditions)
             
             # Search in Qdrant
             results = self.client.search(
@@ -146,14 +160,28 @@ class VectorStore:
             # Format results
             memories = []
             for result in results:
+                # Extract content and metadata
+                content = result.payload["content"]
+                metadata = result.payload.get("metadata", {})
+                
+                # Create memory with all fields
                 memory = {
-                    "content": result.payload["content"],
-                    "score": result.score
+                    "content": content,
+                    "score": result.score,
+                    "type": (
+                        metadata.get("type") or  # First try metadata
+                        (content.get("type") if isinstance(content, dict) else None) or  # Then content
+                        "unknown"  # Default
+                    ),
+                    "id": metadata.get("id") or str(uuid.uuid4()),
+                    "layer": result.payload.get("layer", "unknown"),
+                    "timestamp": result.payload.get("timestamp")
                 }
+                
+                # Include full metadata if requested
                 if include_metadata:
-                    memory["metadata"] = result.payload.get("metadata", {})
-                    memory["layer"] = result.payload.get("layer", "unknown")
-                    memory["timestamp"] = result.payload.get("timestamp")
+                    memory["metadata"] = metadata
+                
                 memories.append(memory)
             
             return memories

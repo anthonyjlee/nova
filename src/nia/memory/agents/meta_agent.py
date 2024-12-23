@@ -24,7 +24,26 @@ class MetaAgent(BaseAgent):
     ):
         """Initialize meta agent."""
         super().__init__(llm, store, vector_store, agent_type="meta")
-        self.current_dialogue = None
+        
+        # Initialize sub-agents
+        from .belief_agent import BeliefAgent
+        from .desire_agent import DesireAgent
+        from .emotion_agent import EmotionAgent
+        from .reflection_agent import ReflectionAgent
+        from .research_agent import ResearchAgent
+        
+        self.belief_agent = BeliefAgent(llm, store, vector_store)
+        self.desire_agent = DesireAgent(llm, store, vector_store)
+        self.emotion_agent = EmotionAgent(llm, store, vector_store)
+        self.reflection_agent = ReflectionAgent(llm, store, vector_store)
+        self.research_agent = ResearchAgent(llm, store, vector_store)
+        
+        # Initialize dialogue context
+        from ..memory_types import DialogueContext
+        self.current_dialogue = DialogueContext(
+            topic="Meta Dialogue",
+            status="active"
+        )
     
     def _format_prompt(self, content: Dict[str, Any]) -> str:
         """Format prompt for LLM."""
@@ -33,50 +52,61 @@ class MetaAgent(BaseAgent):
         responses = content.get('agent_responses', {})
         dialogue = content.get('dialogue_context')
         
-        # Format agent responses
-        response_text = '\n\n'.join([
-            f"{agent_type.capitalize()} Agent Response:\n{response.response}\n"
-            f"Concepts: {response.concepts}\n"
-            f"Key Points: {response.key_points}\n"
-            f"Implications: {response.implications}"
-            for agent_type, response in responses.items()
-        ])
+        # Format agent responses with clear separation
+        response_text = []
+        for agent_type, response in responses.items():
+            response_text.append(
+                f"{agent_type.capitalize()} Agent Perspective:\n"
+                f"Response: {response.response}\n"
+                f"Main Concepts: {[c['name'] for c in response.concepts]}\n"
+                f"Key Insights: {response.key_points}\n"
+                f"Implications: {response.implications}\n"
+                f"Uncertainties: {response.uncertainties}\n"
+                "---"
+            )
         
         # Format dialogue context if available
         dialogue_text = ""
         if dialogue:
-            dialogue_text = "\nDialogue Context:\n" + "\n".join([
+            dialogue_text = "\nPrevious Dialogue Context:\n" + "\n".join([
                 f"{m.agent_type}: {m.content}"
                 for m in dialogue.messages
             ])
         
         # Format prompt
-        prompt = f"""Synthesize the following agent responses into a coherent dialogue.
+        prompt = f"""Analyze and synthesize multiple agent perspectives into a unified understanding.
 
-Content:
+Original Content:
 {text}
 
-Agent Responses:
-{response_text}
+Agent Perspectives:
+{'\n'.join(response_text)}
 
 {dialogue_text}
 
+Analysis Guidelines:
+1. Identify common themes and patterns across agent perspectives
+2. Note where agents complement or reinforce each other's insights
+3. Highlight any conflicts or contradictions between perspectives
+4. Look for emergent insights that arise from combining perspectives
+5. Consider how different aspects (emotional, belief, etc.) interact
+
 Provide synthesis in this exact format:
 {{
-    "response": "Detailed dialogue synthesis",
+    "response": "Comprehensive synthesis explaining how different agent perspectives combine and relate",
     "concepts": [
-        {{
-            "name": "Concept name",
-            "type": "pattern|insight|learning|evolution",
-            "description": "Clear description",
-            "related": ["Related concept names"],
-            "validation": {{
+        {
+            "name": "Synthesized concept name",
+            "type": "synthesis|integration|coordination",
+            "description": "Description that references multiple agent perspectives",
+            "related": ["Concepts from different agent responses"],
+            "validation": {
                 "confidence": 0.8,
-                "supported_by": ["evidence"],
-                "contradicted_by": [],
-                "needs_verification": []
-            }}
-        }}
+                "supported_by": ["Evidence from multiple agents"],
+                "contradicted_by": ["Any conflicting views"],
+                "needs_verification": ["Areas needing additional input"]
+            }
+        }
     ],
     "key_points": [
         "Key insight or observation"

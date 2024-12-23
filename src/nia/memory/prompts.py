@@ -1,6 +1,120 @@
 """Centralized prompts for all agents."""
 
 AGENT_PROMPTS = {
+    "structure": """Analyze and validate data structures in this content:
+
+Content:
+{content}
+
+Provide analysis in this format:
+{
+    "response": "Clear structure analysis",
+    "concepts": [
+        {
+            "name": "Structure concept",
+            "type": "schema|pattern|validation|constraint",
+            "description": "Clear description",
+            "related": ["Related concepts"],
+            "validation": {
+                "confidence": 0.8,
+                "supported_by": ["Supporting evidence"],
+                "contradicted_by": ["Contradicting evidence"],
+                "needs_verification": ["Points needing verification"]
+            }
+        }
+    ],
+    "key_points": [
+        "Key structural insight"
+    ],
+    "implications": [
+        "Important implication for structure"
+    ],
+    "uncertainties": [
+        "Area of uncertainty"
+    ],
+    "reasoning": [
+        "Step in analysis"
+    ]
+}""",
+
+    "parsing": """Parse and structure the response content:
+
+Content:
+{content}
+
+Provide analysis in this format:
+{
+    "response": "Clear structured analysis",
+    "concepts": [
+        {
+            "name": "Parsed concept",
+            "type": "concept|pattern|structure",
+            "description": "Clear description",
+            "related": ["Related concepts"],
+            "validation": {
+                "confidence": 0.8,
+                "supported_by": ["Supporting evidence"],
+                "contradicted_by": ["Contradicting evidence"],
+                "needs_verification": ["Points needing verification"]
+            }
+        }
+    ],
+    "key_points": [
+        "Key structural insight"
+    ],
+    "implications": [
+        "Important implication for structure"
+    ],
+    "uncertainties": [
+        "Area of uncertainty"
+    ],
+    "reasoning": [
+        "Step in analysis"
+    ]
+}""",
+
+    "meta": """Coordinate and synthesize agent responses:
+
+Content:
+{content}
+
+Analyze the responses from different agents and synthesize them into a coherent understanding. Look for:
+- Common themes and patterns across agent perspectives
+- Complementary insights that build on each other
+- Potential conflicts or contradictions to resolve
+- Emergent insights from combining perspectives
+
+Provide synthesis in this format:
+{
+    "response": "Clear synthesis explaining how different agent perspectives combine and relate",
+    "concepts": [
+        {
+            "name": "Synthesized concept",
+            "type": "synthesis|integration|coordination",
+            "description": "Clear description that references insights from multiple agents",
+            "related": ["Must include concepts from different agent responses"],
+            "validation": {
+                "confidence": 0.8,
+                "supported_by": ["Evidence from multiple agent perspectives"],
+                "contradicted_by": ["Any conflicting agent views"],
+                "needs_verification": ["Areas needing additional agent input"]
+            }
+        }
+    ],
+    "key_points": [
+        "Key synthesis insight"
+    ],
+    "implications": [
+        "Important implication from synthesis"
+    ],
+    "uncertainties": [
+        "Area of uncertainty"
+    ],
+    "reasoning": [
+        "Step in synthesis"
+    ]
+}""",
+
     "belief": """Analyze the beliefs and knowledge claims in this content:
 
 Content:
@@ -49,8 +163,8 @@ Provide analysis in this format:
         {
             "name": "Emotional/Affective concept",
             "type": "emotion|affect|pattern|response",
-            "description": "Clear description",
-            "related": ["Related concepts"],
+            "description": "Clear description including intensity/strength (high/medium/low) and valence (positive/negative/neutral)",
+            "related": ["Must include at least 2-3 related emotional concepts, responses, or patterns"],
             "validation": {
                 "confidence": 0.8,
                 "supported_by": ["Supporting evidence"],

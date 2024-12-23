@@ -23,6 +23,22 @@ The nature of machine consciousness and emotional intelligence
 raises important questions about the future of AI systems.
 """
 
+@pytest.fixture
+def lmstudio_available():
+    """Check if LMStudio is available."""
+    import aiohttp
+    import asyncio
+    
+    async def check_lmstudio():
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get("http://localhost:1234/v1/models") as response:
+                    return response.status == 200
+        except:
+            return False
+    
+    return asyncio.run(check_lmstudio())
+
 def setup_test_stores():
     """Set up test stores with mock embedding service."""
     embedding_service = EmbeddingService()
@@ -58,8 +74,9 @@ def setup_test_agents():
     
     return agents
 
+@pytest.mark.requires_lmstudio
 @pytest.mark.asyncio
-async def test_dialogue_message_types():
+async def test_dialogue_message_types(use_mock):
     """Test dialogue message type handling."""
     # Create dialogue context
     dialogue = DialogueContext(
@@ -84,8 +101,9 @@ async def test_dialogue_message_types():
     assert dialogue.messages[0].agent_type == "test_agent"
     assert "test_agent" in dialogue.participants
 
+@pytest.mark.requires_lmstudio
 @pytest.mark.asyncio
-async def test_dialogue_creation():
+async def test_dialogue_creation(use_mock):
     """Test dialogue context creation."""
     dialogue = DialogueContext(
         topic="Test Topic",
@@ -98,8 +116,9 @@ async def test_dialogue_creation():
     assert isinstance(dialogue.participants, list)
     assert isinstance(dialogue.created_at, datetime)
 
+@pytest.mark.requires_lmstudio
 @pytest.mark.asyncio
-async def test_agent_message_sending():
+async def test_agent_message_sending(use_mock):
     """Test agent message sending."""
     # Set up components
     agents = setup_test_agents()
@@ -126,8 +145,9 @@ async def test_agent_message_sending():
     assert message.references == ["ref1"]
     assert message in dialogue.messages
 
+@pytest.mark.requires_lmstudio
 @pytest.mark.asyncio
-async def test_concept_validation():
+async def test_concept_validation(use_mock):
     """Test concept validation through dialogue."""
     # Set up components
     agents = setup_test_agents()
@@ -176,8 +196,9 @@ async def test_concept_validation():
     assert dialogue.messages[3].agent_type == "context"
     assert len(dialogue.participants) == 4
 
+@pytest.mark.requires_lmstudio
 @pytest.mark.asyncio
-async def test_dialogue_synthesis():
+async def test_dialogue_synthesis(use_mock):
     """Test synthesis of collaborative dialogue."""
     # Set up components
     agents = setup_test_agents()
@@ -219,8 +240,9 @@ async def test_dialogue_synthesis():
     assert len(dialogue.participants) == 4
     assert all(m.message_type == "insight" for m in dialogue.messages)
 
+@pytest.mark.requires_lmstudio
 @pytest.mark.asyncio
-async def test_task_planning_dialogue():
+async def test_task_planning_dialogue(use_mock):
     """Test task planning in dialogue."""
     # Set up components
     agents = setup_test_agents()
@@ -258,8 +280,9 @@ async def test_task_planning_dialogue():
     assert dialogue.messages[1].agent_type == "context"
     assert dialogue.messages[2].agent_type == "dialogue"
 
+@pytest.mark.requires_lmstudio
 @pytest.mark.asyncio
-async def test_collaborative_dialogue():
+async def test_collaborative_dialogue(use_mock):
     """Test full collaborative dialogue flow."""
     # Set up components
     agents = setup_test_agents()
