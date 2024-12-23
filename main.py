@@ -47,6 +47,9 @@ async def main():
         embedding_service = EmbeddingService()
         vector_store = VectorStore(embedding_service=embedding_service)
         
+        # Initialize LLM parser
+        llm.initialize_parser(store, vector_store)
+        
         # Initialize specialized agents
         task_planner = TaskPlannerAgent(llm, store, vector_store)
         belief_agent = BeliefAgent(llm, store, vector_store)
