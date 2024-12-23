@@ -200,3 +200,65 @@ class Neo4jMemoryStore:
         except Exception as e:
             logger.error(f"Error searching concepts: {str(e)}")
             return []
+
+    async def count_concepts(self) -> int:
+        """Count total number of concepts."""
+        try:
+            async with self.driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH (c:Concept)
+                    RETURN count(c) as count
+                    """
+                )
+                record = await result.single()
+                return record["count"] if record else 0
+                
+        except Exception as e:
+            logger.error(f"Error counting concepts: {str(e)}")
+            return 0
+
+    async def count_relationships(self) -> int:
+        """Count total number of relationships."""
+        try:
+            async with self.driver.session() as session:
+                result = await session.run(
+                    """
+                    MATCH ()-[r:RELATED_TO]->()
+                    RETURN count(r) as count
+                    """
+                )
+                record = await result.single()
+                return record["count"] if record else 0
+                
+        except Exception as e:
+            logger.error(f"Error counting relationships: {str(e)}")
+            return 0
+
+    async def clear_concepts(self) -> None:
+        """Clear all concepts and relationships."""
+        try:
+            async with self.driver.session() as session:
+                await session.run(
+                    """
+                    MATCH (c:Concept)
+                    DETACH DELETE c
+                    """
+                )
+                
+        except Exception as e:
+            logger.error(f"Error clearing concepts: {str(e)}")
+
+    async def clear_relationships(self) -> None:
+        """Clear all relationships between concepts."""
+        try:
+            async with self.driver.session() as session:
+                await session.run(
+                    """
+                    MATCH ()-[r:RELATED_TO]->()
+                    DELETE r
+                    """
+                )
+                
+        except Exception as e:
+            logger.error(f"Error clearing relationships: {str(e)}")
