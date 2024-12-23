@@ -60,13 +60,13 @@ async def main():
             llm=llm,
             store=store,
             vector_store=vector_store,
-            task_planner=task_planner,
             other_agents={
                 'belief': belief_agent,
                 'desire': desire_agent,
                 'emotion': emotion_agent,
                 'reflection': reflection_agent,
-                'research': research_agent
+                'research': research_agent,
+                'task_planner': task_planner
             }
         )
         
