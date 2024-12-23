@@ -226,9 +226,65 @@ class VectorStore:
             logger.error(f"Error deleting vectors: {str(e)}")
             return False
     
-    def cleanup(self):
+    async def count_vectors(self, layer: Optional[str] = None) -> int:
+        """Count vectors in collection."""
+        try:
+            # Build filter for layer if specified
+            filter_obj = None
+            if layer:
+                filter_obj = models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="layer",
+                            match=models.MatchValue(value=layer)
+                        )
+                    ]
+                )
+            
+            # Get count from Qdrant
+            count = self.client.count(
+                collection_name=self.collection_name,
+                count_filter=filter_obj
+            )
+            
+            return count.count
+            
+        except Exception as e:
+            logger.error(f"Error counting vectors: {str(e)}")
+            return 0
+    
+    async def clear_vectors(self, layer: Optional[str] = None) -> bool:
+        """Clear vectors from collection."""
+        try:
+            if layer:
+                # Delete vectors from specific layer
+                filter_obj = models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="layer",
+                            match=models.MatchValue(value=layer)
+                        )
+                    ]
+                )
+                self.client.delete(
+                    collection_name=self.collection_name,
+                    points_selector=models.FilterSelector(
+                        filter=filter_obj
+                    )
+                )
+            else:
+                # Delete all vectors
+                self.client.delete_collection(self.collection_name)
+                self._ensure_collection()
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error clearing vectors: {str(e)}")
+            return False
+    
+    async def cleanup(self):
         """Clean up vector store."""
         try:
-            self.client.delete_collection(self.collection_name)
+            await self.clear_vectors()
         except Exception as e:
             logger.error(f"Error cleaning up vector store: {str(e)}")
