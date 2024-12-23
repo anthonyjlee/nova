@@ -15,6 +15,8 @@ from nia.memory.logging_config import configure_logging
 
 # Import agents
 from nia.memory.agents.meta_agent import MetaAgent
+from nia.memory.agents.structure_agent import StructureAgent
+from nia.memory.agents.parsing_agent import ParsingAgent
 from nia.memory.agents.belief_agent import BeliefAgent
 from nia.memory.agents.desire_agent import DesireAgent
 from nia.memory.agents.emotion_agent import EmotionAgent
@@ -47,8 +49,11 @@ async def main():
         embedding_service = EmbeddingService()
         vector_store = VectorStore(embedding_service=embedding_service)
         
-        # Initialize LLM parser
-        llm.initialize_parser(store, vector_store)
+        # Initialize parsing and structure agents
+        structure_agent = StructureAgent(llm, store, vector_store)
+        parsing_agent = ParsingAgent(llm, store, vector_store)
+        parsing_agent.set_structure_agent(structure_agent)
+        llm.set_parser(parsing_agent)
         
         # Initialize specialized agents
         task_planner = TaskPlannerAgent(llm, store, vector_store)
