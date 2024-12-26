@@ -25,7 +25,24 @@ def test_meta_agent_creation():
     embedding_service = EmbeddingService()
     vector_store = VectorStore(embedding_service)
     store = Neo4jMemoryStore()
-    agent = MetaAgent(llm, store, vector_store)
+    from nia.memory.agents.belief_agent import BeliefAgent
+    from nia.memory.agents.desire_agent import DesireAgent
+    from nia.memory.agents.emotion_agent import EmotionAgent
+    from nia.memory.agents.reflection_agent import ReflectionAgent
+    from nia.memory.agents.research_agent import ResearchAgent
+    from nia.memory.agents.task_planner_agent import TaskPlannerAgent
+
+    # Create sub-agents
+    agents = {
+        'belief': BeliefAgent(llm, store, vector_store),
+        'desire': DesireAgent(llm, store, vector_store),
+        'emotion': EmotionAgent(llm, store, vector_store),
+        'reflection': ReflectionAgent(llm, store, vector_store),
+        'research': ResearchAgent(llm, store, vector_store),
+        'task_planner': TaskPlannerAgent(llm, store, vector_store)
+    }
+    
+    agent = MetaAgent(llm, store, vector_store, agents)
     assert agent is not None
     assert agent.llm is not None
     assert agent.store is not None

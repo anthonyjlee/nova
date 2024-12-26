@@ -205,7 +205,9 @@ class MemorySystem:
                     await self.store.store_concept(
                         name=concept["name"],
                         type=concept["type"],
-                        description=concept["description"]
+                        description=concept["description"],
+                        validation={"confidence": 0.8},  # Higher confidence for consolidated concepts
+                        is_consolidation=True  # Mark as consolidation
                     )
             
         except Exception as e:
