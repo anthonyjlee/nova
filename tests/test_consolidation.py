@@ -1,7 +1,7 @@
 """Test memory consolidation functionality."""
 
 import pytest
-from src.nia.memory.neo4j_store import Neo4jMemoryStore
+from nia.memory.neo4j_store import Neo4jMemoryStore
 
 @pytest.fixture
 async def store():
