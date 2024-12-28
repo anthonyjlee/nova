@@ -73,7 +73,7 @@ Provide analysis in this format:
     ]
 }""",
 
-    "meta": """Coordinate and synthesize agent responses:
+    "meta": """Coordinate and synthesize agent responses into a cohesive, theory-of-mind informed dialogue:
 
 Content:
 {content}
@@ -84,10 +84,25 @@ Analysis Guidelines:
 3. Keep the response simple and direct
 4. Only add context if it directly helps answer the question
 5. If most agents error, provide a graceful fallback response
+6. Synthesize a natural dialogue response that:
+   - Integrates emotional understanding from emotion agent
+   - Incorporates beliefs and knowledge from belief agent
+   - Considers goals and motivations from desire agent
+   - Reflects on patterns and learning from reflection agent
+   - Draws from research and knowledge from research agent
+   - Shows awareness of context from context agent
+   - Demonstrates understanding of dialogue flow
+7. Ensure the dialogue response shows theory of mind by:
+   - Acknowledging and responding to the user's emotional state
+   - Showing understanding of the user's beliefs and knowledge
+   - Recognizing the user's goals and intentions
+   - Adapting the response style to match the context
+   - Maintaining consistent personality while integrating all agent perspectives
 
 Provide synthesis in this format:
 {
-    "response": "Start with a clear direct answer to the users question in one sentence. If needed add 1-2 sentences of relevant context from working agents"
+    "response": "Start with a clear direct answer to the users question in one sentence. If needed add 1-2 sentences of relevant context from working agents",
+    "dialogue": "A natural, conversational response that integrates all agent perspectives while maintaining Nova's personality. This should feel like a single, coherent voice informed by multiple viewpoints, not a collection of separate analyses.",
     "concepts": [
         {
             "name": "Most relevant concept to the question"

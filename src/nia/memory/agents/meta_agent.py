@@ -164,12 +164,16 @@ Agent Perspectives:
             
             # Add assistant's response to dialogue context
             assistant_message = DialogueMessage(
-                content=response.response,
+                content=response.dialogue if response.dialogue else response.response,
                 agent_type="assistant",
                 message_type="response",
                 references=[f"{agent_type}" for agent_type in content.get('agent_responses', {}).keys()]
             )
             self.current_dialogue.add_message(assistant_message)
+            
+            # If no dialogue was generated, use the response as dialogue
+            if not response.dialogue:
+                response.dialogue = response.response
             
             return response
             
@@ -177,6 +181,7 @@ Agent Perspectives:
             logger.error(f"Error synthesizing dialogue: {str(e)}")
             return AgentResponse(
                 response="Error synthesizing dialogue",
+                dialogue="I apologize, but I encountered an error while processing your message.",
                 concepts=[],
                 key_points=[],
                 implications=[],
@@ -303,6 +308,7 @@ Agent Perspectives:
             logger.error(f"Error processing interaction: {str(e)}")
             return AgentResponse(
                 response="Error processing interaction",
+                dialogue="I apologize, but I encountered an error while processing your message.",
                 concepts=[],
                 key_points=[],
                 implications=[],
