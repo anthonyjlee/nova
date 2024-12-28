@@ -1,13 +1,7 @@
-"""
-Neo4j knowledge graph implementation with modular managers.
-"""
+"""Neo4j store implementation."""
 
-from .schema_manager import Neo4jSchemaManager
-from .concept_manager import Neo4jConceptManager
-from .system_manager import Neo4jSystemManager
+from .concept_store import ConceptStore
+from .validation_handler import ValidationHandler
+from .base_store import Neo4jBaseStore
 
-__all__ = [
-    'Neo4jSchemaManager',
-    'Neo4jConceptManager',
-    'Neo4jSystemManager'
-]
+__all__ = ['ConceptStore', 'ValidationHandler', 'Neo4jBaseStore']
