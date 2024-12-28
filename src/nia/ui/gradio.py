@@ -231,12 +231,33 @@ class MobileUI:
                     value=True
                 )
             
-            # Initialize state
+            # Initialize state with memory integration
             chat_state = gr.State({
+                # UI State
                 'active_agents': [],
                 'concepts': [],
                 'memory_stats': {},
-                'agent_interactions': []
+                'agent_interactions': [],
+                
+                # Episodic Memory Integration
+                'conversation_history': [],  # Track full conversation context
+                'interaction_patterns': {},  # Track user interaction patterns
+                'ui_preferences': {},       # Store user UI preferences
+                
+                # Semantic Memory Integration
+                'concept_network': {},      # Track concept relationships
+                'concept_context': {},      # Store enriched concept information
+                'concept_visuals': [],      # Store generated concept visualizations
+                
+                # Neo4j Integration
+                'graph_layout': 'cose',     # Store graph visualization preferences
+                'saved_queries': [],        # Track useful Cypher queries
+                'node_styles': {},          # Store node styling preferences
+                'view_state': {             # Track UI component states
+                    'active_tab': 'nova_main',
+                    'open_accordions': ['Active Agents', 'Key Concepts'],
+                    'graph_filters': []
+                }
             })
             
             # Add handlers
@@ -496,9 +517,41 @@ class MobileUI:
                 # Update orchestration history
                 self.orchestration_history.extend(agent_interactions)
                 
-                # Update state with active agents and concepts
+                # Update UI state
                 state['active_agents'] = list(set(agent_type for interaction in agent_interactions if 'agent_type' in interaction))
                 state['concepts'] = response[1].get('concepts', []) if response[1] else []
+                
+                # Update episodic memory
+                state['conversation_history'].append({
+                    'message': message,
+                    'response': response,
+                    'timestamp': datetime.now().isoformat(),
+                    'context': {
+                        'active_agents': state['active_agents'],
+                        'concepts': state['concepts']
+                    }
+                })
+                
+                # Update semantic memory
+                if response[1] and response[1].get('concepts'):
+                    for concept in response[1]['concepts']:
+                        if concept['name'] not in state['concept_network']:
+                            state['concept_network'][concept['name']] = {
+                                'type': concept['type'],
+                                'related': concept.get('related', []),
+                                'first_seen': datetime.now().isoformat(),
+                                'frequency': 1
+                            }
+                        else:
+                            state['concept_network'][concept['name']]['frequency'] += 1
+                            state['concept_network'][concept['name']]['last_seen'] = datetime.now().isoformat()
+                
+                # Update Neo4j state
+                if response[1] and response[1].get('concepts'):
+                    # Track which concepts are currently being visualized
+                    state['view_state']['graph_filters'] = [
+                        concept['type'] for concept in response[1]['concepts']
+                    ]
                 
                 # Format active agents for highlighted text
                 active_agents_text = [(agent, "active") for agent in state['active_agents']]
