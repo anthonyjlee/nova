@@ -8,6 +8,7 @@ from ..neo4j_store import Neo4jMemoryStore
 from ..vector_store import VectorStore
 from ..memory_types import AgentResponse
 from .base import BaseAgent
+from ..prompts import AGENT_PROMPTS
 
 logger = logging.getLogger(__name__)
 
@@ -25,54 +26,8 @@ class ResponseProcessor(BaseAgent):
     
     def _format_prompt(self, content: Dict[str, Any]) -> str:
         """Format prompt for response processing."""
-        return f"""You are a response processing agent. Extract and structure information from the given text.
-
-Text to process:
-{content.get('text', '')}
-
-Provide analysis in this exact format:
-{{
-    "response": "Processed response text",
-    "concepts": [
-        {{
-            "name": "concept name",
-            "type": "concept type",
-            "description": "clear description",
-            "related": ["related concepts"],
-            "validation": {{
-                "confidence": 0.8,
-                "supported_by": ["support1", "support2"],
-                "contradicted_by": ["contradiction1", "contradiction2"],
-                "needs_verification": ["verification1", "verification2"]
-            }}
-        }}
-    ],
-    "key_points": [
-        "key point 1",
-        "key point 2"
-    ],
-    "implications": [
-        "implication 1",
-        "implication 2"
-    ],
-    "uncertainties": [
-        "uncertainty 1",
-        "uncertainty 2"
-    ],
-    "reasoning": [
-        "reasoning point 1",
-        "reasoning point 2"
-    ]
-}}
-
-Guidelines:
-1. Extract concepts and their relationships
-2. Identify key points and insights
-3. Note implications and uncertainties
-4. Document reasoning steps
-5. Ensure proper validation
-
-Return ONLY the JSON object, no other text."""
+        text = content.get('text', '')
+        return AGENT_PROMPTS["response_processor"].format(content=text)
     
     async def process_response(self, text: str) -> AgentResponse:
         """Process and structure an LLM response using parsing agent."""

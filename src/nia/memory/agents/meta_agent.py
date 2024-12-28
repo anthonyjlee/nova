@@ -3,8 +3,9 @@
 import logging
 from typing import Dict, Any, Optional, TYPE_CHECKING
 from datetime import datetime, timedelta
-from ..memory_types import AgentResponse, DialogueContext
+from ..memory_types import AgentResponse, DialogueContext, DialogueMessage
 from .base import BaseAgent
+from ..prompts import AGENT_PROMPTS
 
 if TYPE_CHECKING:
     from ..llm_interface import LLMInterface
@@ -123,66 +124,16 @@ class MetaAgent(BaseAgent):
                 for m in dialogue.messages
             ])
         
-        # Format prompt
-        prompt = f"""Analyze and synthesize multiple agent perspectives into a unified understanding.
-
-Original Content:
+        # Format prompt using template
+        return AGENT_PROMPTS["meta"].format(
+            content=f"""Original Content:
 {text}
 
 Agent Perspectives:
 {'\n'.join(response_text)}
 
-{dialogue_text}
-
-Analysis Guidelines:
-1. Check which agents returned errors vs successful responses
-2. Focus on extracting a clear answer from working agents
-3. Keep the response simple and direct
-4. Only add context if it directly helps answer the question
-5. If most agents error, provide a graceful fallback response
-
-Provide synthesis in this exact format:
-{
-    "response": "Start with a clear, direct answer to the user's question in one sentence. If needed, add 1-2 sentences of relevant context from working agents.",
-    "concepts": [
-        {
-            "name": "Most relevant concept to the question",
-            "type": "synthesis",
-            "description": "Brief description that helps answer the question",
-            "related": ["Only directly relevant concepts"],
-            "validation": {
-                "confidence": 0.8,
-                "supported_by": ["Working agent responses"],
-                "contradicted_by": [],
-                "needs_verification": ["Critical uncertainties"]
-            }
-        }
-    ],
-    "key_points": [
-        "The direct answer",
-        "Only essential supporting points"
-    ],
-    "implications": [
-        "Most important implication for the user"
-    ],
-    "uncertainties": [
-        "Only mention if it affects the answer"
-    ],
-    "reasoning": [
-        "Brief explanation of how you arrived at the answer"
-    ]
-}
-
-Guidelines:
-1. Focus on directly answering the user's question first
-2. Keep the response concise and clear
-3. Include only the most relevant insights from agents
-4. Add context only if it helps clarify the answer
-5. Format as proper JSON
-
-Return ONLY the JSON object, no other text."""
-        
-        return prompt
+{dialogue_text}"""
+        )
     
     async def synthesize_dialogue(
         self,
@@ -197,12 +148,28 @@ Return ONLY the JSON object, no other text."""
             if content.get('dialogue_context'):
                 response.dialogue_context = content['dialogue_context']
             
-            # Add metadata
+            # Add metadata with agent interactions
             response.metadata = {
                 'dialogue_turns': len(content.get('dialogue_context', {}).messages) if content.get('dialogue_context') else 0,
                 'participating_agents': list(content.get('agent_responses', {}).keys()),
-                'synthesis_timestamp': datetime.now().isoformat()
+                'synthesis_timestamp': datetime.now().isoformat(),
+                'agent_interactions': [
+                    {
+                        "role": "assistant",
+                        "content": f"[{agent_type}] {response.response}"
+                    }
+                    for agent_type, response in content.get('agent_responses', {}).items()
+                ]
             }
+            
+            # Add assistant's response to dialogue context
+            assistant_message = DialogueMessage(
+                content=response.response,
+                agent_type="assistant",
+                message_type="response",
+                references=[f"{agent_type}" for agent_type in content.get('agent_responses', {}).keys()]
+            )
+            self.current_dialogue.add_message(assistant_message)
             
             return response
             
@@ -257,10 +224,8 @@ Return ONLY the JSON object, no other text."""
             await self.vector_store.clear_vectors(layer="episodic")
             await self.vector_store.clear_vectors(layer="semantic")
             
-            # Clear Neo4j store
+            # Clear Neo4j store - DETACH DELETE in clear_concepts handles everything
             await self.store.clear_concepts()
-            await self.store.clear_relationships()
-            await self.store.clear_memories()
             
             # Reset consolidation timer
             self.last_consolidation = datetime.now()
@@ -284,7 +249,14 @@ Return ONLY the JSON object, no other text."""
     ) -> AgentResponse:
         """Process interaction through meta agent."""
         try:
-            # Create content dict
+            # Create content dict and update dialogue context
+            message = DialogueMessage(
+                content=text,
+                agent_type="user",
+                message_type="input"
+            )
+            self.current_dialogue.add_message(message)
+            
             content_dict = {
                 'content': {'content': text},
                 'dialogue_context': self.current_dialogue,

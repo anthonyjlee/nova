@@ -256,6 +256,58 @@ class ConceptStore(Neo4jBaseStore):
             logger.error(f"Error storing concepts from JSON: {str(e)}")
             raise
 
+    async def count_concepts(self) -> int:
+        """Count total number of concepts in the database."""
+        async def count_operation():
+            async with self.driver.session() as session:
+                result = await session.run("MATCH (n:Concept) RETURN count(n) as count")
+                record = await result.single()
+                return record["count"] if record else 0
+
+        try:
+            return await self._execute_with_retry(count_operation)
+        except Exception as e:
+            logger.error(f"Error counting concepts: {str(e)}")
+            return 0
+
+    async def count_relationships(self) -> int:
+        """Count total number of relationships in the database."""
+        async def count_operation():
+            async with self.driver.session() as session:
+                result = await session.run("MATCH ()-[r:RELATED_TO]->() RETURN count(r) as count")
+                record = await result.single()
+                return record["count"] if record else 0
+
+        try:
+            return await self._execute_with_retry(count_operation)
+        except Exception as e:
+            logger.error(f"Error counting relationships: {str(e)}")
+            return 0
+
+    async def clear_relationships(self) -> None:
+        """Clear all relationships from the database."""
+        async def clear_operation():
+            async with self.driver.session() as session:
+                await session.run("MATCH ()-[r:RELATED_TO]->() DELETE r")
+
+        try:
+            await self._execute_with_retry(clear_operation)
+        except Exception as e:
+            logger.error(f"Error clearing relationships: {str(e)}")
+            raise
+
+    async def clear_memories(self) -> None:
+        """Clear all memories from the database."""
+        async def clear_operation():
+            async with self.driver.session() as session:
+                await session.run("MATCH (n:Memory) DETACH DELETE n")
+
+        try:
+            await self._execute_with_retry(clear_operation)
+        except Exception as e:
+            logger.error(f"Error clearing memories: {str(e)}")
+            raise
+
     async def clear_concepts(self) -> None:
         """Clear all concepts from the database."""
         async def clear_operation():

@@ -16,7 +16,7 @@ class Neo4jMemoryStore(ConceptStore):
     
     def __init__(
         self,
-        uri: str = "bolt://localhost:7687",
+        uri: str = "bolt://0.0.0.0:7687",
         user: str = "neo4j",
         password: str = "password",
         max_retry_time: int = 30,

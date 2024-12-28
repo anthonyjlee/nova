@@ -30,7 +30,7 @@ class VectorStore:
     def __init__(
         self,
         embedding_service: EmbeddingService,
-        host: str = "localhost",
+        host: str = "0.0.0.0",
         port: int = 6333
     ):
         """Initialize vector store."""

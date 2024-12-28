@@ -1,11 +1,10 @@
-"""Main entry point for NIA UI."""
+"""Main entry point for NIA chat interface."""
 
 import os
 import sys
 import logging
 from pathlib import Path
 import asyncio
-from typing import Optional
 
 # Configure logging
 logging.basicConfig(
@@ -18,9 +17,6 @@ def check_dependencies() -> bool:
     """Check if all required dependencies are available."""
     try:
         import gradio
-        import networkx
-        import matplotlib
-        import anthropic
         import neo4j
         return True
     except ImportError as e:
@@ -44,12 +40,6 @@ def check_environment() -> bool:
         logger.error(f"Neo4j connection failed: {str(e)}")
         logger.error("Please ensure Neo4j is running and credentials are correct")
         return False
-    
-    # Check for API keys
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        logger.warning("ANTHROPIC_API_KEY not found in environment")
-        logger.warning("System-1 features will require manual key entry")
     
     return True
 
@@ -85,37 +75,10 @@ async def main():
         
         # Import UI components
         from .mobile import MobileUI
-        from .desktop import DesktopUI
         
-        # Determine if running on mobile
-        def is_mobile() -> bool:
-            """Check if the request is coming from a mobile device."""
-            try:
-                import user_agents
-                from gradio.routes import Request
-                request = Request.get_current()
-                if request and request.headers.get("User-Agent"):
-                    user_agent = user_agents.parse(request.headers["User-Agent"])
-                    return user_agent.is_mobile
-            except:
-                pass
-            return False
-        
-        # Launch appropriate interface
-        if is_mobile():
-            logger.info("Launching mobile interface")
-            ui = MobileUI()
-        else:
-            logger.info("Launching desktop interface")
-            ui = DesktopUI()
-        
-        # Set API key from environment
-        api_key = os.getenv("ANTHROPIC_API_KEY", "IGA3zJxd3AtXLWyVUq9fyNDev7xHD4UGbpwSWW8UejHeuUwO")
-        if api_key:
-            os.environ["ANTHROPIC_API_KEY"] = api_key
-            logger.info("API key set from environment")
-        
-        # Launch UI
+        # Launch mobile interface
+        logger.info("Launching chat interface")
+        ui = MobileUI()
         ui.launch()
         
     except Exception as e:

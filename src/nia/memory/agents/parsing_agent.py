@@ -7,6 +7,7 @@ from typing import Dict, List, Any, Optional, Union, TYPE_CHECKING
 from datetime import datetime
 from ..memory_types import AgentResponse
 from .base import BaseAgent
+from ..prompts import AGENT_PROMPTS
 
 if TYPE_CHECKING:
     from ..llm_interface import LLMInterface
@@ -38,14 +39,14 @@ def _clean_json_text(text: str) -> str:
             (r'(\w+):', r'"\1":'),  # Add quotes around property names
             (r':\s*"([^"]*)"', r': "\1"'),  # Fix quote spacing
             (r',\s*([}\]])', r'\1'),  # Remove trailing commas
-            (r'"\s*"', '", "'),  # Fix missing commas between strings
+            (r'"\s*"', '""'),  # Fix array string spacing
             (r'([{,]\s*)(\w+):', r'\1"\2":'),  # Fix unquoted keys
             (r'([{,]\s*)([^"\s]+):', r'\1"\2":'),  # Fix any remaining unquoted keys
             (r'None', '"None"'),  # Quote None values
             (r'True', 'true'),  # Fix boolean values
             (r'False', 'false'),
             (r'null', '"null"'),  # Quote null values
-            (r',\s*,', ','),  # Remove duplicate commas
+            (r',\s*,', ''),  # Remove duplicate commas
             (r'\[\s*,', '['),  # Fix leading commas in arrays
             (r',\s*\]', ']'),  # Fix trailing commas in arrays
         ]
@@ -275,7 +276,7 @@ def _extract_structured_content(text: str) -> Dict[str, Any]:
                         elif key in ['type', 'description']:
                             current_concept[key] = value
                         elif key == 'related':
-                            current_concept['related'] = [r.strip() for r in value.split(',')]
+                            current_concept['related'] = [r.strip() for r in value.split()]
                     else:
                         # If no key, treat as name of new concept
                         if current_concept:
@@ -326,50 +327,8 @@ class ParsingAgent(BaseAgent):
     
     def _format_prompt(self, content: Dict[str, Any]) -> str:
         """Format prompt for parsing."""
-        return f"""Parse and structure the following content into a valid JSON object.
-
-Content to parse:
-{content.get('content', '')}
-
-Required format:
-{{
-    "response": "Clear analysis or summary",
-    "concepts": [
-        {{
-            "name": "Concept name",
-            "type": "pattern|insight|learning|evolution",
-            "description": "Clear description",
-            "related": ["Related concept names"],
-            "validation": {{
-                "confidence": 0.8,
-                "supported_by": ["evidence"],
-                "contradicted_by": [],
-                "needs_verification": []
-            }}
-        }}
-    ],
-    "key_points": [
-        "Key insight or observation"
-    ],
-    "implications": [
-        "Important implication"
-    ],
-    "uncertainties": [
-        "Area of uncertainty"
-    ],
-    "reasoning": [
-        "Step in analysis"
-    ]
-}}
-
-Guidelines:
-1. Ensure all fields are present
-2. Use valid concept types
-3. Include validation for concepts
-4. Structure lists consistently
-5. Format as proper JSON
-
-Return ONLY the JSON object, no other text."""
+        text = content.get('content', '')
+        return AGENT_PROMPTS["parsing"].format(content=text)
     
     async def parse_text(self, text: str) -> AgentResponse:
         """Parse text into structured format.
@@ -495,7 +454,7 @@ Return ONLY the JSON object, no other text."""
                         concept_text = concept_text.replace("'", '"')
                         concept_text = re.sub(r'(\w+):', r'"\1":', concept_text)
                         concept_text = re.sub(r',\s*([}\]])', r'\1', concept_text)
-                        concept_text = re.sub(r'"\s*"', '", "', concept_text)
+                        concept_text = re.sub(r'"\s*"', '""', concept_text)
                         # Parse as JSON
                         concept_data = json.loads(concept_text)
                         if isinstance(concept_data, list):

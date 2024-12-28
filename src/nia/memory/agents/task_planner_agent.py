@@ -3,6 +3,7 @@
 import logging
 from typing import Dict, Any, Optional
 from .base import BaseAgent
+from ..prompts import AGENT_PROMPTS
 
 logger = logging.getLogger(__name__)
 
@@ -36,72 +37,15 @@ class TaskPlannerAgent(BaseAgent):
             for i, c in enumerate(concepts)
         ])
         
-        # Format prompt
-        prompt = f"""You are a task planner agent. Create a plan to accomplish the given task.
+        # Format prompt with context
+        content_with_context = f"""Task Content:
+{text}
+{dialogue_text}
+
+Known Concepts:
+{concept_text}"""
         
-        Task Content:
-        {text}
-        {dialogue_text}
-        
-        Known Concepts:
-        {concept_text}
-        
-        Provide analysis in this exact format:
-        {{
-            "response": "Task planning analysis",
-            "concepts": [
-                {{
-                    "name": "Task name",
-                    "type": "task|milestone|dependency",
-                    "description": "Clear description of the task",
-                    "related": ["Related task names"],
-                    "validation": {{
-                        "confidence": 0.8,
-                        "supported_by": ["evidence"],
-                        "contradicted_by": [],
-                        "needs_verification": []
-                    }}
-                }}
-            ],
-            "key_points": [
-                "Key task planning insight"
-            ],
-            "implications": [
-                "Task planning implication"
-            ],
-            "uncertainties": [
-                "Task planning uncertainty"
-            ],
-            "reasoning": [
-                "Task planning step"
-            ],
-            "tasks": [
-                {{
-                    "id": "unique_id",
-                    "name": "Task name",
-                    "description": "Clear description",
-                    "dependencies": ["other_task_ids"],
-                    "estimated_time": "time in minutes",
-                    "priority": 1-5 score,
-                    "status": "pending"
-                }}
-            ],
-            "metadata": {{
-                "total_tasks": "number",
-                "estimated_total_time": "time in minutes"
-            }}
-        }}
-        
-        Ensure:
-        1. Tasks are properly ordered with dependencies
-        2. Each task has a clear objective
-        3. Time estimates are realistic
-        4. Priority reflects importance
-        5. Plan is achievable
-        
-        Return ONLY the JSON object, no other text."""
-        
-        return prompt
+        return AGENT_PROMPTS["task_planner"].format(content=content_with_context)
     
     def get_graph(self, graph_id: str) -> Optional[Dict[str, Any]]:
         """Get task graph by ID."""

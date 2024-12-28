@@ -1,198 +1,411 @@
-"""Mobile UI interface optimized for remote control."""
+"""Mobile UI interface for NIA chat system with WhatsApp-style interface."""
 
-import json
 import gradio as gr
+import logging
 import os
-from typing import Dict, List, Optional, Tuple, Any
+import platform
+from typing import Dict, List, Tuple, Optional, Any
 from datetime import datetime
 
-from nia.ui.handlers import System1Handler, System2Handler, MemoryHandler
+from nia.ui.handlers import System2Handler, MemoryHandler
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 class MobileUI:
-    """Mobile UI optimized for remote control."""
-    
     def __init__(self):
         """Initialize the mobile UI."""
-        self.title = "NIA Remote Control"
+        logger.info("Initializing mobile UI...")
+        
+        self.title = "NIA Chat"
         self.description = """
-        Remote control interface for NIA system.
-        Use this interface to control your computer and interact with agents.
+        # NIA Chat Interface
+        
+        **Nova (Main)**: Synthesized responses and key insights
+        **Nova Orchestration**: View agent interactions and task coordination
         """
+        
         # Initialize handlers
-        self.system1 = System1Handler()
-        self.system2 = System2Handler()
-        self.memory = MemoryHandler()
-    
-    def create_system1_tab(self) -> gr.Tab:
-        """Create the System-1 remote control tab."""
-        with gr.Tab("System-1") as tab:
-            # API key (collapsible)
-            with gr.Accordion("Settings", open=False):
-                api_key = gr.Textbox(
-                    label="Anthropic API Key",
-                    placeholder="Enter your API key",
-                    type="password",
-                    value=os.getenv("ANTHROPIC_API_KEY", "")
-                )
-            
-                # Screen selection
-                screen = gr.Dropdown(
-                    choices=["All Displays", "Main Display", "Secondary Display"],
-                    label="Control Screen",
-                    value="Main Display"
-                )
-            
-            # Quick actions
-            with gr.Row():
-                type_btn = gr.Button("Type")
-                click_btn = gr.Button("Click")
-                keys_btn = gr.Button("Keys")
-                shot_btn = gr.Button("Screenshot")
-            
-            # Command input
-            command = gr.Textbox(
-                label="Command",
-                placeholder="Enter command (e.g. {'action': 'type', 'text': 'Hello'})",
-                lines=2
-            )
-            
-            # Execute button
-            execute_btn = gr.Button("Execute", variant="primary", size="lg")
-            
-            # Status
-            status = gr.Textbox(
-                label="Status",
-                interactive=False
-            )
-            
-            # Screenshot display
-            screenshot = gr.Image(
-                label="Screen",
-                interactive=False,
-                height=300
-            )
-            
-            # Quick action handlers
-            def create_type_command():
-                return json.dumps({"action": "type", "text": ""})
-            
-            def create_click_command():
-                return json.dumps({"action": "left_click"})
-            
-            def create_keys_command():
-                return json.dumps({"action": "key", "text": ""})
-            
-            def create_screenshot_command():
-                return json.dumps({"action": "screenshot"})
-            
-            type_btn.click(fn=create_type_command, outputs=command)
-            click_btn.click(fn=create_click_command, outputs=command)
-            keys_btn.click(fn=create_keys_command, outputs=command)
-            shot_btn.click(fn=create_screenshot_command, outputs=command)
-            
-            # Execute handler
-            execute_btn.click(
-                fn=self.handle_command,
-                inputs=[command, api_key],
-                outputs=[status, screenshot]
-            )
-            
-            return tab
-    
-    def create_agents_tab(self) -> gr.Tab:
-        """Create the multi-agent chat tab."""
-        with gr.Tab("Agents") as tab:
-            # Agent selection
-            with gr.Row():
-                agent = gr.Dropdown(
-                    choices=[
-                        "Nova (Group)",
-                        "Meta Agent",
-                        "Belief Agent", 
-                        "Desire Agent",
-                        "Emotion Agent",
-                        "Reflection Agent"
-                    ],
-                    label="Chat With",
-                    value="Nova (Group)"
-                )
-            
-            # Chat history
-            chat_history = gr.Chatbot(
-                label="Chat History",
-                height=400,
-                show_label=False
-            )
-            
-            # Message input
-            with gr.Row():
-                message = gr.Textbox(
-                    placeholder="Type a message...",
-                    show_label=False,
-                    container=False
-                )
-                send_btn = gr.Button("Send")
-            
-            # Add handlers
-            send_btn.click(
-                fn=self.handle_message,
-                inputs=[message, chat_history, agent],
-                outputs=[chat_history]
-            )
-            
-            return tab
-    
-    async def handle_command(
-        self,
-        command: str,
-        api_key: str
-    ) -> Tuple[str, Optional[str]]:
-        """Handle command execution."""
+        logger.info("Initializing handlers...")
         try:
-            output, status, screenshot = await self.system1.execute_command(command)
-            return status, screenshot
+            self.memory = MemoryHandler()
+            self.system2 = System2Handler()
         except Exception as e:
-            return f"Error: {str(e)}", None
-    
-    async def handle_message(
-        self,
-        message: str,
-        chat_history: List[Tuple[str, str]],
-        agent: str
-    ) -> List[Tuple[str, str]]:
-        """Handle agent messages."""
-        try:
-            # Add user message
-            chat_history.append((message, None))
-            
-            # Get agent response
-            response = f"[{agent}] Received: {message}"
-            chat_history.append((None, response))
-            
-            return chat_history
-        except Exception as e:
-            chat_history.append((None, f"Error: {str(e)}"))
-            return chat_history
-    
-    def launch(self, share: bool = True):
-        """Launch the mobile UI."""
+            logger.warning(f"Failed to initialize handlers: {e}")
+            self.memory = None
+            self.system2 = None
+        
+        # Initialize chat histories
+        self.nova_history = []  # Main Nova thread
+        self.orchestration_history = []  # Agent dialogue thread
+        self.debug_output = []  # Terminal-style debug output
+        
+        logger.info("Mobile UI initialization complete")
+
+    def create_chat_interface(self) -> gr.Blocks:
+        """Create the WhatsApp-style chat interface."""
+        # SVG data URLs
+        user_svg = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIyMCIgY3k9IjIwIiByPSIxOSIgZmlsbD0id2hpdGUiIHN0cm9rZT0iIzI1NjNlYiIgc3Ryb2tlLXdpZHRoPSIyIi8+PGNpcmNsZSBjeD0iMjAiIGN5PSIxNSIgcj0iNiIgZmlsbD0iIzI1NjNlYiIvPjxwYXRoIGQ9Ik04IDM1YzAtOCA2LTEzIDEyLTEzczEyIDUgMTIgMTMiIGZpbGw9IiMyNTYzZWIiLz48L3N2Zz4="
+        nova_svg = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIyMCIgY3k9IjIwIiByPSIxOSIgZmlsbD0id2hpdGUiIHN0cm9rZT0iIzEwYjk4MSIgc3Ryb2tlLXdpZHRoPSIyIi8+PGNpcmNsZSBjeD0iMjAiIGN5PSIxNSIgcj0iNiIgZmlsbD0iIzEwYjk4MSIvPjxwYXRoIGQ9Ik04IDM1YzAtOCA2LTEzIDEyLTEzczEyIDUgMTIgMTMiIGZpbGw9IiMxMGI5ODEiLz48Y2lyY2xlIGN4PSIxNyIgY3k9IjE0IiByPSIxLjUiIGZpbGw9IndoaXRlIi8+PGNpcmNsZSBjeD0iMjMiIGN5PSIxNCIgcj0iMS41IiBmaWxsPSJ3aGl0ZSIvPjwvc3ZnPg=="
+        agents_svg = "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iNDAiIGhlaWdodD0iNDAiIHZpZXdCb3g9IjAgMCA0MCA0MCIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj48Y2lyY2xlIGN4PSIyMCIgY3k9IjIwIiByPSIxOSIgZmlsbD0id2hpdGUiIHN0cm9rZT0iIzYzNjZmMSIgc3Ryb2tlLXdpZHRoPSIyIi8+PHBhdGggZD0iTTEyIDI4TDIwIDEyTDI4IDI4WiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjNjM2NmYxIiBzdHJva2Utd2lkdGg9IjMiLz48L3N2Zz4="
+        
         with gr.Blocks(
             title=self.title,
-            theme=gr.themes.Soft(),
-            css="""
-                .container { max-width: 600px; margin: auto; }
-                .gr-button { min-width: 0; }
-                footer { display: none !important; }
-            """
-        ) as app:
+            theme=gr.themes.Default()
+        ) as interface:
             gr.Markdown(self.description)
             
-            with gr.Tabs():
-                system1_tab = self.create_system1_tab()
-                agents_tab = self.create_agents_tab()
+            with gr.Tabs() as tabs:
+                # Nova's main thread
+                with gr.Tab("Nova (Main)", id="nova_main"):
+                    nova_chat = gr.Chatbot(
+                        value=[],
+                        height=400,
+                        show_label=False,
+                        type="messages",  # Use OpenAI message format
+                        elem_id="nova_chat",
+                        avatar_images=[
+                            user_svg,
+                            nova_svg
+                        ]
+                    )
+                    
+                    with gr.Row():
+                        nova_input = gr.Textbox(
+                            show_label=False,
+                            placeholder="Message Nova...",
+                            container=False
+                        )
+                        nova_send = gr.Button("Send")
+                
+                # Nova's orchestration thread
+                with gr.Tab("Nova Orchestration", id="nova_orchestration"):
+                    orchestration_chat = gr.Chatbot(
+                        value=[],
+                        height=400,
+                        show_label=False,
+                        type="messages",
+                        elem_id="orchestration_chat",
+                        avatar_images=[
+                            user_svg,
+                            agents_svg
+                        ]
+                    )
+                    
+                    # Read-only - no input needed as this shows agent interactions
+                    gr.Markdown("*Agent interactions are displayed here*")
+                
+                # Settings and CLI access
+                with gr.Tab("Settings", id="settings"):
+                    gr.Markdown("## System Commands")
+                    
+                    # Command input
+                    with gr.Row():
+                        cli_input = gr.Textbox(
+                            show_label=False,
+                            placeholder="Enter command (e.g., status, search <query>, reset, help)",
+                            container=False
+                        )
+                        cli_send = gr.Button("Execute")
+                    
+                    # Command output
+                    cli_output = gr.Markdown(
+                        value="*Command output will appear here*\n\n" + 
+                              "Available commands:\n" +
+                              "- status: Check system status\n" +
+                              "- search <query>: Search memories\n" +
+                              "- reset: Reset system state\n" +
+                              "- help: Show this help message\n" +
+                              "- consolidate: Force memory consolidation",
+                        elem_id="cli_output"
+                    )
             
-        app.launch(share=share)
+            # Debug output area
+            with gr.Accordion("Debug Output", open=True):
+                debug_output = gr.Markdown(
+                    value="*Debug information will appear here*",
+                    elem_id="debug_output"
+                )
+                
+                # Auto-refresh toggle for debug output
+                debug_refresh = gr.Checkbox(
+                    label="Auto-refresh debug output",
+                    value=True
+                )
+            
+            # Add handlers
+            nova_input.submit(
+                self.handle_nova_message,
+                inputs=[nova_input, nova_chat],
+                outputs=[
+                    nova_input,  # Clear input
+                    nova_chat,   # Update Nova chat
+                    orchestration_chat,  # Update orchestration view
+                    debug_output  # Update debug output
+                ]
+            )
+            
+            nova_send.click(
+                self.handle_nova_message,
+                inputs=[nova_input, nova_chat],
+                outputs=[
+                    nova_input,
+                    nova_chat,
+                    orchestration_chat,
+                    debug_output
+                ]
+            )
+            
+            # CLI handlers
+            cli_input.submit(
+                self.handle_cli_command,
+                inputs=[cli_input],
+                outputs=[cli_input, cli_output]
+            )
+            
+            cli_send.click(
+                self.handle_cli_command,
+                inputs=[cli_input],
+                outputs=[cli_input, cli_output]
+            )
+            
+        return interface
+
+    async def handle_cli_command(
+        self,
+        command: str
+    ) -> Tuple[str, str]:
+        """Handle CLI commands."""
+        try:
+            if not command:
+                return "", cli_output.value
+            
+            command = command.lower().strip()
+            output_lines = []
+            
+            if command == "status":
+                if self.system2:
+                    status = await self.system2.nova.get_status()
+                    output_lines.extend([
+                        "## System Status",
+                        "",
+                        "### Vector Store:",
+                        f"- Episodic Layer: {status['vector_store'].get('episodic_count', 0)} memories",
+                        f"- Semantic Layer: {status['vector_store'].get('semantic_count', 0)} memories",
+                        f"- Last Consolidation: {status['vector_store'].get('last_consolidation', 'Never')}",
+                        "",
+                        "### Neo4j:",
+                        f"- Total Concepts: {status['neo4j'].get('concept_count', 0)}",
+                        f"- Relationships: {status['neo4j'].get('relationship_count', 0)}",
+                        "",
+                        "### Active Agents:",
+                        *[f"- {agent}" for agent in status.get('active_agents', [])],
+                        "",
+                        "### Memory Consolidation:",
+                        f"- Next scheduled: {status['vector_store'].get('next_consolidation', 'Unknown')}"
+                    ])
+                else:
+                    output_lines.append("Error: System2Handler not available")
+            
+            elif command.startswith("search "):
+                query = command[7:].strip()
+                if self.system2:
+                    memories = await self.system2.nova.search_memories(query)
+                    output_lines.extend([
+                        f"## Found {len(memories)} related memories:",
+                        ""
+                    ])
+                    for i, memory in enumerate(memories, 1):
+                        output_lines.extend([
+                            f"{i}. Layer: {memory.get('layer', 'unknown')}",
+                            f"   Score: {memory.get('score', 0):.3f}",
+                            f"   Type: {memory.get('type', 'unknown')}",
+                            f"   Content: {memory.get('content', '')}",
+                            ""
+                        ])
+                else:
+                    output_lines.append("Error: System2Handler not available")
+            
+            elif command == "reset":
+                if self.system2:
+                    output_lines.extend([
+                        "Resetting system...",
+                        "- Clearing episodic memories...",
+                        "- Clearing semantic memories...",
+                        "- Resetting concept storage...",
+                        "- Resetting consolidation timer...",
+                        "- Clearing agent states...",
+                        "",
+                        "Reset complete"
+                    ])
+                    await self.system2.nova.cleanup()
+                else:
+                    output_lines.append("Error: System2Handler not available")
+            
+            elif command == "consolidate":
+                if self.system2:
+                    await self.system2.nova._consolidate_memories()
+                    status = await self.system2.nova.get_status()
+                    output_lines.extend([
+                        "Consolidation complete:",
+                        f"- Semantic memories: {status['vector_store'].get('semantic_count', 0)}",
+                        f"- Concepts stored: {status['neo4j'].get('concept_count', 0)}",
+                        f"- Next consolidation: {status['vector_store'].get('next_consolidation', 'Unknown')}"
+                    ])
+                else:
+                    output_lines.append("Error: System2Handler not available")
+            
+            elif command == "help":
+                output_lines.extend([
+                    "## Available commands:",
+                    "- exit: Quit the system",
+                    "- status: Check detailed system status (memory layers, concepts, agents)",
+                    "- search <query>: Search memories across layers with relevance scores",
+                    "- reset: Reset all memory stores and system state",
+                    "- consolidate: Force memory consolidation",
+                    "- help: Show this help message"
+                ])
+            
+            else:
+                output_lines.append(f"Unknown command: {command}")
+            
+            return "", "\n".join(output_lines)
+            
+        except Exception as e:
+            logger.error(f"Error executing command: {str(e)}")
+            return "", f"Error: {str(e)}"
+
+    async def handle_nova_message(
+        self,
+        message: str,
+        history: List[Dict[str, str]]
+    ) -> Tuple[str, List[Dict[str, str]], List[Dict[str, str]], str]:
+        """Handle messages in Nova's main thread."""
+        try:
+            # Format debug output
+            debug_lines = []
+            debug_lines.append(f"[{datetime.now().strftime('%H:%M:%S')}] Processing message: {message}")
+            
+            # Add user message to Nova chat
+            history.append({
+                "role": "user",
+                "content": message
+            })
+            
+            if self.system2:
+                # Process through Nova
+                response = await self.system2.send_message(
+                    message=message,
+                    chat_history=history,
+                    agent="Nova (Main)"
+                )
+                
+                # Update Nova chat with response
+                updated_history = response[0]
+                
+                # Extract agent interactions for orchestration view
+                agent_interactions = []
+                if response[1] and response[1].get("agent_interactions"):
+                    agent_interactions = []
+                    for interaction in response[1]["agent_interactions"]:
+                        # Extract agent type from content (e.g., "[BeliefAgent] Some text" -> "belief")
+                        agent_type = "assistant"  # default
+                        content = interaction['content']
+                        
+                        if content.startswith('['):
+                            agent_name = content.split(']')[0][1:].lower()
+                            if "agent" in agent_name:
+                                agent_type = agent_name.replace("agent", "").strip()
+                                # Remove the [AgentName] prefix from content
+                                content = content.split(']', 1)[1].strip()
+                        
+                        agent_interactions.append({
+                            "role": agent_type,
+                            "content": content,
+                            "name": agent_type.capitalize()  # Add name for avatar label
+                        })
+                    
+                    # Add interactions to debug output
+                    debug_lines.append("\nAgent Interactions:")
+                    for interaction in agent_interactions:
+                        debug_lines.append(f"{interaction['content']}")
+                
+                # Update debug output
+                debug_lines.append(f"[{datetime.now().strftime('%H:%M:%S')}] Nova processed message")
+                if response[1] and response[1].get("concepts"):
+                    debug_lines.append("\nValidated Concepts:")
+                    for concept in response[1]["concepts"]:
+                        debug_lines.append(f"- {concept['name']} ({concept['type']})")
+                        debug_lines.append(f"  Description: {concept['description']}")
+                
+                # Update orchestration history
+                self.orchestration_history.extend(agent_interactions)
+                
+                return (
+                    "",  # Clear input
+                    updated_history,  # Update Nova chat
+                    self.orchestration_history,  # Update orchestration view with full history
+                    "\n".join(debug_lines)  # Update debug output
+                )
+            else:
+                # Fallback if handler not available
+                history.append({
+                    "role": "assistant",
+                    "content": "I'm sorry, but I'm currently unable to process messages. Please try again later."
+                })
+                debug_lines.append("[ERROR] System2Handler not available")
+                
+                return (
+                    "",
+                    history,
+                    [],
+                    "\n".join(debug_lines)
+                )
+                
+        except Exception as e:
+            logger.error(f"Error handling message: {str(e)}")
+            history.append({
+                "role": "assistant",
+                "content": f"Error: {str(e)}"
+            })
+            debug_lines.append(f"[ERROR] {str(e)}")
+            
+            return (
+                "",
+                history,
+                [],
+                "\n".join(debug_lines)
+            )
+
+
+    def launch(self, share: bool = True):
+        """Launch the mobile UI."""
+        try:
+            interface = self.create_chat_interface()
+            import time
+            time.sleep(1)  # Wait for any previous connections to close
+            interface.launch(
+                server_name="127.0.0.1",
+                server_port=7861,  # Use a different port
+                share=False,
+                inbrowser=True  # Open in browser automatically
+            )
+        except Exception as e:
+            logger.error(f"Error launching UI: {str(e)}")
+            raise
 
 if __name__ == "__main__":
-    ui = MobileUI()
-    ui.launch()
+    try:
+        # Log system information
+        logger.info(f"Python version: {platform.python_version()}")
+        logger.info(f"Platform: {platform.platform()}")
+        logger.info(f"Working directory: {os.getcwd()}")
+        logger.info(f"PYTHONPATH: {os.getenv('PYTHONPATH', 'Not set')}")
+        
+        # Initialize and launch UI
+        ui = MobileUI()
+        ui.launch()
+        
+    except Exception as e:
+        logger.error(f"Fatal error: {str(e)}", exc_info=True)
+        raise

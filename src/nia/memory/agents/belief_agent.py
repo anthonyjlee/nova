@@ -1,7 +1,9 @@
 """Belief agent for analyzing knowledge and beliefs."""
 
 import logging
+from typing import Dict, Any
 from .base import BaseAgent
+from ..prompts import AGENT_PROMPTS
 
 logger = logging.getLogger(__name__)
 
@@ -12,8 +14,7 @@ class BeliefAgent(BaseAgent):
         """Initialize belief agent."""
         super().__init__(llm, store, vector_store, "belief")
         
-    def _format_prompt(self, content):
-        """Format prompt with additional logging."""
-        prompt = super()._format_prompt(content)
-        logger.debug(f"Belief agent formatted prompt: {prompt}")
-        return prompt
+    def _format_prompt(self, content: Dict[str, Any]) -> str:
+        """Format prompt for belief analysis."""
+        text = content.get('content', '')
+        return AGENT_PROMPTS["belief"].format(content=text)

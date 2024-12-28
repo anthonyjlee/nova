@@ -1,10 +1,9 @@
-"""
-Research system agent implementation.
-"""
+"""Research system agent implementation."""
 
 import logging
 from typing import Dict, Any
 from .base import BaseAgent
+from ..prompts import AGENT_PROMPTS
 
 logger = logging.getLogger(__name__)
 
@@ -27,26 +26,11 @@ class ResearchAgent(BaseAgent):
             for i, m in enumerate(memories)
         ])
         
-        # Format prompt
-        prompt = f"""Analyze the following content from a research perspective.
-        Extract key concepts related to knowledge, understanding, and investigation.
+        # Format prompt with memories
+        content_with_memories = f"""Content:
+{text}
+
+Similar Memories:
+{memory_text}"""
         
-        Content: {text}
-        
-        Similar Memories:
-        {memory_text}
-        
-        Respond with a list of concepts in this exact format:
-        [
-          {{
-            "CONCEPT": "Concept name",
-            "TYPE": "Concept type",
-            "DESC": "Clear description",
-            "RELATED": "Space separated list of related concepts"
-          }}
-        ]
-        
-        Focus on research topics, hypotheses, evidence, and theoretical frameworks.
-        IMPORTANT: Ensure the response starts with the JSON array and contains proper JSON formatting with commas between objects."""
-        
-        return prompt
+        return AGENT_PROMPTS["research"].format(content=content_with_memories)

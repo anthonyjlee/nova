@@ -5,6 +5,7 @@ from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from datetime import datetime
 from ..memory_types import AgentResponse
 from .base import BaseAgent
+from ..prompts import AGENT_PROMPTS
 
 if TYPE_CHECKING:
     from ..llm_interface import LLMInterface
@@ -27,73 +28,8 @@ class StructureAgent(BaseAgent):
     
     def _format_prompt(self, content: Dict[str, Any]) -> str:
         """Format prompt for structure analysis."""
-        return f"""Analyze and structure the following content into a well-organized format.
-        Pay special attention to hierarchical relationships, data types, and validation rules.
-
-Content to analyze:
-{content.get('content', '')}
-
-Required format:
-{{
-    "response": "Structure analysis",
-    "concepts": [
-        {{
-            "name": "Structure name",
-            "type": "data_type|relationship|constraint",
-            "description": "Clear description of the structure",
-            "related": ["Related structures"],
-            "validation": {{
-                "confidence": 0.8,
-                "supported_by": ["evidence"],
-                "contradicted_by": [],
-                "needs_verification": []
-            }},
-            "schema": {{
-                "type": "data type",
-                "required": ["required fields"],
-                "optional": ["optional fields"],
-                "constraints": ["validation rules"],
-                "relationships": [
-                    {{
-                        "from": "source",
-                        "to": "target",
-                        "type": "relationship type",
-                        "cardinality": "one-to-many"
-                    }}
-                ]
-            }}
-        }}
-    ],
-    "key_points": [
-        "Key structural insight"
-    ],
-    "implications": [
-        "Structure implication"
-    ],
-    "uncertainties": [
-        "Structure uncertainty"
-    ],
-    "reasoning": [
-        "Structure analysis step"
-    ],
-    "validation_rules": [
-        {{
-            "field": "field name",
-            "type": "validation type",
-            "rule": "validation rule",
-            "severity": "error|warning|info"
-        }}
-    ]
-}}
-
-Guidelines:
-1. Identify data types and structures
-2. Define validation rules
-3. Map relationships
-4. Document constraints
-5. Note edge cases
-
-Return ONLY the JSON object, no other text."""
+        text = content.get('content', '')
+        return AGENT_PROMPTS["structure"].format(content=text)
     
     async def analyze_structure(
         self,
@@ -113,30 +49,10 @@ Return ONLY the JSON object, no other text."""
             
             # Add schema validation if provided
             if expected_schema and isinstance(response, AgentResponse):
-                validation_prompt = f"""Validate this structure against the schema:
-
-Structure:
-{response.response}
-
-Schema:
-{expected_schema}
-
-Provide validation results in this format:
-{{
-    "is_valid": true/false,
-    "errors": [
-        {{
-            "field": "field name",
-            "error": "error description",
-            "severity": "error|warning|info"
-        }}
-    ],
-    "suggestions": [
-        "Improvement suggestion"
-    ]
-}}
-
-Return ONLY the JSON object, no other text."""
+                validation_prompt = AGENT_PROMPTS["structure_validation"].format(
+                    structure=response.response,
+                    schema=expected_schema
+                )
 
                 # Get validation results
                 validation = await self.llm.get_completion(validation_prompt)
@@ -168,37 +84,7 @@ Return ONLY the JSON object, no other text."""
     ) -> Dict[str, Any]:
         """Validate schema definition."""
         try:
-            validation_prompt = f"""Validate this schema definition:
-
-Schema:
-{schema}
-
-Check for:
-1. Required fields
-2. Data type consistency
-3. Relationship validity
-4. Constraint completeness
-5. Edge cases
-
-Provide validation in this format:
-{{
-    "is_valid": true/false,
-    "errors": [
-        {{
-            "field": "field path",
-            "error": "error description",
-            "severity": "error|warning|info"
-        }}
-    ],
-    "suggestions": [
-        "Schema improvement suggestion"
-    ],
-    "missing": [
-        "Missing required element"
-    ]
-}}
-
-Return ONLY the JSON object, no other text."""
+            validation_prompt = AGENT_PROMPTS["schema_validation"].format(schema=schema)
 
             # Get validation results
             validation = await self.llm.get_completion(validation_prompt)
@@ -233,45 +119,7 @@ Return ONLY the JSON object, no other text."""
     ) -> Dict[str, Any]:
         """Extract schema from text description."""
         try:
-            schema_prompt = f"""Extract a schema definition from this description:
-
-Description:
-{text}
-
-Generate a schema in this format:
-{{
-    "type": "schema type",
-    "fields": [
-        {{
-            "name": "field name",
-            "type": "data type",
-            "required": true/false,
-            "description": "field description",
-            "constraints": [
-                {{
-                    "type": "constraint type",
-                    "rule": "constraint rule"
-                }}
-            ]
-        }}
-    ],
-    "relationships": [
-        {{
-            "from": "source field",
-            "to": "target field",
-            "type": "relationship type",
-            "cardinality": "one-to-many"
-        }}
-    ],
-    "validation": [
-        {{
-            "rule": "validation rule",
-            "severity": "error|warning|info"
-        }}
-    ]
-}}
-
-Return ONLY the JSON object, no other text."""
+            schema_prompt = AGENT_PROMPTS["schema_extraction"].format(text=text)
 
             # Get schema definition
             schema = await self.llm.get_completion(schema_prompt)

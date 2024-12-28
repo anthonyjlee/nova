@@ -250,11 +250,9 @@ class LLMInterface:
                                     content = content.replace('\n', ' ').strip()
                                     
                                     # Fix JSON structure
-                                    content = re.sub(r'}\s*{', '},{', content)  # Fix adjacent objects
-                                    content = re.sub(r']\s*{', '],{', content)  # Fix array followed by object
-                                    content = re.sub(r'}\s*\[', '},[', content)  # Fix object followed by array
-                                    content = re.sub(r',\s*}', '}', content)  # Remove trailing commas
-                                    content = re.sub(r',\s*]', ']', content)  # Remove trailing commas in arrays
+                                    content = re.sub(r'}\s*{', '}{', content)  # Fix adjacent objects
+                                    content = re.sub(r']\s*{', ']{', content)  # Fix array followed by object
+                                    content = re.sub(r'}\s*\[', '}[', content)  # Fix object followed by array
                                     
                                     # Fix property names and values
                                     content = re.sub(r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', content)  # Quote property names
@@ -265,10 +263,9 @@ class LLMInterface:
                                     
                                     # Normalize whitespace and structure
                                     content = re.sub(r'\s+', ' ', content)  # Normalize whitespace
-                                    content = re.sub(r'"\s*,\s*"', '","', content)  # Fix array string spacing
+                                    content = re.sub(r'"\s*"', '""', content)  # Fix array string spacing
                                     content = re.sub(r'\[\s*"', '["', content)  # Fix array start spacing
                                     content = re.sub(r'"\s*\]', '"]', content)  # Fix array end spacing
-                                    content = re.sub(r',\s*([}\]])', r'\1', content)  # Remove trailing commas
                                     
                                     # Ensure proper JSON structure
                                     if not content.startswith('{'):
@@ -415,29 +412,29 @@ class LLMInterface:
 
 REQUIRED FORMAT:
 {{
-    "response": "Your detailed analysis from a {agent_type} perspective",
+    "response": "Your detailed analysis from a {agent_type} perspective"
     "concepts": [
         {{
-            "name": "Concept name (required)",
-            "type": "{agent_type}",
-            "description": "Clear description (required)",
-            "related": ["Term1", "Term2"],
+            "name": "Concept name (required)"
+            "type": "{agent_type}"
+            "description": "Clear description (required)"
+            "related": ["Term1" "Term2"]
             "validation": {{
-                "confidence": 0.8,
-                "supported_by": ["Evidence1"],
-                "contradicted_by": [],
+                "confidence": 0.8
+                "supported_by": ["Evidence1"]
+                "contradicted_by": []
                 "needs_verification": []
             }}
         }}
-    ],
-    "key_points": ["Key insight 1"],
-    "implications": ["Implication 1"],
-    "uncertainties": ["Uncertainty 1"],
+    ]
+    "key_points": ["Key insight 1"]
+    "implications": ["Implication 1"]
+    "uncertainties": ["Uncertainty 1"]
     "reasoning": ["Reasoning step 1"]
 }}
 
 CRITICAL RULES:
-1. Response MUST be ONLY the JSON object - no markdown, no code blocks
+1. Response MUST be ONLY the JSON object - no markdown no code blocks
 2. Use DOUBLE QUOTES for ALL strings and property names
 3. NO trailing commas after last item in arrays/objects
 4. ALL property names must match exactly as shown
