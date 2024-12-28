@@ -120,6 +120,7 @@ class AgentResponse(JSONSerializable):
     """Agent response."""
     response: str  # Direct answer
     dialogue: str = ""  # Natural language dialogue response
+    whispers: List[str] = field(default_factory=list)  # Internal dialogue between agents
     concepts: List[Dict[str, Any]] = field(default_factory=list)
     key_points: List[str] = field(default_factory=list)
     implications: List[str] = field(default_factory=list)
@@ -139,6 +140,7 @@ class AgentResponse(JSONSerializable):
         return {
             "response": self.response,
             "dialogue": self.dialogue,
+            "whispers": self.whispers,
             "concepts": self.concepts,
             "key_points": self.key_points,
             "implications": self.implications,

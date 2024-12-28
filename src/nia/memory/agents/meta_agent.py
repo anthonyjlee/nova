@@ -148,17 +148,56 @@ Agent Perspectives:
             if content.get('dialogue_context'):
                 response.dialogue_context = content['dialogue_context']
             
+            # Generate whispers from agent responses
+            whispers = []
+            agent_responses = content.get('agent_responses', {})
+            
+            # Emotion agent notices feelings
+            if 'emotion' in agent_responses:
+                emotion_resp = agent_responses['emotion']
+                if emotion_resp.concepts:
+                    emotion = emotion_resp.concepts[0]
+                    whispers.append(f"*Emotion agent whispers: I sense {emotion['description']}*")
+            
+            # Belief agent shares insights
+            if 'belief' in agent_responses:
+                belief_resp = agent_responses['belief']
+                if belief_resp.key_points:
+                    whispers.append(f"*Belief agent whispers: I believe {belief_resp.key_points[0].lower()}*")
+            
+            # Desire agent reveals motivations
+            if 'desire' in agent_responses:
+                desire_resp = agent_responses['desire']
+                if desire_resp.concepts:
+                    desire = desire_resp.concepts[0]
+                    whispers.append(f"*Desire agent whispers: They seem to want {desire['description'].lower()}*")
+            
+            # Reflection agent shares patterns
+            if 'reflection' in agent_responses:
+                reflection_resp = agent_responses['reflection']
+                if reflection_resp.implications:
+                    whispers.append(f"*Reflection agent whispers: This reminds me that {reflection_resp.implications[0].lower()}*")
+            
+            # Research agent adds knowledge
+            if 'research' in agent_responses:
+                research_resp = agent_responses['research']
+                if research_resp.key_points:
+                    whispers.append(f"*Research agent whispers: It's worth noting that {research_resp.key_points[0].lower()}*")
+            
+            # Add whispers to response
+            response.whispers = whispers
+            
             # Add metadata with agent interactions
             response.metadata = {
                 'dialogue_turns': len(content.get('dialogue_context', {}).messages) if content.get('dialogue_context') else 0,
-                'participating_agents': list(content.get('agent_responses', {}).keys()),
+                'participating_agents': list(agent_responses.keys()),
                 'synthesis_timestamp': datetime.now().isoformat(),
                 'agent_interactions': [
                     {
                         "role": "assistant",
-                        "content": f"[{agent_type}] {response.response}"
+                        "content": f"[{agent_type}] {resp.response}"
                     }
-                    for agent_type, response in content.get('agent_responses', {}).items()
+                    for agent_type, resp in agent_responses.items()
                 ]
             }
             
@@ -182,6 +221,7 @@ Agent Perspectives:
             return AgentResponse(
                 response="Error synthesizing dialogue",
                 dialogue="I apologize, but I encountered an error while processing your message.",
+                whispers=["*Meta agent whispers: Something went wrong in the synthesis process...*"],
                 concepts=[],
                 key_points=[],
                 implications=[],
@@ -309,6 +349,7 @@ Agent Perspectives:
             return AgentResponse(
                 response="Error processing interaction",
                 dialogue="I apologize, but I encountered an error while processing your message.",
+                whispers=["*Meta agent whispers: Having trouble coordinating the agent responses...*"],
                 concepts=[],
                 key_points=[],
                 implications=[],

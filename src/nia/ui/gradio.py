@@ -303,26 +303,49 @@ class MobileUI:
                 # Update Nova chat with response
                 updated_history = response[0]
                 
-                # Extract agent interactions for orchestration view
+                # Extract agent whispers and interactions for orchestration view
                 agent_interactions = []
+                
+                # First add thinking message
+                agent_interactions.append({
+                    "role": "assistant",
+                    "content": "Let me think about this...",
+                    "metadata": {"title": "🧠 Thinking"}
+                })
+                
+                # Add whispers if available
+                if response[1] and response[1].get("whispers"):
+                    for whisper in response[1]["whispers"]:
+                        # Extract agent type from whisper (e.g., "*Emotion agent whispers: ..." -> "emotion")
+                        agent_type = "assistant"
+                        if "*" in whisper and "whispers:" in whisper.lower():
+                            agent_name = whisper.split("whispers:")[0].strip("*").lower()
+                            if "agent" in agent_name:
+                                agent_type = agent_name.replace("agent", "").strip()
+                        
+                        agent_interactions.append({
+                            "role": agent_type,
+                            "content": whisper,
+                            "metadata": {"title": "🤫 Whisper"}
+                        })
+                
+                # Add agent interactions
                 if response[1] and response[1].get("agent_interactions"):
-                    agent_interactions = []
                     for interaction in response[1]["agent_interactions"]:
-                        # Extract agent type from content (e.g., "[BeliefAgent] Some text" -> "belief")
-                        agent_type = "assistant"  # default
+                        # Extract agent type from content
+                        agent_type = "assistant"
                         content = interaction['content']
                         
                         if content.startswith('['):
                             agent_name = content.split(']')[0][1:].lower()
                             if "agent" in agent_name:
                                 agent_type = agent_name.replace("agent", "").strip()
-                                # Remove the [AgentName] prefix from content
                                 content = content.split(']', 1)[1].strip()
                         
                         agent_interactions.append({
                             "role": agent_type,
                             "content": content,
-                            "name": agent_type.capitalize()  # Add name for avatar label
+                            "metadata": {"title": f"💭 {agent_type.capitalize()}"}
                         })
                     
                     # Add interactions to debug output
