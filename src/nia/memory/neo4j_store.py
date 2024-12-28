@@ -66,7 +66,7 @@ class Neo4jMemoryStore:
                 logger.info("Database connection verified")
                 
                 # Check plugins
-                result = await session.run("CALL dbms.procedures()")
+                result = await session.run("SHOW PROCEDURES")
                 procedures = [record["name"] async for record in result]
                 
                 # Check APOC
@@ -97,19 +97,31 @@ class Neo4jMemoryStore:
                 if not status["concept_index"] or not status["fulltext_index"]:
                     logger.warning("Missing or offline indexes. Creating/Rebuilding...")
                     
-                    # Drop existing indexes if they're not online
+                    # Drop and recreate indexes
                     if not status["concept_index"]:
                         await session.run("DROP INDEX concept_name_idx IF EXISTS")
-                    if not status["fulltext_index"]:
-                        await session.run("CALL db.index.fulltext.drop('concept_search') IF EXISTS")
+                        await session.run("CREATE INDEX concept_name_idx IF NOT EXISTS FOR (c:Concept) ON (c.name)")
                     
-                    # Create indexes
-                    await session.run(
-                        """
-                        CREATE INDEX concept_name_idx IF NOT EXISTS FOR (c:Concept) ON (c.name);
-                        CALL db.index.fulltext.createIfNot('concept_search', ['Concept'], ['name', 'description']);
-                        """
-                    )
+                    # Handle full-text index
+                    if not status["fulltext_index"]:
+                        try:
+                            await session.run("CALL db.index.fulltext.drop('concept_search')")
+                        except Exception:
+                            pass  # Index might not exist
+                        
+                        try:
+                            await session.run(
+                                """
+                                CALL db.index.fulltext.create(
+                                    'concept_search',
+                                    ['Concept'],
+                                    ['name', 'description']
+                                )
+                                """
+                            )
+                        except Exception as e:
+                            if "already exists" not in str(e):
+                                raise
                     
                     # Wait for indexes to come online
                     logger.info("Waiting for indexes to come online...")
@@ -174,26 +186,12 @@ class Neo4jMemoryStore:
                         "is_consolidation": concept.get("is_consolidation", False)
                     }
                     
-                    # Only include validation if there are validation fields
-                    has_validation = False
-                    validation = {}
-                    
+                    # Only include validation if confidence is present
                     if concept.get("confidence") is not None:
-                        validation["confidence"] = concept["confidence"]
-                        has_validation = True
-                    
-                    for field in ["uncertainties", "supported_by", "contradicted_by", "needs_verification"]:
-                        if concept.get(field):
-                            validation[field] = concept[field]
-                            has_validation = True
-                    
-                    # Handle consolidation validation
-                    if concept.get("is_consolidation", False) and (not validation or validation.get("confidence", 0) < 0.8):
-                        validation["confidence"] = 0.8
-                        has_validation = True
-                    
-                    # Only include validation in result if there are validation fields
-                    if has_validation:
+                        validation = {"confidence": concept["confidence"]}
+                        for field in ["uncertainties", "supported_by", "contradicted_by", "needs_verification"]:
+                            if concept.get(field):
+                                validation[field] = concept[field]
                         result["validation"] = validation
                     
                     return result
@@ -224,14 +222,22 @@ class Neo4jMemoryStore:
             "validation": validation or {}
         })
         
-        # Handle consolidation validation
+        # Handle validation data
         if is_consolidation:
+            # For consolidated concepts, ensure validation exists with confidence >= 0.8
             if not validation:
                 validation = {"confidence": 0.8}
-            elif "confidence" not in validation:
-                validation["confidence"] = 0.8
-            elif validation["confidence"] < 0.8:
-                validation["confidence"] = 0.8
+            else:
+                validation = dict(validation)  # Create a copy
+                confidence = validation.get("confidence")
+                if confidence is None or not isinstance(confidence, (int, float)) or float(confidence) < 0.8:
+                    validation["confidence"] = 0.8
+        elif validation:
+            # For non-consolidated concepts, only fix invalid confidence
+            validation = dict(validation)  # Create a copy
+            confidence = validation.get("confidence")
+            if confidence is not None and not isinstance(confidence, (int, float)):
+                validation["confidence"] = 0.5
 
         async def store_operation():
             async with self.driver.session() as session:
@@ -249,11 +255,18 @@ class Neo4jMemoryStore:
                     "is_consolidation": is_consolidation
                 }
                 
-                # Add validation fields if present
+                # Handle validation fields
+                validation_fields = ["confidence", "uncertainties", "supported_by", "contradicted_by", "needs_verification"]
+                
+                # First remove all validation fields
+                create_query += "\nREMOVE " + ", ".join(f"c.{field}" for field in validation_fields)
+                
+                # Then set only the fields that are present if validation is provided
                 if validation:
-                    for key, value in validation.items():
-                        params[key] = value
-                        create_query += f",\n    c.{key} = ${key}"
+                    for field in validation_fields:
+                        if field in validation and validation[field] is not None:
+                            params[field] = validation[field]
+                            create_query += f"\nSET c.{field} = ${field}"
                 
                 await session.run(create_query, params)
                 
@@ -315,15 +328,12 @@ class Neo4jMemoryStore:
                         "is_consolidation": concept.get("is_consolidation", False)
                     }
                     
-                    # Handle validation
-                    validation = {}
+                    # Only include validation if confidence is present
                     if concept.get("confidence") is not None:
-                        validation["confidence"] = concept["confidence"]
-                    for field in ["uncertainties", "supported_by", "contradicted_by", "needs_verification"]:
-                        if concept.get(field):
-                            validation[field] = concept[field]
-                    
-                    if validation:
+                        validation = {"confidence": concept["confidence"]}
+                        for field in ["uncertainties", "supported_by", "contradicted_by", "needs_verification"]:
+                            if concept.get(field):
+                                validation[field] = concept[field]
                         concept_dict["validation"] = validation
                     
                     concepts.append(concept_dict)
@@ -362,15 +372,12 @@ class Neo4jMemoryStore:
                         "is_consolidation": concept.get("is_consolidation", False)
                     }
                     
-                    # Handle validation
-                    validation = {}
+                    # Only include validation if confidence is present
                     if concept.get("confidence") is not None:
-                        validation["confidence"] = concept["confidence"]
-                    for field in ["uncertainties", "supported_by", "contradicted_by", "needs_verification"]:
-                        if concept.get(field):
-                            validation[field] = concept[field]
-                    
-                    if validation:
+                        validation = {"confidence": concept["confidence"]}
+                        for field in ["uncertainties", "supported_by", "contradicted_by", "needs_verification"]:
+                            if concept.get(field):
+                                validation[field] = concept[field]
                         concept_dict["validation"] = validation
                     
                     concepts.append(concept_dict)
@@ -387,22 +394,17 @@ class Neo4jMemoryStore:
         """Search concepts using full-text search."""
         async def search_operation():
             async with self.driver.session() as session:
-                # First ensure the fulltext index exists
-                await session.run(
-                    """
-                    CALL db.index.fulltext.createIfNot('concept_search', ['Concept'], ['name', 'description'])
-                    """
-                )
-                
-                # Use a more flexible search query that includes both name and description
+                # Use full-text index for search
                 result = await session.run(
                     """
                     MATCH (c:Concept)
-                    WHERE c.name CONTAINS $query OR c.description CONTAINS $query
+                    WHERE c.name = $query OR c.description = $query OR
+                          toLower(c.name) CONTAINS toLower($query) OR 
+                          toLower(c.description) CONTAINS toLower($query)
                     OPTIONAL MATCH (c)-[:RELATED_TO]->(r:Concept)
                     RETURN c, collect(r.name) as related
                     """,
-                    query=query
+                    {"query": query}
                 )
                 
                 concepts = []
@@ -418,15 +420,12 @@ class Neo4jMemoryStore:
                         "is_consolidation": concept.get("is_consolidation", False)
                     }
                     
-                    # Handle validation
-                    validation = {}
+                    # Only include validation if confidence is present
                     if concept.get("confidence") is not None:
-                        validation["confidence"] = concept["confidence"]
-                    for field in ["uncertainties", "supported_by", "contradicted_by", "needs_verification"]:
-                        if concept.get(field):
-                            validation[field] = concept[field]
-                    
-                    if validation:
+                        validation = {"confidence": concept["confidence"]}
+                        for field in ["uncertainties", "supported_by", "contradicted_by", "needs_verification"]:
+                            if concept.get(field):
+                                validation[field] = concept[field]
                         concept_dict["validation"] = validation
                     
                     concepts.append(concept_dict)
@@ -527,32 +526,22 @@ class Neo4jMemoryStore:
         """Store concept(s) from JSON data with validation."""
         try:
             validated = validate_json_structure(data)
+            if isinstance(validated, dict) and "concepts" in validated:
+                validated = validated["concepts"]
+            
             if isinstance(validated, list):
                 # Store multiple concepts
                 stored = 0
                 errors = 0
                 for concept in validated:
                     try:
-                        validation = concept.get("validation", {})
-                        is_consolidation = concept.get("is_consolidation", False)
-                        
-                        # Add default validation for consolidated concepts
-                        if is_consolidation:
-                            if not validation:
-                                validation = {"confidence": 0.8}
-                            elif "confidence" not in validation:
-                                validation["confidence"] = 0.8
-                            elif validation["confidence"] < 0.8:
-                                validation["confidence"] = 0.8
-                        
-                        # Store concept
                         await self.store_concept(
                             name=concept["name"],
                             type=concept["type"],
                             description=concept["description"],
                             related=concept.get("related"),
-                            validation=validation,
-                            is_consolidation=is_consolidation
+                            validation=concept.get("validation"),
+                            is_consolidation=concept.get("is_consolidation", False)
                         )
                         stored += 1
                     except Exception as e:
@@ -564,27 +553,13 @@ class Neo4jMemoryStore:
                 else:
                     logger.info(f"Successfully stored {stored} concepts")
             else:
-                # Store single concept
-                validation = validated.get("validation", {})
-                is_consolidation = validated.get("is_consolidation", False)
-                
-                # Add default validation for consolidated concepts
-                if is_consolidation:
-                    if not validation:
-                        validation = {"confidence": 0.8}
-                    elif "confidence" not in validation:
-                        validation["confidence"] = 0.8
-                    elif validation["confidence"] < 0.8:
-                        validation["confidence"] = 0.8
-                
-                # Store concept
                 await self.store_concept(
                     name=validated["name"],
                     type=validated["type"],
                     description=validated["description"],
                     related=validated.get("related"),
-                    validation=validation,
-                    is_consolidation=is_consolidation
+                    validation=validated.get("validation"),
+                    is_consolidation=validated.get("is_consolidation", False)
                 )
                 logger.info(f"Successfully stored concept {validated['name']}")
         except Exception as e:

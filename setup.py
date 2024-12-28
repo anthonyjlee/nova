@@ -11,9 +11,23 @@ setup(
         "aiohttp",
         "qdrant-client",
         "neo4j",
-        "pytest",
-        "pytest-asyncio",
-        "pytest-cov"
     ],
+    extras_require={
+        "dev": [
+            "pytest",
+            "pytest-asyncio",
+            "pytest-cov",
+            "pytest-randomly",
+            "pytest-sugar",
+            "pytest-timeout",
+            "pytest-mock",
+            "pytest-env",
+            "pytest-xdist",
+            "pytest-dash",
+            "black",
+            "ruff",
+            "mypy"
+        ]
+    },
     python_requires=">=3.8",
 )
