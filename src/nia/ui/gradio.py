@@ -80,20 +80,118 @@ class MobileUI:
                 
                 # Nova's orchestration thread
                 with gr.Tab("Nova Orchestration", id="nova_orchestration"):
-                    orchestration_chat = gr.Chatbot(
-                        value=[],
-                        height=400,
-                        show_label=False,
-                        type="messages",
-                        elem_id="orchestration_chat",
-                        avatar_images=[
-                            user_svg,
-                            agents_svg
-                        ]
-                    )
-                    
-                    # Read-only - no input needed as this shows agent interactions
-                    gr.Markdown("*Agent interactions are displayed here*")
+                    with gr.Row():
+                        # Main chat area
+                        with gr.Column(scale=2):
+                            orchestration_chat = gr.Chatbot(
+                                value=[],
+                                height=400,
+                                show_label=False,
+                                type="messages",
+                                elem_id="orchestration_chat",
+                                avatar_images=[
+                                    user_svg,
+                                    agents_svg
+                                ]
+                            )
+                        
+                        # Side panel with agent details
+                        with gr.Column(scale=1):
+                            with gr.Accordion("Active Agents", open=True):
+                                active_agents = gr.HighlightedText(
+                                    value=[],
+                                    label="Currently Active",
+                                    show_label=False
+                                )
+                            
+                            with gr.Accordion("Key Concepts", open=True):
+                                key_concepts = gr.HighlightedText(
+                                    value=[],
+                                    label="Identified Concepts",
+                                    show_label=False
+                                )
+                            
+                            with gr.Accordion("Memory Stats", open=True):
+                                memory_plot = gr.Plot(
+                                    label="Memory Distribution"
+                                )
+                            
+                            with gr.Accordion("Agent Network", open=True):
+                                agent_plot = gr.Plot(
+                                    label="Agent Interactions"
+                                )
+                            
+                            with gr.Accordion("Concept Gallery", open=True):
+                                concept_gallery = gr.Gallery(
+                                    label="Visual Concepts",
+                                    columns=2,
+                                    height=200
+                                )
+                
+                # Neo4j Graph View
+                with gr.Tab("Knowledge Graph", id="neo4j_view"):
+                    with gr.Row():
+                        # Graph visualization
+                        with gr.Column(scale=3):
+                            # HTML component for Cytoscape.js
+                            graph_view = gr.HTML("""
+                                <div id="cy" style="width: 100%; height: 500px; border: 1px solid #ccc;"></div>
+                                <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
+                                <script>
+                                    document.addEventListener('DOMContentLoaded', function() {
+                                        var cy = cytoscape({
+                                            container: document.getElementById('cy'),
+                                            style: [
+                                                {
+                                                    selector: 'node',
+                                                    style: {
+                                                        'label': 'data(label)',
+                                                        'background-color': '#666',
+                                                        'color': '#fff'
+                                                    }
+                                                },
+                                                {
+                                                    selector: 'edge',
+                                                    style: {
+                                                        'label': 'data(label)',
+                                                        'curve-style': 'bezier',
+                                                        'target-arrow-shape': 'triangle'
+                                                    }
+                                                }
+                                            ]
+                                        });
+                                        
+                                        // Function to update graph data
+                                        window.updateGraph = function(data) {
+                                            cy.json(data);
+                                            cy.layout({name: 'cose'}).run();
+                                        };
+                                    });
+                                </script>
+                            """)
+                        
+                        # Cypher and controls
+                        with gr.Column(scale=1):
+                            with gr.Accordion("Cypher Query", open=True):
+                                cypher_input = gr.Textbox(
+                                    placeholder="MATCH (n) RETURN n LIMIT 10",
+                                    label="Cypher Query"
+                                )
+                                run_query = gr.Button("Run Query")
+                            
+                            with gr.Accordion("Graph Controls", open=True):
+                                layout_select = gr.Dropdown(
+                                    choices=["cose", "circle", "grid", "random"],
+                                    value="cose",
+                                    label="Layout"
+                                )
+                                refresh_graph = gr.Button("Refresh Graph")
+                            
+                            with gr.Accordion("Node Info", open=True):
+                                node_info = gr.JSON(
+                                    value={},
+                                    label="Selected Node Details"
+                                )
                 
                 # Settings and CLI access
                 with gr.Tab("Settings", id="settings"):
@@ -133,27 +231,60 @@ class MobileUI:
                     value=True
                 )
             
+            # Initialize state
+            chat_state = gr.State({
+                'active_agents': [],
+                'concepts': [],
+                'memory_stats': {},
+                'agent_interactions': []
+            })
+            
             # Add handlers
             nova_input.submit(
                 self.handle_nova_message,
-                inputs=[nova_input, nova_chat],
+                inputs=[nova_input, nova_chat, chat_state],
                 outputs=[
                     nova_input,  # Clear input
                     nova_chat,   # Update Nova chat
                     orchestration_chat,  # Update orchestration view
+                    active_agents,  # Update active agents
+                    key_concepts,  # Update key concepts
+                    memory_plot,  # Update memory stats
+                    agent_plot,  # Update agent network
+                    concept_gallery,  # Update concept visuals
+                    chat_state,  # Update state
                     debug_output  # Update debug output
                 ]
             )
             
             nova_send.click(
                 self.handle_nova_message,
-                inputs=[nova_input, nova_chat],
+                inputs=[nova_input, nova_chat, chat_state],
                 outputs=[
                     nova_input,
                     nova_chat,
                     orchestration_chat,
+                    active_agents,
+                    key_concepts,
+                    memory_plot,
+                    agent_plot,
+                    concept_gallery,
+                    chat_state,
                     debug_output
                 ]
+            )
+            
+            # Neo4j graph handlers
+            run_query.click(
+                self.handle_cypher_query,
+                inputs=[cypher_input],
+                outputs=[graph_view, node_info]
+            )
+            
+            refresh_graph.click(
+                self.refresh_graph_view,
+                inputs=[layout_select],
+                outputs=[graph_view]
             )
             
             # CLI handlers
@@ -278,8 +409,9 @@ class MobileUI:
     async def handle_nova_message(
         self,
         message: str,
-        history: List[Dict[str, str]]
-    ) -> Tuple[str, List[Dict[str, str]], List[Dict[str, str]], str]:
+        history: List[Dict[str, str]],
+        state: Dict[str, Any]
+    ) -> Tuple[str, List[Dict[str, str]], List[Dict[str, str]], List[Tuple[str, str]], List[Tuple[str, str]], Any, Any, List[Dict[str, str]], Dict[str, Any], str]:
         """Handle messages in Nova's main thread."""
         try:
             # Format debug output
@@ -364,10 +496,53 @@ class MobileUI:
                 # Update orchestration history
                 self.orchestration_history.extend(agent_interactions)
                 
+                # Update state with active agents and concepts
+                state['active_agents'] = list(set(agent_type for interaction in agent_interactions if 'agent_type' in interaction))
+                state['concepts'] = response[1].get('concepts', []) if response[1] else []
+                
+                # Format active agents for highlighted text
+                active_agents_text = [(agent, "active") for agent in state['active_agents']]
+                
+                # Format concepts for highlighted text
+                concepts_text = [(concept['name'], concept['type']) for concept in state['concepts']]
+                
+                # Generate memory stats plot
+                memory_stats = await self.system2.nova.get_status()
+                memory_fig = {
+                    'data': [
+                        {'x': ['Episodic', 'Semantic'], 
+                         'y': [memory_stats['vector_store'].get('episodic_count', 0),
+                              memory_stats['vector_store'].get('semantic_count', 0)],
+                         'type': 'bar'}
+                    ],
+                    'layout': {'title': 'Memory Distribution'}
+                }
+                
+                # Generate agent network plot
+                agent_fig = {
+                    'data': [
+                        {'x': list(state['active_agents']),
+                         'y': [1] * len(state['active_agents']),
+                         'type': 'scatter',
+                         'mode': 'markers+text',
+                         'text': state['active_agents']}
+                    ],
+                    'layout': {'title': 'Active Agents'}
+                }
+                
+                # Generate concept gallery
+                concept_images = []  # In a real implementation, you might generate concept visualizations
+                
                 return (
                     "",  # Clear input
                     updated_history,  # Update Nova chat
-                    self.orchestration_history,  # Update orchestration view with full history
+                    self.orchestration_history,  # Update orchestration view
+                    active_agents_text,  # Update active agents
+                    concepts_text,  # Update key concepts
+                    memory_fig,  # Update memory stats
+                    agent_fig,  # Update agent network
+                    concept_images,  # Update concept gallery
+                    state,  # Update state
                     "\n".join(debug_lines)  # Update debug output
                 )
             else:
@@ -382,6 +557,12 @@ class MobileUI:
                     "",
                     history,
                     [],
+                    [],  # Empty active agents
+                    [],  # Empty concepts
+                    {},  # Empty memory plot
+                    {},  # Empty agent plot
+                    [],  # Empty gallery
+                    state,  # Keep state
                     "\n".join(debug_lines)
                 )
                 
@@ -397,10 +578,134 @@ class MobileUI:
                 "",
                 history,
                 [],
+                [],  # Empty active agents
+                [],  # Empty concepts
+                {},  # Empty memory plot
+                {},  # Empty agent plot
+                [],  # Empty gallery
+                state,  # Keep state
                 "\n".join(debug_lines)
             )
 
 
+    async def handle_cypher_query(
+        self,
+        query: str
+    ) -> Tuple[str, Dict]:
+        """Handle Cypher query and update graph view."""
+        try:
+            if not query:
+                return self.get_default_graph(), {}
+            
+            if self.system2:
+                # Execute query through Neo4j store
+                results = await self.system2.nova.store.execute_cypher(query)
+                
+                # Convert results to Cytoscape.js format
+                elements = []
+                
+                # Process nodes
+                nodes = set()
+                for record in results:
+                    for value in record.values():
+                        if hasattr(value, 'id') and hasattr(value, 'labels'):
+                            # This is a node
+                            node_id = str(value.id)
+                            if node_id not in nodes:
+                                nodes.add(node_id)
+                                elements.append({
+                                    'data': {
+                                        'id': node_id,
+                                        'label': value.get('name', ''),
+                                        'type': list(value.labels)[0],
+                                        'properties': dict(value)
+                                    }
+                                })
+                        elif hasattr(value, 'type'):
+                            # This is a relationship
+                            elements.append({
+                                'data': {
+                                    'id': f"e{value.id}",
+                                    'source': str(value.start_node.id),
+                                    'target': str(value.end_node.id),
+                                    'label': value.type
+                                }
+                            })
+                
+                # Generate Cytoscape.js initialization code
+                graph_data = {
+                    'elements': elements
+                }
+                
+                # Update graph view
+                graph_js = f"""
+                    <script>
+                        window.updateGraph({graph_data});
+                    </script>
+                """
+                
+                return graph_js, {'query': query, 'results': len(results)}
+            
+            return self.get_default_graph(), {'error': 'Neo4j store not available'}
+            
+        except Exception as e:
+            logger.error(f"Error executing Cypher query: {str(e)}")
+            return self.get_default_graph(), {'error': str(e)}
+    
+    async def refresh_graph_view(
+        self,
+        layout: str = "cose"
+    ) -> str:
+        """Refresh the graph view with current data."""
+        try:
+            if self.system2:
+                # Get all nodes and relationships
+                query = """
+                MATCH (n)
+                OPTIONAL MATCH (n)-[r]->(m)
+                RETURN n, r, m
+                """
+                return await self.handle_cypher_query(query)
+            
+            return self.get_default_graph()
+            
+        except Exception as e:
+            logger.error(f"Error refreshing graph: {str(e)}")
+            return self.get_default_graph()
+    
+    def get_default_graph(self) -> str:
+        """Return default empty graph view."""
+        return """
+            <div id="cy" style="width: 100%; height: 500px; border: 1px solid #ccc;"></div>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.26.0/cytoscape.min.js"></script>
+            <script>
+                document.addEventListener('DOMContentLoaded', function() {
+                    var cy = cytoscape({
+                        container: document.getElementById('cy'),
+                        elements: [],
+                        style: [
+                            {
+                                selector: 'node',
+                                style: {
+                                    'label': 'data(label)',
+                                    'background-color': '#666',
+                                    'color': '#fff'
+                                }
+                            },
+                            {
+                                selector: 'edge',
+                                style: {
+                                    'label': 'data(label)',
+                                    'curve-style': 'bezier',
+                                    'target-arrow-shape': 'triangle'
+                                }
+                            }
+                        ]
+                    });
+                });
+            </script>
+        """
+    
     def launch(self, share: bool = True):
         """Launch the mobile UI."""
         try:
