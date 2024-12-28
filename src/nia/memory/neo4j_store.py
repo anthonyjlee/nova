@@ -223,19 +223,21 @@ class Neo4jMemoryStore:
         })
         
         # Handle validation data
-        if validation:
+        if validation and validation.get("confidence") is not None:
             # Create a copy to avoid modifying original
             validation = dict(validation)
-            confidence = validation.get("confidence")
             
             if is_consolidation:
-                # For consolidated concepts, ensure confidence >= 0.8 if provided
-                if confidence is not None:
-                    if not isinstance(confidence, (int, float)) or float(confidence) < 0.8:
+                # For consolidated concepts, ensure confidence >= 0.8
+                try:
+                    confidence = float(validation["confidence"])
+                    if confidence < 0.8:
                         validation["confidence"] = 0.8
+                except (TypeError, ValueError):
+                    validation["confidence"] = 0.8
             else:
                 # For non-consolidated concepts, only fix invalid confidence
-                if confidence is not None and not isinstance(confidence, (int, float)):
+                if not isinstance(validation["confidence"], (int, float)):
                     validation["confidence"] = 0.5
 
         async def store_operation():
@@ -264,7 +266,17 @@ class Neo4jMemoryStore:
                 if validation:
                     for field in validation_fields:
                         if field in validation and validation[field] is not None:
-                            params[field] = validation[field]
+                            if field == "confidence":
+                                try:
+                                    confidence = float(validation[field])
+                                    if is_consolidation and confidence < 0.8:
+                                        params[field] = 0.8
+                                    else:
+                                        params[field] = confidence
+                                except (TypeError, ValueError):
+                                    params[field] = 0.8 if is_consolidation else 0.5
+                            else:
+                                params[field] = validation[field]
                             create_query += f"\nSET c.{field} = ${field}"
                 
                 await session.run(create_query, params)
