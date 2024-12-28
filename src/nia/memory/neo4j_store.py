@@ -223,21 +223,20 @@ class Neo4jMemoryStore:
         })
         
         # Handle validation data
-        if is_consolidation:
-            # For consolidated concepts, ensure validation exists with confidence >= 0.8
-            if not validation:
-                validation = {"confidence": 0.8}
-            else:
-                validation = dict(validation)  # Create a copy
-                confidence = validation.get("confidence")
-                if confidence is None or not isinstance(confidence, (int, float)) or float(confidence) < 0.8:
-                    validation["confidence"] = 0.8
-        elif validation:
-            # For non-consolidated concepts, only fix invalid confidence
-            validation = dict(validation)  # Create a copy
+        if validation:
+            # Create a copy to avoid modifying original
+            validation = dict(validation)
             confidence = validation.get("confidence")
-            if confidence is not None and not isinstance(confidence, (int, float)):
-                validation["confidence"] = 0.5
+            
+            if is_consolidation:
+                # For consolidated concepts, ensure confidence >= 0.8 if provided
+                if confidence is not None:
+                    if not isinstance(confidence, (int, float)) or float(confidence) < 0.8:
+                        validation["confidence"] = 0.8
+            else:
+                # For non-consolidated concepts, only fix invalid confidence
+                if confidence is not None and not isinstance(confidence, (int, float)):
+                    validation["confidence"] = 0.5
 
         async def store_operation():
             async with self.driver.session() as session:
