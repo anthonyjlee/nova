@@ -24,8 +24,10 @@ logger = logging.getLogger(__name__)
 
 class System2Handler:
     """Chat system handler with full agent integration."""
-    def __init__(self):
+    def __init__(self, state=None):
+        """Initialize System2Handler with optional state."""
         logger.info("Initializing System2Handler")
+        self.state = state
         
         # Initialize core components
         self.llm = LLMInterface(use_mock=False)
@@ -62,8 +64,8 @@ class System2Handler:
             }
         )
         
-        # Initialize chat histories
-        self.chat_histories = {}
+        # Initialize or restore chat histories from state
+        self.chat_histories = self.state.get('chat_histories', {}) if self.state else {}
         self.agents = {
             "Nova (Main)": "Main chat interface",
             "Meta Agent": "Coordinates and synthesizes agent interactions",
@@ -83,10 +85,12 @@ class System2Handler:
         try:
             logger.info(f"Processing message for {agent}")
             
-            # Store chat history for this agent if not exists
+            # Update chat history in state
             if agent not in self.chat_histories:
                 self.chat_histories[agent] = []
             self.chat_histories[agent].extend(chat_history)
+            if self.state:
+                self.state.set('chat_histories', self.chat_histories)
             
             # Track agent interactions
             agent_interactions = []
@@ -155,8 +159,10 @@ class System2Handler:
 
 class MemoryHandler:
     """Memory system integration handler."""
-    def __init__(self):
+    def __init__(self, state=None):
+        """Initialize MemoryHandler with optional state."""
         logger.info("Initializing MemoryHandler")
+        self.state = state
         self.store = Neo4jMemoryStore()
         self.embedding_service = EmbeddingService()
         self.vector_store = VectorStore(embedding_service=self.embedding_service)
@@ -169,6 +175,16 @@ class MemoryHandler:
             
             # Store in graph store
             memory_id = await self.store.store_memory(content)
+            
+            # Store in state if available
+            if self.state:
+                memories = self.state.get('stored_memories', [])
+                memories.append({
+                    'id': memory_id,
+                    'vector_id': vector_id,
+                    'timestamp': datetime.now().isoformat()
+                })
+                self.state.set('stored_memories', memories)
             
             return memory_id
             
@@ -200,6 +216,16 @@ class MemoryHandler:
                 if result_id not in seen_ids:
                     seen_ids.add(result_id)
                     all_results.append(result)
+            
+            # Update state with retrieval info if available
+            if self.state:
+                retrievals = self.state.get('memory_retrievals', [])
+                retrievals.append({
+                    'query': query,
+                    'timestamp': datetime.now().isoformat(),
+                    'result_count': len(all_results)
+                })
+                self.state.set('memory_retrievals', retrievals)
             
             return all_results
             

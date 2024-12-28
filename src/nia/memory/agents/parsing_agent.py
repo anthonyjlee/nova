@@ -1,9 +1,10 @@
 """Parsing agent for extracting structured information from text."""
 
 import logging
-import json
+import orjson
 import re
 from typing import Dict, List, Any, Optional, Union, TYPE_CHECKING
+from jsonschema import validate, ValidationError
 from datetime import datetime
 from ..memory_types import AgentResponse
 from .base import BaseAgent
@@ -16,6 +17,82 @@ if TYPE_CHECKING:
     from .structure_agent import StructureAgent
 
 logger = logging.getLogger(__name__)
+
+# JSON Schema for LLM Studio response
+LLMSTUDIO_SCHEMA = {
+    "type": "object",
+    "required": ["id", "object", "created", "model", "choices", "usage"],
+    "properties": {
+        "id": {"type": "string"},
+        "object": {"type": "string"},
+        "created": {"type": "integer"},
+        "model": {"type": "string"},
+        "choices": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["index", "message"],
+                "properties": {
+                    "index": {"type": "integer"},
+                    "message": {
+                        "type": "object",
+                        "required": ["role", "content"],
+                        "properties": {
+                            "role": {"type": "string"},
+                            "content": {"type": "string"}
+                        }
+                    }
+                }
+            }
+        },
+        "usage": {
+            "type": "object",
+            "required": ["prompt_tokens", "completion_tokens", "total_tokens"],
+            "properties": {
+                "prompt_tokens": {"type": "integer"},
+                "completion_tokens": {"type": "integer"},
+                "total_tokens": {"type": "integer"}
+            }
+        }
+    }
+}
+
+# JSON Schema for structured content
+STRUCTURED_CONTENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "response": {"type": "string"},
+        "dialogue": {"type": "string"},
+        "concepts": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["name", "type", "description", "related", "validation"],
+                "properties": {
+                    "name": {"type": "string"},
+                    "type": {"type": "string"},
+                    "description": {"type": "string"},
+                    "related": {"type": "array", "items": {"type": "string"}},
+                    "validation": {
+                        "type": "object",
+                        "required": ["confidence", "supported_by", "contradicted_by", "needs_verification"],
+                        "properties": {
+                            "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                            "supported_by": {"type": "array", "items": {"type": "string"}},
+                            "contradicted_by": {"type": "array", "items": {"type": "string"}},
+                            "needs_verification": {"type": "array", "items": {"type": "string"}}
+                        }
+                    }
+                }
+            }
+        },
+        "key_points": {"type": "array", "items": {"type": "string"}},
+        "implications": {"type": "array", "items": {"type": "string"}},
+        "uncertainties": {"type": "array", "items": {"type": "string"}},
+        "reasoning": {"type": "array", "items": {"type": "string"}},
+        "metadata": {"type": "object"}
+    }
+}
 
 def _clean_json_text(text: str) -> str:
     """Clean JSON text to handle common formatting issues."""
@@ -77,8 +154,8 @@ def _extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
         try:
             # Remove any leading/trailing quotes and escape characters
             text = text.strip().strip("'").strip('"')
-            return json.loads(text)
-        except json.JSONDecodeError:
+            return orjson.loads(text)
+        except ValueError:
             pass
             
         # Clean up text
@@ -87,13 +164,13 @@ def _extract_json_from_text(text: str) -> Optional[Dict[str, Any]]:
         # Try multiple parsing strategies
         strategies = [
             # Strategy 1: Direct JSON parsing after cleaning
-            lambda t: json.loads(t),
+            lambda t: orjson.loads(t),
             
             # Strategy 2: Extract JSON object using regex
-            lambda t: json.loads(re.search(r'({[^}]+})', t).group(1)) if re.search(r'({[^}]+})', t) else None,
+            lambda t: orjson.loads(re.search(r'({[^}]+})', t).group(1)) if re.search(r'({[^}]+})', t) else None,
             
             # Strategy 3: Fix and parse JSON with missing quotes
-            lambda t: json.loads(re.sub(r':\s*([^"{}\[\],\s][^,}]*?)(?=[,}])', r': "\1"', t)),
+            lambda t: orjson.loads(re.sub(r':\s*([^"{}\[\],\s][^,}]*?)(?=[,}])', r': "\1"', t)),
             
             # Strategy 4: Extract and parse individual fields
             lambda t: {
@@ -358,44 +435,150 @@ class ParsingAgent(BaseAgent):
                     timestamp=datetime.now()
                 )
             
-            # Try to parse as JSON first
+            # Clean up text
+            text = text.strip().strip("'").strip('"').strip()
+            
+            # Try to extract the message content from LLM Studio response
             try:
-                # Remove any leading/trailing quotes and escape characters
-                text = text.strip().strip("'").strip('"').strip()
-                
-                # Try direct JSON parsing
-                try:
-                    logger.debug(f"Attempting to parse text: {text}")
-                    if "LMStudio is not running" in text or "Error in belief agent" in text:
+                # Parse the outer LLM Studio response
+                if '"choices"' in text:
+                    try:
+                        # Parse and validate LLM Studio response
+                        studio_response = orjson.loads(text)
+                        validate(instance=studio_response, schema=LLMSTUDIO_SCHEMA)
+                        text = studio_response["choices"][0]["message"]["content"]
+                    except (orjson.JSONDecodeError, ValidationError) as e:
+                        logger.error(f"Error parsing LLM Studio response: {str(e)}")
                         return AgentResponse(
-                            response="LMStudio is not running or not accessible",
+                            response=text,
+                            dialogue="Error parsing response",
                             concepts=[{
-                                "name": "LMStudio Error",
+                                "name": "Parse Error",
                                 "type": "error",
-                                "description": "Could not connect to LMStudio API",
+                                "description": str(e),
                                 "related": [],
                                 "validation": {
                                     "confidence": 0.0,
                                     "supported_by": [],
                                     "contradicted_by": [],
-                                    "needs_verification": []
+                                    "needs_verification": ["Response format"]
                                 }
                             }],
-                            key_points=["LMStudio connection failed"],
-                            implications=["System cannot process requests"],
-                            uncertainties=["LMStudio availability"],
-                            reasoning=["Connection attempt failed"],
+                            key_points=["Error occurred"],
+                            implications=["Response parsing failed"],
+                            uncertainties=["Response format"],
+                            reasoning=["JSON parsing error"],
                             perspective="parsing",
                             confidence=0.0,
                             timestamp=datetime.now()
                         )
-                    structured = json.loads(text)
-                except json.JSONDecodeError as e:
-                    logger.debug(f"Initial JSON parse failed: {e}")
+            except:
+                pass  # If extraction fails, use the text as-is
+                
+            # If it's a simple text response (not JSON), wrap it in a basic structure
+            if not (text.strip().startswith('{') and text.strip().endswith('}')):
+                # Check if it's a greeting-style response
+                if any(greeting in text.lower() for greeting in ["hello", "hi", "hey", "greetings"]):
+                    return AgentResponse(
+                        response=text,
+                        dialogue=text,
+                        concepts=[{
+                            "name": "Greeting",
+                            "type": "interaction",
+                            "description": "Initial greeting response",
+                            "related": ["Conversation Start"],
+                            "validation": {
+                                "confidence": 0.8,
+                                "supported_by": ["Direct greeting"],
+                                "contradicted_by": [],
+                                "needs_verification": []
+                            }
+                        }],
+                        key_points=["Conversation initiated"],
+                        implications=["Begin dialogue"],
+                        uncertainties=[],
+                        reasoning=["Greeting detected"],
+                        perspective="dialogue",
+                        confidence=0.8,
+                        timestamp=datetime.now(),
+                        metadata={
+                            "interaction_type": "greeting",
+                            "timestamp": datetime.now().isoformat()
+                        }
+                    )
+                else:
+                    return AgentResponse(
+                        response=text,
+                        dialogue=text,
+                        concepts=[{
+                            "name": "Direct Response",
+                            "type": "interaction",
+                            "description": text,
+                            "related": ["Conversation"],
+                            "validation": {
+                                "confidence": 0.7,
+                                "supported_by": ["Direct response"],
+                                "contradicted_by": [],
+                                "needs_verification": []
+                            }
+                        }],
+                        key_points=["User interaction"],
+                        implications=["Continue dialogue"],
+                        uncertainties=[],
+                        reasoning=["Direct response"],
+                        perspective="dialogue",
+                        confidence=0.7,
+                        timestamp=datetime.now(),
+                        metadata={
+                            "interaction_type": "direct_response",
+                            "timestamp": datetime.now().isoformat()
+                        }
+                    )
+            
+            # Try JSON parsing for structured responses
+            try:
+                try:
+                    # Parse and validate structured content
+                    structured = orjson.loads(text)
+                    validate(instance=structured, schema=STRUCTURED_CONTENT_SCHEMA)
+                except (orjson.JSONDecodeError, ValidationError) as e:
+                    logger.error(f"Error parsing structured content: {str(e)}")
                     # Try cleaning the text first
-                    text = _clean_json_text(text)
-                    logger.debug(f"Cleaned text: {text}")
-                    structured = json.loads(text)
+                    cleaned_text = _clean_json_text(text)
+                    try:
+                        structured = orjson.loads(cleaned_text)
+                        validate(instance=structured, schema=STRUCTURED_CONTENT_SCHEMA)
+                    except (orjson.JSONDecodeError, ValidationError) as e2:
+                        logger.error(f"Error parsing cleaned content: {str(e2)}")
+                        return AgentResponse(
+                            response=text,
+                            dialogue="Error parsing structured content",
+                            concepts=[{
+                                "name": "Parse Error",
+                                "type": "error",
+                                "description": str(e2),
+                                "related": [],
+                                "validation": {
+                                    "confidence": 0.0,
+                                    "supported_by": [],
+                                    "contradicted_by": [],
+                                    "needs_verification": ["Content format"]
+                                }
+                            }],
+                            key_points=["Error occurred"],
+                            implications=["Content parsing failed"],
+                            uncertainties=["Content format"],
+                            reasoning=["JSON parsing error"],
+                            perspective="parsing",
+                            confidence=0.0,
+                            timestamp=datetime.now()
+                        )
+            except ValueError as e:
+                logger.debug(f"Initial JSON parse failed: {e}")
+                # Try cleaning the text first
+                text = _clean_json_text(text)
+                logger.debug(f"Cleaned text: {text}")
+                structured = orjson.loads(text)
                 if isinstance(structured, dict):
                     # Validate all fields
                     response = structured.get("response", "")
@@ -430,8 +613,13 @@ class ParsingAgent(BaseAgent):
                         (0.15 if reasoning else 0.0)
                     )))
                     
+                    # Get dialogue field or use response as fallback
+                    dialogue = structured.get("dialogue", response)
+                    
+                    # Create agent response with dialogue field
                     return AgentResponse(
                         response=response,
+                        dialogue=dialogue,
                         concepts=concepts,
                         key_points=key_points or ["No key points extracted"],
                         implications=implications or ["No implications found"],
@@ -439,9 +627,10 @@ class ParsingAgent(BaseAgent):
                         reasoning=reasoning or ["No reasoning steps recorded"],
                         perspective="parsing",
                         confidence=confidence,
-                        timestamp=datetime.now()
+                        timestamp=datetime.now(),
+                        metadata=structured.get("metadata", {})
                     )
-            except (json.JSONDecodeError, ValueError) as e:
+            except (ValueError, TypeError) as e:
                 logger.warning(f"Failed to parse JSON: {str(e)}")
                 
                 # Try to extract concepts from the text
@@ -456,7 +645,7 @@ class ParsingAgent(BaseAgent):
                         concept_text = re.sub(r',\s*([}\]])', r'\1', concept_text)
                         concept_text = re.sub(r'"\s*"', '""', concept_text)
                         # Parse as JSON
-                        concept_data = json.loads(concept_text)
+                        concept_data = orjson.loads(concept_text)
                         if isinstance(concept_data, list):
                             concepts = [
                                 _ensure_valid_concept(c)
@@ -514,8 +703,10 @@ class ParsingAgent(BaseAgent):
                         elif line.strip():
                             reasoning.append(line.strip())
                 
+                # Create response with dialogue field
                 return AgentResponse(
                     response=text,
+                    dialogue="I've processed your message but encountered some formatting issues.",
                     concepts=concepts,
                     key_points=key_points or ["No key points extracted"],
                     implications=implications or ["No implications found"],
@@ -523,7 +714,11 @@ class ParsingAgent(BaseAgent):
                     reasoning=reasoning or ["No reasoning steps recorded"],
                     perspective="parsing",
                     confidence=0.1,
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(),
+                    metadata={
+                        "parsing_method": "pattern_matching",
+                        "timestamp": datetime.now().isoformat()
+                    }
                 )
             
             # If JSON parsing failed, try pattern matching
@@ -592,16 +787,33 @@ class ParsingAgent(BaseAgent):
                 
         except Exception as e:
             logger.error(f"Error parsing text: {str(e)}")
+            # Create error response with dialogue field
             return AgentResponse(
                 response=text if isinstance(text, str) else "",
-                concepts=[],
-                key_points=[],
-                implications=[],
-                uncertainties=[],
-                reasoning=[],
+                dialogue="I apologize, but I encountered an error while processing your message.",
+                concepts=[{
+                    "name": "Parse Error",
+                    "type": "error",
+                    "description": str(e),
+                    "related": [],
+                    "validation": {
+                        "confidence": 0.0,
+                        "supported_by": [],
+                        "contradicted_by": [],
+                        "needs_verification": ["Error resolution"]
+                    }
+                }],
+                key_points=["Error occurred during parsing"],
+                implications=["Response may be incomplete"],
+                uncertainties=["Error cause and resolution"],
+                reasoning=["Parse error encountered"],
                 perspective="parsing",
                 confidence=0.0,
-                timestamp=datetime.now()
+                timestamp=datetime.now(),
+                metadata={
+                    "error": str(e),
+                    "timestamp": datetime.now().isoformat()
+                }
             )
     
     async def parse_sentiment(self, text: str) -> Dict[str, float]:

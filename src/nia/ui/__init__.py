@@ -1,35 +1,18 @@
-"""NIA UI Package.
+"""NIA UI package."""
 
-This package provides a WhatsApp-style chat interface for the NIA system:
-
-1. Chat Features:
-   - Multi-agent chat system
-   - Group and individual agent conversations
-   - Chat history tracking
-   - Message handling with error management
-   - Memory integration
-
-2. Available Agents:
-   - Nova (Main): Primary chat interface
-   - Meta Agent: Coordinates and synthesizes interactions
-   - Belief Agent: Handles knowledge validation
-   - Desire Agent: Manages goals and aspirations
-   - Emotion Agent: Processes emotional context
-   - Reflection Agent: Analyzes patterns and insights
-
-3. Memory Integration:
-   - Chat history persistence
-   - Memory retrieval and storage
-   - Context management
-"""
-
-from .mobile import MobileUI
-from .desktop import DesktopUI
-from .handlers import System2Handler, MemoryHandler
+from nia.ui.chat import ChatUI
+from nia.ui.base import BaseUI
+from nia.ui.state import UIState
+from nia.ui.components import UIComponents, TabComponents
+from nia.ui.message_handlers import MessageHandlers
+from nia.ui.graph import GraphVisualizer
 
 __all__ = [
-    'MobileUI',
-    'DesktopUI',
-    'System2Handler',
-    'MemoryHandler'
+    'ChatUI',
+    'BaseUI',
+    'UIState',
+    'UIComponents',
+    'TabComponents',
+    'MessageHandlers',
+    'GraphVisualizer'
 ]

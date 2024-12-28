@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from datetime import datetime
 from .memory_types import AgentResponse
@@ -24,6 +25,7 @@ class LLMInterface:
         """
         self.parser = None  # Will be set after initialization
         self.use_mock = use_mock
+        self.base_url = "http://localhost:1234/v1"
         
         # Configure logging
         self.logger = logging.getLogger(__name__)
@@ -34,21 +36,41 @@ class LLMInterface:
         self.logger.addHandler(handler)
         self.logger.setLevel(logging.DEBUG)
         
+    async def check_lmstudio(self) -> bool:
+        """Check if LMStudio is running and get available models."""
+        from openai import AsyncOpenAI
+        try:
+            # Initialize OpenAI client for LMStudio
+            client = AsyncOpenAI(
+                base_url=self.base_url,
+                api_key="lm-studio"  # LMStudio accepts any non-empty string
+            )
+            
+            # Check models endpoint
+            models = await client.models.list()
+            if not models.data:
+                return False
+            
+            # Test chat completions endpoint
+            test_completion = await client.chat.completions.create(
+                model=models.data[0].id,
+                messages=[{"role": "user", "content": "test"}],
+                max_tokens=1,
+                temperature=0.7
+            )
+            
+            return bool(test_completion.choices)
+            
+        except Exception as e:
+            self.logger.error(f"Error checking LMStudio: {str(e)}")
+            return False
+        
     def initialize_parser(
         self,
         store: 'Neo4jMemoryStore',
         vector_store: 'VectorStore'
     ) -> None:
-        """Initialize parsing agent.
-        
-        This method creates a new ParsingAgent instance and sets it as the parser
-        for this LLM interface. The parser is used to extract structured content
-        from LLM responses.
-        
-        Args:
-            store: Neo4j store for concept storage
-            vector_store: Vector store for embeddings
-        """
+        """Initialize parsing agent."""
         from .agents.parsing_agent import ParsingAgent
         self.parser = ParsingAgent(self, store, vector_store)
         
@@ -128,249 +150,174 @@ class LLMInterface:
         })
         
     async def _make_llm_request(self, messages: List[Dict[str, str]]) -> str:
-        """Make request to LMStudio API.
-        
-        Args:
-            messages: List of message dictionaries with role and content
-            
-        Returns:
-            Response text from LLM
-        """
-        import aiohttp
+        """Make request to LMStudio API."""
+        from openai import AsyncOpenAI
         
         try:
-            async with aiohttp.ClientSession() as session:
-                request_data = {
-                    "messages": messages,
-                    "temperature": 0.7,
-                    "max_tokens": 2000,
-                    "model": "llama-3.2-3b-instruct"
-                }
-                self.logger.debug(f"LLM Request: {json.dumps(request_data, indent=2)}")
+            # Initialize OpenAI client for LMStudio
+            client = AsyncOpenAI(
+                base_url=self.base_url,
+                api_key="lm-studio"  # LMStudio accepts any non-empty string
+            )
+            
+            # First verify LMStudio is running
+            if not await self.check_lmstudio():
+                logger.warning("LMStudio is not running or not accessible")
+                return json.dumps({
+                    "response": "I apologize, but I'm currently unable to process messages. Please ensure LMStudio is running and try again.",
+                    "dialogue": "LMStudio connection required",
+                    "concepts": [{
+                        "name": "Connection Error",
+                        "type": "error",
+                        "description": "LMStudio is not running or not accessible",
+                        "related": [],
+                        "validation": {
+                            "confidence": 0.0,
+                            "supported_by": [],
+                            "contradicted_by": [],
+                            "needs_verification": []
+                        }
+                    }],
+                    "key_points": ["LMStudio connection required"],
+                    "implications": ["Cannot process messages"],
+                    "uncertainties": ["LMStudio status"],
+                    "reasoning": ["Connection check failed"]
+                })
+            
+            # Get available models
+            models = await client.models.list()
+            if not models.data:
+                raise Exception("No models available in LMStudio")
+            
+            # Use first available model for chat completions
+            model_id = models.data[0].id
+            
+            # Make completion request
+            completion = await client.chat.completions.create(
+                model=model_id,
+                messages=messages,
+                temperature=0.7,
+                max_tokens=10000,  # Increased token limit
+                timeout=30.0  # Added timeout for longer responses
+            )
+            
+            self.logger.debug(f"LLM Response: {completion}")
+            
+            if not completion.choices:
+                raise Exception("No choices in LMStudio response")
+            
+            content = completion.choices[0].message.content
+            self.logger.debug(f"Raw LLM Content: {content}")
+            
+            # Clean up and parse content
+            content = content.strip()
+            if content.startswith("```json"):
+                content = content[7:]
+            if content.endswith("```"):
+                content = content[:-3]
+            content = content.strip()
+            
+            # Handle empty or invalid content
+            if not content or content == "null":
+                return json.dumps({
+                    "response": "Empty or invalid response",
+                    "concepts": [],
+                    "key_points": [],
+                    "implications": [],
+                    "uncertainties": [],
+                    "reasoning": []
+                })
+            
+            # Parse and validate response
+            try:
+                # Parse JSON content
+                parsed = json.loads(content) if content.startswith('{') else {"response": content}
+                if not isinstance(parsed, dict):
+                    parsed = {"response": str(parsed)}
+                if "response" not in parsed:
+                    parsed["response"] = content
+                    
+                # Log parsed structure
+                logger.debug(f"Parsed response structure: {json.dumps(parsed, indent=2)}")
                 
-                try:
-                    # Increased timeout and added retry logic for LMStudio
-                    for retry in range(3):
-                        try:
-                            async with session.post(
-                                "http://localhost:1234/v1/chat/completions",
-                                json=request_data,
-                                timeout=30.0,  # Increased timeout for LMStudio
-                                headers={"Content-Type": "application/json"}
-                            ) as response:
-                                # Check response status
-                                if response.status != 200:
-                                    error_text = await response.text()
-                                    self.logger.error(f"LMStudio error (status {response.status}): {error_text}")
-                                    if retry < 2:  # Try again if not last attempt
-                                        self.logger.info(f"Retrying LMStudio request (attempt {retry + 2}/3)")
-                                        continue
-                                    raise Exception(f"LMStudio API error (status {response.status}): {error_text}")
-
-                                result = await response.json()
-                                self.logger.debug(f"LLM API Response: {json.dumps(result, indent=2)}")
-                                
-                                if "error" in result:
-                                    raise Exception(f"LMStudio API error: {result['error']}")
-                                    
-                                if "choices" not in result or not result["choices"]:
-                                    raise Exception("No choices in LMStudio response")
-                                
-                                content = result["choices"][0]["message"]["content"]
-                                self.logger.debug(f"Raw LLM Content: {content}")
-                                
-                                # Try to parse as JSON first
-                                try:
-                                    # Clean up common formatting issues
-                                    content = content.strip()
-                                    if content.startswith("```json"):
-                                        content = content[7:]
-                                    if content.endswith("```"):
-                                        content = content[:-3]
-                                    content = content.strip()
-                                    
-                                    parsed = json.loads(content)
-                                    
-                                    # Ensure base structure
-                                    if not isinstance(parsed, dict):
-                                        raise ValueError("Response must be a JSON object")
-                                        
-                                    # Validate and fix required fields
-                                    required_fields = {
-                                        "response": str,
-                                        "concepts": list,
-                                        "key_points": list,
-                                        "implications": list,
-                                        "uncertainties": list,
-                                        "reasoning": list
-                                    }
-                                    
-                                    # Add missing fields with defaults
-                                    for field, field_type in required_fields.items():
-                                        if field not in parsed:
-                                            if field_type == str:
-                                                parsed[field] = ""
-                                            else:
-                                                parsed[field] = []
-                                                
-                                    # Validate concepts
-                                    if parsed["concepts"]:
-                                        validated_concepts = []
-                                        for concept in parsed["concepts"]:
-                                            if not isinstance(concept, dict):
-                                                continue
-                                                
-                                            # Ensure required concept fields
-                                            concept_template = {
-                                                "name": str(concept.get("name", "Unnamed Concept")),
-                                                "type": str(concept.get("type", "concept")),
-                                                "description": str(concept.get("description", "")),
-                                                "related": list(concept.get("related", [])),
-                                                "validation": {
-                                                    "confidence": float(concept.get("validation", {}).get("confidence", 0.5)),
-                                                    "supported_by": list(concept.get("validation", {}).get("supported_by", [])),
-                                                    "contradicted_by": list(concept.get("validation", {}).get("contradicted_by", [])),
-                                                    "needs_verification": list(concept.get("validation", {}).get("needs_verification", []))
-                                                }
-                                            }
-                                            validated_concepts.append(concept_template)
-                                            
-                                        parsed["concepts"] = validated_concepts
-                                    
-                                    return json.dumps(parsed)
-                                    
-                                except (json.JSONDecodeError, ValueError) as e:
-                                    self.logger.warning(f"Error parsing LLM response: {str(e)}")
-                                    self.logger.warning("Attempting to fix response format")
-                                    
-                                    # More robust JSON extraction
-                                    import re
-                                    
-                                    # Clean up common JSON formatting issues
-                                    content = content.replace('\n', ' ').strip()
-                                    
-                                    # Fix JSON structure
-                                    content = re.sub(r'}\s*{', '}{', content)  # Fix adjacent objects
-                                    content = re.sub(r']\s*{', ']{', content)  # Fix array followed by object
-                                    content = re.sub(r'}\s*\[', '}[', content)  # Fix object followed by array
-                                    
-                                    # Fix property names and values
-                                    content = re.sub(r'([{,])\s*([a-zA-Z_][a-zA-Z0-9_]*)\s*:', r'\1"\2":', content)  # Quote property names
-                                    content = re.sub(r':\s*"([^"]*)"(?=\s*[},])', r':"\1"', content)  # Fix string values
-                                    content = re.sub(r':\s*([^",\s\]}]+)(?=\s*[},])', r':"\1"', content)  # Quote unquoted values
-                                    content = re.sub(r':\s*(\d+\.?\d*)\s*(?=[,}])', r':\1', content)  # Preserve numeric values
-                                    content = re.sub(r':\s*(true|false)\s*(?=[,}])', r':\1', content)  # Preserve boolean values
-                                    
-                                    # Normalize whitespace and structure
-                                    content = re.sub(r'\s+', ' ', content)  # Normalize whitespace
-                                    content = re.sub(r'"\s*"', '""', content)  # Fix array string spacing
-                                    content = re.sub(r'\[\s*"', '["', content)  # Fix array start spacing
-                                    content = re.sub(r'"\s*\]', '"]', content)  # Fix array end spacing
-                                    
-                                    # Ensure proper JSON structure
-                                    if not content.startswith('{'):
-                                        content = '{' + content
-                                    if not content.endswith('}'):
-                                        content = content + '}'
-                                    
-                                    try:
-                                        parsed = json.loads(content)
-                                        if isinstance(parsed, dict) and any(key in parsed for key in ["response", "concepts"]):
-                                            return json.dumps(parsed)
-                                    except json.JSONDecodeError:
-                                        self.logger.warning("Could not parse JSON directly, attempting extraction")
-                                        
-                                        # Try to find JSON-like content
-                                        json_pattern = r'(\{(?:[^{}]|(?:\{[^{}]*\}))*\})'
-                                        matches = list(re.finditer(json_pattern, content))
-                                        
-                                        for match in matches:
-                                            try:
-                                                potential_json = match.group(0)
-                                                parsed = json.loads(potential_json)
-                                                if isinstance(parsed, dict) and any(key in parsed for key in ["response", "concepts"]):
-                                                    return json.dumps(parsed)
-                                            except json.JSONDecodeError:
-                                                continue
-                                    
-                                    self.logger.warning("Could not extract valid JSON, using fallback")
-                                    
-                                    # Wrap in proper JSON structure
-                                    return json.dumps({
-                                        "response": content,
-                                        "concepts": [{
-                                            "name": "LLM Response",
-                                            "type": "belief",
-                                            "description": content,
-                                            "related": [],
-                                            "validation": {
-                                                "confidence": 0.5,
-                                                "supported_by": [],
-                                                "contradicted_by": [],
-                                                "needs_verification": ["Response format needs validation"]
-                                            }
-                                        }],
-                                        "key_points": ["LLM provided response"],
-                                        "implications": ["Response needs proper structuring"],
-                                        "uncertainties": ["Response format", "Content structure"],
-                                        "reasoning": ["Attempted to parse LLM output", 
-                                                    "Applied fallback formatting"]
-                                    })
-                                
-                        except aiohttp.ClientError as e:
-                            if retry < 2:  # Try again if not last attempt
-                                self.logger.warning(f"LMStudio connection error (attempt {retry + 1}/3): {str(e)}")
-                                continue
-                            raise  # Re-raise if all retries failed
-                            
-                except aiohttp.ClientError as e:
-                    self.logger.error(f"LMStudio connection error: {str(e)}. Is LMStudio running?")
-                    return json.dumps({
-                        "response": "LMStudio is not running or not accessible",
-                        "concepts": [{
-                            "name": "LMStudio Error",
-                            "type": "error",
-                            "description": "Could not connect to LMStudio API",
-                            "related": [],
-                            "validation": {
-                                "confidence": 0.0,
-                                "supported_by": [],
-                                "contradicted_by": [],
-                                "needs_verification": []
-                            }
-                        }],
-                        "key_points": ["LMStudio connection failed"],
-                        "implications": ["System cannot process requests"],
-                        "uncertainties": ["LMStudio availability"],
-                        "reasoning": ["Connection attempt failed"]
-                    })
+                # Extract and validate tasks if present
+                if "tasks" in parsed:
+                    logger.info(f"Found {len(parsed['tasks'])} tasks in response")
+                    for task in parsed["tasks"]:
+                        logger.debug(f"Task: {json.dumps(task, indent=2)}")
+                    
+                # Ensure required fields
+                base_structure = {
+                    "response": str(parsed.get("response", "")),
+                    "dialogue": str(parsed.get("dialogue", parsed.get("response", ""))),
+                    "concepts": [],
+                    "key_points": [],
+                    "implications": [],
+                    "uncertainties": [],
+                    "reasoning": [],
+                    "tasks": [],  # Include tasks array
+                    "metadata": {
+                        "model": model_id,
+                        "timestamp": datetime.now().isoformat(),
+                        "total_tasks": 0,
+                        "estimated_total_time": 0
+                    }
+                }
+                
+                # Copy valid fields from parsed response
+                for field in ["concepts", "key_points", "implications", "uncertainties", "reasoning", "tasks"]:
+                    if field in parsed and isinstance(parsed[field], list):
+                        base_structure[field] = parsed[field]
+                        
+                # Update metadata if tasks present
+                if "tasks" in parsed:
+                    base_structure["metadata"]["total_tasks"] = len(parsed["tasks"])
+                    base_structure["metadata"]["estimated_total_time"] = sum(
+                        task.get("estimated_time", 0) for task in parsed["tasks"]
+                    )
+                        
+                return json.dumps(base_structure)
+                
+            except json.JSONDecodeError as e:
+                self.logger.warning(f"Error parsing response: {str(e)}")
+                return json.dumps({
+                    "response": content,
+                    "dialogue": content,
+                    "concepts": [{
+                        "name": "Parse Error",
+                        "type": "error",
+                        "description": str(e),
+                        "related": []
+                    }],
+                    "key_points": ["Error parsing response"],
+                    "implications": ["Response needs reformatting"],
+                    "uncertainties": ["Response structure"],
+                    "reasoning": ["Parse error occurred"]
+                })
                     
         except Exception as e:
             self.logger.error(f"Error making LLM request: {str(e)}")
             return json.dumps({
                 "response": f"Error: {str(e)}",
-                "concepts": [],
-                "key_points": [],
-                "implications": [],
-                "uncertainties": [],
-                "reasoning": []
+                "dialogue": "I apologize, but I encountered an error while processing your request.",
+                "concepts": [{
+                    "name": "Processing Error",
+                    "type": "error",
+                    "description": str(e),
+                    "related": []
+                }],
+                "key_points": ["Error occurred"],
+                "implications": ["Request failed"],
+                "uncertainties": ["Error cause"],
+                "reasoning": ["Error handling"]
             })
     
     async def get_completion(self, prompt: str, agent_type: str = "default") -> str:
-        """Get LLM completion.
-        
-        Args:
-            prompt: Prompt for LLM
-            agent_type: Type of agent making request
-            
-        Returns:
-            LLM completion text
-        """
+        """Get LLM completion."""
         try:
             if self.use_mock:
                 # Use mock response for testing
                 concept = self._get_mock_concept(agent_type)
-                # Get mock concept and ensure it has required fields
                 mock_concept = {
                     "name": concept["name"],
                     "type": concept["type"],
@@ -383,15 +330,6 @@ class LLMInterface:
                         "needs_verification": []
                     }
                 }
-
-                # For emotion concepts, ensure related terms exist
-                if mock_concept["type"] == "emotion" and not mock_concept["related"]:
-                    mock_concept["related"] = ["Affect", "Behavior", "Emotional Regulation", "Mood"]
-                
-                if "consolidation" in str(prompt).lower():
-                    mock_concept["type"] = "consolidation"
-                    mock_concept["name"] = "Memory Pattern"
-                    mock_concept["description"] = "Consolidated memory pattern"
                 
                 response = {
                     "response": "Mock LLM response for " + agent_type,
@@ -405,48 +343,16 @@ class LLMInterface:
                 return json.dumps(response, ensure_ascii=False)
             else:
                 # Make real LLM request
+                # Import system prompt
+                from .prompts import SYSTEM_PROMPT, AGENT_PROMPTS
+                
+                # Get agent-specific prompt
+                agent_prompt = AGENT_PROMPTS.get(agent_type, AGENT_PROMPTS["default"])
+                
                 messages = [
                     {
                         "role": "system",
-                        "content": f"""You are an AI agent specialized in {agent_type} analysis. Your response MUST be a single valid JSON object with NO additional text or formatting.
-
-REQUIRED FORMAT:
-{{
-    "response": "Your detailed analysis from a {agent_type} perspective"
-    "concepts": [
-        {{
-            "name": "Concept name (required)"
-            "type": "{agent_type}"
-            "description": "Clear description (required)"
-            "related": ["Term1" "Term2"]
-            "validation": {{
-                "confidence": 0.8
-                "supported_by": ["Evidence1"]
-                "contradicted_by": []
-                "needs_verification": []
-            }}
-        }}
-    ]
-    "key_points": ["Key insight 1"]
-    "implications": ["Implication 1"]
-    "uncertainties": ["Uncertainty 1"]
-    "reasoning": ["Reasoning step 1"]
-}}
-
-CRITICAL RULES:
-1. Response MUST be ONLY the JSON object - no markdown no code blocks
-2. Use DOUBLE QUOTES for ALL strings and property names
-3. NO trailing commas after last item in arrays/objects
-4. ALL property names must match exactly as shown
-5. ALL arrays and objects must be properly closed
-6. Concepts array MUST contain at least one concept
-7. ALL fields shown are required - do not omit any
-8. ALL arrays must contain at least one item
-9. Validation object is required for each concept with exact structure shown
-10. Numbers must be raw numeric values without quotes (e.g. confidence: 0.8 not "0.8")
-11. Boolean values must be raw true/false without quotes
-12. Arrays must use square brackets even for single items
-13. Validation confidence must be between 0.0 and 1.0"""
+                        "content": f"{agent_prompt}\n\n{SYSTEM_PROMPT.format(agent_type=agent_type)}"
                     },
                     {
                         "role": "user",
@@ -466,16 +372,7 @@ CRITICAL RULES:
         agent_type: str = "default",
         metadata: Optional[Dict] = None
     ) -> AgentResponse:
-        """Get structured LLM completion.
-        
-        Args:
-            prompt: Prompt for LLM
-            agent_type: Type of agent making request
-            metadata: Optional metadata
-            
-        Returns:
-            Structured agent response
-        """
+        """Get structured LLM completion."""
         try:
             # Get raw completion
             completion = await self.get_completion(prompt, agent_type)

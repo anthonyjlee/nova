@@ -95,8 +95,18 @@ class MemorySystem:
         self.dialogue_agent = DialogueAgent(llm, store, vector_store)
         self.context_agent = ContextAgent(llm, store, vector_store)
         
-        # Initialize integration agent
-        self.meta_agent = MetaAgent(llm, store, vector_store)
+        # Create agents dictionary for meta agent
+        agents = {
+            'belief': self.belief_agent,
+            'desire': self.desire_agent,
+            'emotion': self.emotion_agent,
+            'reflection': self.reflection_agent,
+            'research': self.research_agent,
+            'task': self.task_agent
+        }
+        
+        # Initialize integration agent with agents dictionary
+        self.meta_agent = MetaAgent(llm, store, vector_store, agents)
         
         # Track consolidation
         self.last_consolidation = datetime.now()

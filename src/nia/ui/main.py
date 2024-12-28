@@ -18,9 +18,19 @@ def check_dependencies() -> bool:
     try:
         import gradio
         import neo4j
+        import aiohttp
         return True
     except ImportError as e:
         logger.error(f"Missing dependency: {str(e)}")
+        return False
+
+def check_lmstudio() -> bool:
+    """Check if LMStudio is running."""
+    import requests
+    try:
+        response = requests.get("http://localhost:1234/v1/models", timeout=2.0)
+        return response.status_code == 200
+    except:
         return False
 
 def check_environment() -> bool:
@@ -41,10 +51,18 @@ def check_environment() -> bool:
         logger.error("Please ensure Neo4j is running and credentials are correct")
         return False
     
+    # Check LMStudio
+    if not check_lmstudio():
+        logger.warning("LMStudio is not running")
+        logger.warning("Chat functionality will be limited until LMStudio is started")
+        # Don't return False since LMStudio is optional at startup
+    else:
+        logger.info("LMStudio connection successful")
+    
     return True
 
 def setup_paths():
-    """Set up Python path to include NIA modules."""
+    """Set up Python path and required directories."""
     # Add project root to Python path
     project_root = Path(__file__).parent.parent.parent.parent
     if str(project_root) not in sys.path:
@@ -54,14 +72,19 @@ def setup_paths():
     logs_dir = project_root / "logs"
     logs_dir.mkdir(exist_ok=True)
     
-    return project_root
+    # Create state directory
+    state_dir = Path(os.path.expanduser("~/.nia/state"))
+    state_dir.mkdir(parents=True, exist_ok=True)
+    
+    return project_root, state_dir
 
 async def main():
     """Main entry point."""
     try:
-        # Set up paths
-        project_root = setup_paths()
+        # Set up paths and directories
+        project_root, state_dir = setup_paths()
         logger.info(f"Project root: {project_root}")
+        logger.info(f"State directory: {state_dir}")
         
         # Check dependencies
         if not check_dependencies():
@@ -74,16 +97,25 @@ async def main():
             sys.exit(1)
         
         # Import UI components
-        from .mobile import MobileUI
+        from .chat import ChatUI
         
-        # Launch mobile interface
+        # Launch chat interface with state persistence
         logger.info("Launching chat interface")
-        ui = MobileUI()
-        ui.launch()
+        ui = ChatUI(state_dir=str(state_dir))
+        await ui.launch(
+            server_name="127.0.0.1",
+            server_port=7860,
+            share=False,
+            state_dir=str(state_dir)
+        )
         
     except Exception as e:
         logger.error(f"Error starting UI: {str(e)}")
         sys.exit(1)
 
-if __name__ == "__main__":
+def run():
+    """Run the main function in an async context."""
     asyncio.run(main())
+
+if __name__ == "__main__":
+    run()

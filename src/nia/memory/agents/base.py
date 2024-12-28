@@ -82,29 +82,87 @@ class BaseAgent:
             prompt = self._format_prompt(content)
             logger.debug(f"Formatted prompt: {prompt}")
             
-            response = await self.llm.get_structured_completion(
+            raw_response = await self.llm.get_structured_completion(
                 prompt,
                 agent_type=self.agent_type,
                 metadata=metadata
             )
-            logger.debug(f"LLM response: {response}")
+            logger.debug(f"Raw LLM response: {raw_response}")
             
-            # Add agent perspective and dialogue context
+            # Handle raw string response
+            if isinstance(raw_response, str):
+                # Convert to structured response
+                structured_response = {
+                    "response": raw_response,
+                    "dialogue": raw_response,
+                    "concepts": [{
+                        "name": f"{self.agent_type.title()} Analysis",
+                        "type": self.agent_type,
+                        "description": raw_response,
+                        "related": [],
+                        "validation": {
+                            "confidence": 0.8,
+                            "supported_by": ["Direct analysis"],
+                            "contradicted_by": [],
+                            "needs_verification": []
+                        }
+                    }],
+                    "key_points": [f"{self.agent_type} perspective: {raw_response}"],
+                    "implications": ["Analysis in progress"],
+                    "uncertainties": [],
+                    "reasoning": [f"{self.agent_type} analysis initiated"],
+                    "metadata": {
+                        "response_type": "direct_analysis",
+                        "agent_type": self.agent_type,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                }
+                raw_response = AgentResponse(**structured_response)
+            
+            response = raw_response
+            
+            # Initialize response metadata
+            if not response.metadata:
+                response.metadata = {}
+            
+            # Add base metadata
+            base_metadata = {
+                "agent_type": self.agent_type,
+                "timestamp": datetime.now().isoformat(),
+                "whispers": [],
+                "agent_interactions": []
+            }
+            
+            # Add provided metadata
+            if metadata:
+                base_metadata.update(metadata)
+            
+            # Add agent perspective and metadata
             response.perspective = self.agent_type
+            response.metadata.update(base_metadata)
+            
+            # Add dialogue context and message
             if self.current_dialogue:
                 response.dialogue_context = self.current_dialogue
                 
                 # Add message to dialogue
-                await self.provide_insight(
+                message = await self.provide_insight(
                     content=response.response,
                     references=[c["name"] for c in response.concepts]
                 )
-            
-            # Add metadata if provided
-            if metadata:
-                if not response.metadata:
-                    response.metadata = {}
-                response.metadata.update(metadata)
+                
+                # Record interaction
+                if message:
+                    response.metadata["agent_interactions"].append({
+                        "role": "assistant",
+                        "content": f"[{self.agent_type.capitalize()}] {message.content}",
+                        "timestamp": message.timestamp.isoformat()
+                    })
+                    
+                    # Add whisper
+                    response.metadata["whispers"].append(
+                        f"*{self.agent_type.capitalize()} agent processing: {message.content}*"
+                    )
             
             # Store concepts in Neo4j
             for concept in response.concepts:
@@ -131,9 +189,9 @@ class BaseAgent:
                     "related": concept["related"],
                     "validation": {
                         "confidence": 0.8,
-                        "supported_by": ["Evidence 1"],
+                        "supported_by": ["Working agent responses"],
                         "contradicted_by": [],
-                        "needs_verification": []
+                        "needs_verification": ["Critical uncertainties"]
                     }
                 }
                 
@@ -166,13 +224,13 @@ class BaseAgent:
                 error_concept = {
                     "name": f"{self.agent_type.title()} Error",
                     "type": concept_types.get(self.agent_type, "error"),
-                    "description": error_msg,
+                    "description": str(e),
                     "related": [],
                     "validation": {
                         "confidence": 0.0,
-                        "supported_by": [],
+                        "supported_by": ["Error handling"],
                         "contradicted_by": [],
-                        "needs_verification": ["Error handling and recovery"]
+                        "needs_verification": ["System recovery"]
                     }
                 }
                 
@@ -187,17 +245,74 @@ class BaseAgent:
                 except Exception as store_error:
                     logger.error(f"Error storing error concept: {str(store_error)}")
                 
-                return AgentResponse(
-                    response=error_msg,
+                # Check if error is due to LMStudio not running
+                if "LMStudio is not running" in str(e):
+                    return AgentResponse(
+                        response="LMStudio is not running. Please start LMStudio and try again.",
+                        dialogue="I need LMStudio to be running to process your message. Please start LMStudio and try again.",
+                        concepts=[{
+                            "name": "LMStudio Required",
+                            "type": "system",
+                            "description": "LMStudio must be running for message processing",
+                            "related": [],
+                            "validation": {
+                                "confidence": 1.0,
+                                "supported_by": ["System check"],
+                                "contradicted_by": [],
+                                "needs_verification": ["LMStudio status"]
+                            }
+                        }],
+                        key_points=["LMStudio is required but not running"],
+                        implications=["Cannot process messages until LMStudio is started"],
+                        uncertainties=[],
+                        reasoning=["System dependency check failed"],
+                        perspective="system",
+                        confidence=1.0,
+                        timestamp=datetime.now(),
+                        metadata={
+                            "error_type": "dependency",
+                            "dependency": "LMStudio",
+                            "status": "not_running",
+                            "timestamp": datetime.now().isoformat()
+                        }
+                    )
+                
+                # Create error response for other errors
+                error_response = AgentResponse(
+                    response=f"Error in {self.agent_type} processing: {str(e)}",
+                    dialogue=f"I apologize, but I encountered an error while processing your message.",
                     concepts=[error_concept],
-                    key_points=["Error occurred during processing"],
-                    implications=["System may need attention"],
-                    uncertainties=["Root cause needs investigation"],
-                    reasoning=["Error handling activated"],
+                    key_points=[f"Error in {self.agent_type} agent"],
+                    implications=["System needs attention"],
+                    uncertainties=["Error cause needs investigation"],
+                    reasoning=["Error handling protocol activated"],
                     perspective=self.agent_type,
                     confidence=0.0,
-                    timestamp=datetime.now()
+                    timestamp=datetime.now(),
+                    metadata={
+                        "error": str(e),
+                        "agent_type": self.agent_type,
+                        "error_time": datetime.now().isoformat(),
+                        "whispers": [f"*{self.agent_type.capitalize()} agent error: {str(e)}*"],
+                        "agent_interactions": [{
+                            "role": "assistant",
+                            "content": f"[{self.agent_type.capitalize()}] Error: {str(e)}",
+                            "timestamp": datetime.now().isoformat()
+                        }]
+                    }
                 )
+
+                # Add error message to dialogue if available
+                if self.current_dialogue:
+                    message = await self.send_message(
+                        content=f"Error: {str(e)}",
+                        message_type="error",
+                        references=[error_concept["name"]]
+                    )
+                    if message:
+                        error_response.dialogue_context = self.current_dialogue
+
+                return error_response
     
     async def provide_insight(
         self,

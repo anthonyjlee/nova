@@ -1,11 +1,12 @@
 """Meta agent for synthesizing responses from other agents."""
 
+import json
 import logging
 from typing import Dict, Any, Optional, TYPE_CHECKING
 from datetime import datetime, timedelta
 from ..memory_types import AgentResponse, DialogueContext, DialogueMessage
 from .base import BaseAgent
-from ..prompts import AGENT_PROMPTS
+from ..prompts import AGENT_PROMPTS, SYSTEM_PROMPT
 
 if TYPE_CHECKING:
     from ..llm_interface import LLMInterface
@@ -109,10 +110,10 @@ class MetaAgent(BaseAgent):
             response_text.append(
                 f"{agent_type.capitalize()} Agent Perspective:\n"
                 f"Response: {response.response}\n"
-                f"Main Concepts: {[c['name'] for c in response.concepts]}\n"
-                f"Key Insights: {response.key_points}\n"
-                f"Implications: {response.implications}\n"
-                f"Uncertainties: {response.uncertainties}\n"
+                f"Main Concepts: {', '.join([c['name'] for c in response.concepts]) if response.concepts else 'None'}\n"
+                f"Key Insights: {', '.join(response.key_points) if response.key_points else 'None'}\n"
+                f"Implications: {', '.join(response.implications) if response.implications else 'None'}\n"
+                f"Uncertainties: {', '.join(response.uncertainties) if response.uncertainties else 'None'}\n"
                 "---"
             )
         
@@ -142,10 +143,82 @@ Agent Perspectives:
         """Synthesize dialogue from agent responses."""
         try:
             # Process through base agent which uses parsing agent
-            response = await self.process(content)
+            raw_response = await self.process(content)
+            
+            # Extract agent responses and raw response content
+            agent_responses = content.get('agent_responses', {})
+            
+            # Try to parse raw response as JSON if it's a string
+            try:
+                if isinstance(raw_response.response, str):
+                    if raw_response.response.strip().startswith('{'):
+                        try:
+                            parsed_response = json.loads(raw_response.response)
+                        except json.JSONDecodeError:
+                            parsed_response = {"response": raw_response.response}
+                    else:
+                        parsed_response = {"response": raw_response.response}
+                else:
+                    parsed_response = raw_response.response if isinstance(raw_response.response, dict) else {"response": str(raw_response.response)}
+            except Exception as e:
+                logger.error(f"Error parsing response: {str(e)}")
+                parsed_response = {"response": str(raw_response.response)}
+            
+            # Initialize synthesized response with parsed content
+            synthesized_response = {
+                'response': parsed_response.get('response', str(raw_response.response)),
+                'dialogue': parsed_response.get('dialogue', parsed_response.get('response', str(raw_response.response))),
+                'concepts': parsed_response.get('concepts', []),
+                'key_points': parsed_response.get('key_points', []),
+                'implications': parsed_response.get('implications', []),
+                'uncertainties': parsed_response.get('uncertainties', []),
+                'reasoning': parsed_response.get('reasoning', []),
+                'whispers': []
+            }
+            
+            # Collect insights from all agents
+            for agent_type, agent_response in agent_responses.items():
+                # Handle concepts
+                if hasattr(agent_response, 'concepts') and agent_response.concepts:
+                    synthesized_response['concepts'].extend(agent_response.concepts)
+                
+                # Handle key points
+                if hasattr(agent_response, 'key_points') and agent_response.key_points:
+                    synthesized_response['key_points'].extend(agent_response.key_points)
+                
+                # Handle implications
+                if hasattr(agent_response, 'implications') and agent_response.implications:
+                    synthesized_response['implications'].extend(agent_response.implications)
+                
+                # Handle uncertainties
+                if hasattr(agent_response, 'uncertainties') and agent_response.uncertainties:
+                    synthesized_response['uncertainties'].extend(agent_response.uncertainties)
+                
+                # Handle reasoning
+                if hasattr(agent_response, 'reasoning') and agent_response.reasoning:
+                    synthesized_response['reasoning'].extend(agent_response.reasoning)
+                
+                # Handle whispers
+                if hasattr(agent_response, 'whispers') and agent_response.whispers:
+                    synthesized_response['whispers'].extend(agent_response.whispers)
+            
+            # Create response object
+            response = AgentResponse(
+                response=synthesized_response['response'],
+                dialogue=synthesized_response['dialogue'],
+                concepts=synthesized_response['concepts'],
+                key_points=synthesized_response['key_points'],
+                implications=synthesized_response['implications'],
+                uncertainties=synthesized_response['uncertainties'],
+                reasoning=synthesized_response['reasoning'],
+                whispers=synthesized_response['whispers'],
+                perspective='meta',
+                confidence=0.8,
+                timestamp=datetime.now()
+            )
             
             # Add dialogue context if available
-            if content.get('dialogue_context'):
+            if isinstance(content, dict) and content.get('dialogue_context'):
                 response.dialogue_context = content['dialogue_context']
             
             # Generate whispers from agent responses
@@ -192,14 +265,38 @@ Agent Perspectives:
                 'dialogue_turns': len(content.get('dialogue_context', {}).messages) if content.get('dialogue_context') else 0,
                 'participating_agents': list(agent_responses.keys()),
                 'synthesis_timestamp': datetime.now().isoformat(),
-                'agent_interactions': [
-                    {
-                        "role": "assistant",
-                        "content": f"[{agent_type}] {resp.response}"
-                    }
-                    for agent_type, resp in agent_responses.items()
-                ]
+                'agent_interactions': []
             }
+
+            # Add thinking interaction
+            response.metadata['agent_interactions'].append({
+                "role": "Meta Agent",
+                "content": "Let me analyze this from multiple perspectives..."
+            })
+
+            # Add each agent's analysis
+            for agent_type, resp in agent_responses.items():
+                # Extract key points for interaction content
+                key_points = resp.key_points if resp.key_points else []
+                implications = resp.implications if resp.implications else []
+                analysis_points = key_points + implications
+
+                # Create meaningful interaction content
+                if analysis_points:
+                    content = f"From my analysis: {' '.join(analysis_points)}"
+                else:
+                    content = resp.response
+
+                response.metadata['agent_interactions'].append({
+                    "role": f"{agent_type.capitalize()} Agent",
+                    "content": content
+                })
+
+            # Add synthesis interaction
+            response.metadata['agent_interactions'].append({
+                "role": "Meta Agent",
+                "content": f"Based on all perspectives: {response.response}"
+            })
             
             # Add assistant's response to dialogue context
             assistant_message = DialogueMessage(
@@ -319,10 +416,37 @@ Agent Perspectives:
             for agent_type in ['belief', 'desire', 'emotion', 'reflection', 'research', 'task_planner']:
                 agent = getattr(self, f"{agent_type}_agent", None)
                 if agent:
+                    # Initialize agent metadata
+                    agent_metadata = {
+                        "type": "agent_response",
+                        "agent": agent_type,
+                        "timestamp": datetime.now().isoformat(),
+                        "whispers": [],
+                        "agent_interactions": []
+                    }
+                    if metadata:
+                        agent_metadata.update(metadata)
+                    
                     response = await agent.process(
                         content_dict['content'],
-                        metadata
+                        agent_metadata
                     )
+                    
+                    # Add whisper for this agent
+                    whisper = f"*{agent_type.capitalize()} agent processing: {response.response}*"
+                    agent_metadata["whispers"].append(whisper)
+                    
+                    # Add interaction record
+                    agent_metadata["agent_interactions"].append({
+                        "role": "assistant",
+                        "content": f"[{agent_type.capitalize()} Agent] {response.response}"
+                    })
+                    
+                    # Update response metadata
+                    if not response.metadata:
+                        response.metadata = {}
+                    response.metadata.update(agent_metadata)
+                    
                     content_dict['agent_responses'][agent_type] = response
                     
                     # Store concepts from each agent

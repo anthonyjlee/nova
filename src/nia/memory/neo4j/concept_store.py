@@ -270,6 +270,26 @@ class ConceptStore(Neo4jBaseStore):
             logger.error(f"Error counting concepts: {str(e)}")
             return 0
 
+    async def count_concepts_by_label(self) -> Dict[str, int]:
+        """Count concepts grouped by label/type."""
+        async def count_operation():
+            async with self.driver.session() as session:
+                result = await session.run("""
+                    MATCH (n:Concept)
+                    WITH n.type as type, count(n) as count
+                    RETURN collect({type: type, count: count}) as counts
+                """)
+                record = await result.single()
+                if record and record["counts"]:
+                    return {item["type"]: item["count"] for item in record["counts"]}
+                return {}
+
+        try:
+            return await self._execute_with_retry(count_operation)
+        except Exception as e:
+            logger.error(f"Error counting concepts by label: {str(e)}")
+            return {}
+
     async def count_relationships(self) -> int:
         """Count total number of relationships in the database."""
         async def count_operation():
