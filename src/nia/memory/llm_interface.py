@@ -5,12 +5,12 @@ import logging
 import re
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from datetime import datetime
-from .memory_types import AgentResponse
+from .types.memory_types import AgentResponse
 
 if TYPE_CHECKING:
-    from .agents.parsing_agent import ParsingAgent
-    from .neo4j_store import Neo4jMemoryStore
-    from .vector_store import VectorStore
+    from ..nova.core.parsing import NovaParser
+    from .neo4j.neo4j_store import Neo4jMemoryStore
+    from .vector.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -71,10 +71,10 @@ class LLMInterface:
         vector_store: 'VectorStore'
     ) -> None:
         """Initialize parsing agent."""
-        from .agents.parsing_agent import ParsingAgent
-        self.parser = ParsingAgent(self, store, vector_store)
+        from ..nova.core.parsing import NovaParser
+        self.parser = NovaParser(self, store, vector_store)
         
-    def set_parser(self, parser: 'ParsingAgent'):
+    def set_parser(self, parser: 'NovaParser'):
         """Set parsing agent."""
         self.parser = parser
         

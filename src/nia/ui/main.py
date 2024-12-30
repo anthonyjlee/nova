@@ -97,7 +97,7 @@ async def main():
             sys.exit(1)
         
         # Import UI components
-        from .chat import ChatUI
+        from .components.chat import ChatUI
         
         # Launch chat interface with state persistence
         logger.info("Launching chat interface")

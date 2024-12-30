@@ -9,11 +9,11 @@ from typing import Dict, Any
 import gradio as gr
 from neo4j import GraphDatabase
 
-from nia.ui.base import BaseUI
-from nia.ui.components import UIComponents, TabComponents
-from nia.ui.theme import create_theme
-from nia.ui.message_handlers import MessageHandlers
-from nia.ui.graph import GraphVisualizer
+from .base import BaseUI
+from .ui_components import UIComponents, TabComponents
+from ..theme import create_theme
+from ..handlers.message_handlers import MessageHandlers
+from ..visualization.graph import GraphVisualizer
 
 logger = logging.getLogger(__name__)
 

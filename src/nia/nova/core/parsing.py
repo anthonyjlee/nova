@@ -1,4 +1,4 @@
-"""Parsing agent for extracting structured information from text."""
+"""Core parsing functionality from ParsingAgent."""
 
 import logging
 import orjson
@@ -6,15 +6,14 @@ import re
 from typing import Dict, List, Any, Optional, Union, TYPE_CHECKING
 from jsonschema import validate, ValidationError
 from datetime import datetime
-from ..memory_types import AgentResponse
-from .base import BaseAgent
+from ...types.memory_types import AgentResponse
+from ...agents.base import BaseAgent
 from ..prompts import AGENT_PROMPTS
 
 if TYPE_CHECKING:
-    from ..llm_interface import LLMInterface
-    from ..neo4j_store import Neo4jMemoryStore
-    from ..vector_store import VectorStore
-    from .structure_agent import StructureAgent
+    from ...llm_interface import LLMInterface
+    from ...memory.neo4j.neo4j_store import Neo4jMemoryStore
+    from ...memory.vector.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -385,8 +384,8 @@ def _extract_structured_content(text: str) -> Dict[str, Any]:
             "reasoning": []
         }
 
-class ParsingAgent(BaseAgent):
-    """Agent for parsing and structuring text."""
+class NovaParser:
+    """Core parsing functionality from ParsingAgent."""
     
     def __init__(
         self,
@@ -394,14 +393,11 @@ class ParsingAgent(BaseAgent):
         store: 'Neo4jMemoryStore',
         vector_store: 'VectorStore'
     ):
-        """Initialize parsing agent."""
-        super().__init__(llm, store, vector_store, "parsing")
-        self.structure_agent = None  # Will be set after initialization
-    
-    def set_structure_agent(self, agent: 'StructureAgent'):
-        """Set structure agent for complex parsing."""
-        self.structure_agent = agent
-    
+        """Initialize parser."""
+        self.llm = llm
+        self.store = store
+        self.vector_store = vector_store
+        
     def _format_prompt(self, content: Dict[str, Any]) -> str:
         """Format prompt for parsing."""
         text = content.get('content', '')
@@ -815,7 +811,7 @@ class ParsingAgent(BaseAgent):
                     "timestamp": datetime.now().isoformat()
                 }
             )
-    
+
     async def parse_sentiment(self, text: str) -> Dict[str, float]:
         """Parse sentiment from text."""
         try:

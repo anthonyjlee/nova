@@ -5,20 +5,20 @@ import json
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 import uuid
-from .memory_types import AgentResponse, Memory
+from .types.memory_types import AgentResponse, Memory
 from .llm_interface import LLMInterface
-from .neo4j_store import Neo4jMemoryStore
-from .vector_store import VectorStore
+from .neo4j.neo4j_store import Neo4jMemoryStore
+from .vector.vector_store import VectorStore
 from .agents.belief_agent import BeliefAgent
 from .agents.desire_agent import DesireAgent
 from .agents.emotion_agent import EmotionAgent
 from .agents.reflection_agent import ReflectionAgent
 from .research_agent import ResearchAgent
-from .agents.meta_agent import MetaAgent
-from .agents.structure_agent import StructureAgent
+from ..nova.core.meta import MetaAgent
+from ..nova.core.structure import StructureAgent
 from .agents.task_agent import TaskAgent
 from .agents.dialogue_agent import DialogueAgent
-from .agents.context_agent import ContextAgent
+from ..nova.core.context import ContextAgent
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +44,7 @@ class MemorySystem:
     The system uses a multi-agent architecture for processing and understanding:
     
     Core Processing:
-    - ParsingAgent: Basic text and JSON parsing
+    - NovaParser: Basic text and JSON parsing
     - StructureAgent: Complex data structure analysis
     
     Understanding:

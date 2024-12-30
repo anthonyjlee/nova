@@ -3,7 +3,7 @@
 import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
-from ..memory_types import AgentResponse, DialogueMessage
+from ..types.memory_types import AgentResponse, DialogueMessage
 from ..prompts import AGENT_PROMPTS
 
 logger = logging.getLogger(__name__)

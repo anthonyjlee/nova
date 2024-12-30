@@ -4,7 +4,7 @@ import pytest
 from datetime import datetime
 from typing import Dict, Any
 
-from nia.memory.memory_types import DialogueContext, DialogueMessage
+from nia.memory.types.memory_types import DialogueContext, DialogueMessage
 from nia.memory.agents.belief_agent import BeliefAgent
 from nia.memory.agents.emotion_agent import EmotionAgent
 from nia.memory.agents.reflection_agent import ReflectionAgent
@@ -13,8 +13,8 @@ from nia.memory.agents.task_agent import TaskAgent
 from nia.memory.agents.dialogue_agent import DialogueAgent
 from nia.memory.agents.context_agent import ContextAgent
 from nia.memory.llm_interface import LLMInterface
-from nia.memory.neo4j_store import Neo4jMemoryStore
-from nia.memory.vector_store import VectorStore
+from nia.memory.neo4j.neo4j_store import Neo4jMemoryStore
+from nia.memory.vector.vector_store import VectorStore
 from nia.memory.embeddings import EmbeddingService
 
 # Test data

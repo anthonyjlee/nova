@@ -6,8 +6,8 @@ import platform
 from datetime import datetime
 from typing import Optional, Dict, Any
 
-from nia.ui.handlers import System2Handler, MemoryHandler
-from nia.ui.state import UIState
+from ..handlers.handlers import System2Handler, MemoryHandler
+from ..state import UIState
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)

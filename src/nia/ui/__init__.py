@@ -1,18 +1,39 @@
-"""NIA UI package."""
+"""User interface initialization."""
 
-from nia.ui.chat import ChatUI
-from nia.ui.base import BaseUI
-from nia.ui.state import UIState
-from nia.ui.components import UIComponents, TabComponents
-from nia.ui.message_handlers import MessageHandlers
-from nia.ui.graph import GraphVisualizer
+# Import core UI components
+from .components.chat import ChatUI
+from .components.base import BaseUI
+from .components.ui_components import UIComponents, TabComponents
+
+# Import handlers
+from .handlers.message_handlers import MessageHandlers
+from .handlers.handlers import System2Handler, MemoryHandler
+
+# Import visualization
+from .visualization.graph import GraphVisualizer
+
+# Import state management
+from .state import UIState
+from .theme import create_theme
+from .messenger import AgentChatWindow
 
 __all__ = [
+    # Core components
     'ChatUI',
     'BaseUI',
-    'UIState',
     'UIComponents',
     'TabComponents',
+    
+    # Handlers
     'MessageHandlers',
-    'GraphVisualizer'
+    'System2Handler',
+    'MemoryHandler',
+    
+    # Visualization
+    'GraphVisualizer',
+    
+    # State management
+    'UIState',
+    'create_theme',
+    'AgentChatWindow'
 ]

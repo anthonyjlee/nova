@@ -5,20 +5,20 @@ from datetime import datetime
 from typing import Dict, List, Tuple, Optional, Any
 
 from nia.memory.llm_interface import LLMInterface
-from nia.memory.neo4j_store import Neo4jMemoryStore
-from nia.memory.vector_store import VectorStore
+from nia.memory.neo4j.neo4j_store import Neo4jMemoryStore
+from nia.memory.vector.vector_store import VectorStore
 from nia.memory.embeddings import EmbeddingService
 
 # Import agents
-from nia.memory.agents.meta_agent import MetaAgent
-from nia.memory.agents.structure_agent import StructureAgent
-from nia.memory.agents.parsing_agent import ParsingAgent
+from nia.nova.core.meta import MetaAgent
+from nia.nova.core.structure import StructureAgent
+from nia.nova.core.parsing import NovaParser
 from nia.memory.agents.belief_agent import BeliefAgent
 from nia.memory.agents.desire_agent import DesireAgent
 from nia.memory.agents.emotion_agent import EmotionAgent
 from nia.memory.agents.reflection_agent import ReflectionAgent
 from nia.memory.agents.research_agent import ResearchAgent
-from nia.memory.agents.task_planner_agent import TaskPlannerAgent
+from nia.nova.tasks.planner import TaskPlannerAgent
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +37,7 @@ class System2Handler:
         
         # Initialize parsing and structure agents
         self.structure_agent = StructureAgent(self.llm, self.store, self.vector_store)
-        self.parsing_agent = ParsingAgent(self.llm, self.store, self.vector_store)
-        self.parsing_agent.set_structure_agent(self.structure_agent)
+        self.parsing_agent = NovaParser(self.llm, self.store, self.vector_store)
         self.llm.set_parser(self.parsing_agent)
         
         # Initialize specialized agents

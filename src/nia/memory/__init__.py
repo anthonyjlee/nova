@@ -1,29 +1,55 @@
-"""Memory system package."""
+"""Memory system initialization."""
 
-from .memory_types import (
-    Memory,
-    Concept,
+# Import all types from memory_types
+from .types.memory_types import (
+    AgentResponse,
     DialogueMessage,
     DialogueContext,
-    AgentResponse,
-    JSONSerializable,
-    AISystem
+    Memory,
+    EpisodicMemory,
+    SemanticMemory,
+    ProceduralMemory,
+    Concept,
+    Relationship,
+    Belief,
+    MemoryType,
+    MemoryQuery,
+    ConsolidationRule,
+    MemoryBatch
 )
-from .neo4j_store import Neo4jMemoryStore
-from .vector_store import VectorStore
-from .llm_interface import LLMInterface
-from .memory_integration import MemorySystem
+
+# Import core memory components
+from .two_layer import TwoLayerMemorySystem
+from .consolidation import ConsolidationManager
+from .embeddings import EmbeddingService
+
+# Import stores
+from .neo4j.neo4j_store import Neo4jMemoryStore
+from .vector.vector_store import VectorStore
 
 __all__ = [
-    'Memory',
-    'Concept',
+    # Memory types
+    'AgentResponse',
     'DialogueMessage',
     'DialogueContext',
-    'AgentResponse',
-    'JSONSerializable',
-    'AISystem',
+    'Memory',
+    'EpisodicMemory',
+    'SemanticMemory',
+    'ProceduralMemory',
+    'Concept',
+    'Relationship',
+    'Belief',
+    'MemoryType',
+    'MemoryQuery',
+    'ConsolidationRule',
+    'MemoryBatch',
+    
+    # Core components
+    'TwoLayerMemorySystem',
+    'ConsolidationManager',
+    'EmbeddingService',
+    
+    # Stores
     'Neo4jMemoryStore',
-    'VectorStore',
-    'LLMInterface',
-    'MemorySystem'
+    'VectorStore'
 ]

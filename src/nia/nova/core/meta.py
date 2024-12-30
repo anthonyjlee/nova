@@ -4,14 +4,14 @@ import json
 import logging
 from typing import Dict, Any, Optional, TYPE_CHECKING
 from datetime import datetime, timedelta
-from ..memory_types import AgentResponse, DialogueContext, DialogueMessage
+from ..types.memory_types import AgentResponse, DialogueContext, DialogueMessage
 from .base import BaseAgent
 from ..prompts import AGENT_PROMPTS, SYSTEM_PROMPT
 
 if TYPE_CHECKING:
     from ..llm_interface import LLMInterface
-    from ..neo4j_store import Neo4jMemoryStore
-    from ..vector_store import VectorStore
+    from ..neo4j.neo4j_store import Neo4jMemoryStore
+    from ..vector.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
