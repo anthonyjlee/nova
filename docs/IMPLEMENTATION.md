@@ -27,11 +27,15 @@ NIA is a sophisticated multi-agent system that combines metacognitive capabiliti
 ```
 src/nia/
 ├── memory/
-│   ├── agents/          # To be moved
+│   ├── types/          # New structure
+│   │   ├── concept_utils/
+│   │   └── json_utils/
+│   ├── vector/
+│   │   ├── embeddings.py
+│   │   └── vector_store.py
+│   ├── neo4j/
 │   ├── consolidation.py
-│   ├── embeddings.py
-│   ├── two_layer.py
-│   └── vector_store.py
+│   └── two_layer.py
 └── ui/                  # To be reorganized
 ```
 
@@ -57,12 +61,23 @@ src/nia/
    - [x] Vector store integration
    - [x] Memory consolidation enhancement
    - [x] Domain-specific memory handling
+   - [x] Relationship creation and validation
+   - [x] Memory type organization
+   - [x] Utility code migration
 
 4. World Environment:
    - [x] NIAWorld extending TinyWorld
    - [x] Resource management
    - [x] Domain handling
    - [x] Task coordination
+
+5. Phase 1 Progress:
+   - [x] Memory system reorganization
+   - [x] Memory types and utilities migration
+   - [x] Test coverage improvements
+   - [x] Relationship handling fixes
+   - [ ] Core agent migration (In Progress)
+   - [ ] UI reorganization (Next Phase)
 
 ### Performance Optimizations
 - Large agent group handling
@@ -730,12 +745,46 @@ def create_task_interface(gr):
 
 ## Next Steps
 
-1. Begin core component migration
-2. Implement UI improvements
-3. Add monitoring tools
-4. Enhance error handling
-5. Complete comprehensive testing
-6. Update documentation
+### Core Agent Migration Checklist
+
+1. Nova Core Setup:
+   - [ ] Create nova directory structure
+   - [ ] Set up core module initialization
+   - [ ] Implement Nova orchestrator base
+
+2. Agent Migration:
+   - [ ] Move ParsingAgent to nova/core/parsing.py
+   - [ ] Move MetaAgent to nova/core/meta.py
+   - [ ] Move StructureAgent to nova/core/structure.py
+   - [ ] Move ContextAgent to nova/core/context.py
+   - [ ] Move ResponseProcessor to nova/core/processor.py
+   - [ ] Update all import paths
+
+3. Task Management Migration:
+   - [ ] Move TaskPlannerAgent to nova/tasks/planner.py
+   - [ ] Move ContextBuilder to nova/tasks/context.py
+   - [ ] Implement task coordination logic
+   - [ ] Update task-related imports
+
+4. Integration Tasks:
+   - [ ] Update agent initialization in Nova class
+   - [ ] Implement TinyTroupe integration points
+   - [ ] Set up agent communication channels
+   - [ ] Add memory system hooks
+
+5. Testing Requirements:
+   - [ ] Create unit tests for Nova core
+   - [ ] Add integration tests for agent communication
+   - [ ] Test TinyTroupe compatibility
+   - [ ] Verify memory system integration
+
+### Additional Tasks
+
+1. Implement UI improvements
+2. Add monitoring tools
+3. Enhance error handling
+4. Complete comprehensive testing
+5. Update documentation
 
 ## Notes
 
