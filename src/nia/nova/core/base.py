@@ -9,7 +9,7 @@ from ...memory.prompts import AGENT_PROMPTS
 
 logger = logging.getLogger(__name__)
 
-class NovaBaseAgent:
+class BaseAgent:
     """Base agent with core Nova functionality."""
     
     def __init__(self, llm, store, vector_store, agent_type: str):

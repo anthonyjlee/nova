@@ -8,7 +8,7 @@ import uuid
 from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from .embeddings import EmbeddingService
-from .memory_types import JSONSerializable
+from ..types.memory_types import JSONSerializable
 
 logger = logging.getLogger(__name__)
 

@@ -7,7 +7,7 @@ from typing import Dict, List
 from nia.nova.orchestrator import Nova
 from nia.world.environment import NIAWorld
 from nia.memory.two_layer import TwoLayerMemorySystem
-from nia.memory.memory_types import Memory, EpisodicMemory
+from nia.memory.types.memory_types import Memory, EpisodicMemory
 from nia.agents.base import BaseAgent
 
 @pytest.fixture

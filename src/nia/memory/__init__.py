@@ -21,7 +21,7 @@ from .types.memory_types import (
 # Import core memory components
 from .two_layer import TwoLayerMemorySystem
 from .consolidation import ConsolidationManager
-from .embeddings import EmbeddingService
+from .vector.embeddings import EmbeddingService
 
 # Import stores
 from .neo4j.neo4j_store import Neo4jMemoryStore

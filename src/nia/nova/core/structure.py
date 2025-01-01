@@ -3,9 +3,9 @@
 import logging
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from datetime import datetime
-from ..memory_types import AgentResponse
+from ...memory.types.memory_types import AgentResponse
 from .base import BaseAgent
-from ..prompts import AGENT_PROMPTS
+from ...memory.prompts import AGENT_PROMPTS
 
 if TYPE_CHECKING:
     from ..llm_interface import LLMInterface

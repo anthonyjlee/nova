@@ -3,7 +3,7 @@
 import logging
 from typing import Dict, List, Optional, Union
 
-from .neo4j import ConceptStore
+from .concept_store import ConceptStore
 
 logger = logging.getLogger(__name__)
 
@@ -16,7 +16,7 @@ class Neo4jMemoryStore(ConceptStore):
     
     def __init__(
         self,
-        uri: str = "bolt://0.0.0.0:7687",
+        uri: str = "bolt://127.0.0.1:7687",
         user: str = "neo4j",
         password: str = "password",
         max_retry_time: int = 30,
@@ -28,7 +28,7 @@ class Neo4jMemoryStore(ConceptStore):
         
         # Initialize LLM interface if not provided
         if llm is None:
-            from .llm_interface import LLMInterface
+            from ..llm_interface import LLMInterface
             self.llm = LLMInterface()
         else:
             self.llm = llm

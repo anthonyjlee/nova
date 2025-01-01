@@ -6,9 +6,9 @@ import re
 from typing import Dict, List, Any, Optional, Union, TYPE_CHECKING
 from jsonschema import validate, ValidationError
 from datetime import datetime
-from ...types.memory_types import AgentResponse
+from ...memory.types.memory_types import AgentResponse
 from ...agents.base import BaseAgent
-from ..prompts import AGENT_PROMPTS
+from ...memory.prompts import AGENT_PROMPTS
 
 if TYPE_CHECKING:
     from ...llm_interface import LLMInterface

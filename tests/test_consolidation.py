@@ -1,304 +1,240 @@
-"""Test memory consolidation functionality."""
+"""Tests for memory consolidation system."""
 
 import pytest
-from nia.memory.neo4j_store import Neo4jMemoryStore
+from datetime import datetime, timedelta
+from typing import Dict, List, Optional
+from pydantic import Field, ConfigDict
+
+from nia.memory.consolidation import (
+    ConsolidationPattern,
+    TinyTroupePattern,
+    ConsolidationManager
+)
+from nia.memory.types.memory_types import Memory, Concept, Relationship, MemoryType
+
+class MockAgent:
+    """Mock TinyTroupe agent for testing."""
+    def __init__(self, name: str, agent_type: str):
+        self.name = name
+        self.type = agent_type
+        self.skills = ["test_skill"]
+        self.state = "active"
+
+class MockTask:
+    """Mock TinyTroupe task for testing."""
+    def __init__(self, name: str):
+        self.name = name
+        self.category = "test"
+        self.description = "Test task"
+        self.status = "pending"
+        self.priority = "high"
+
+class MockInteraction:
+    """Mock TinyTroupe interaction for testing."""
+    def __init__(self, source: str, target: str):
+        self.source_agent = source
+        self.target_agent = target
+        self.type = "COLLABORATES_WITH"
+        self.timestamp = datetime.now().isoformat()
+        self.context = "test context"
+
+class MockObservation:
+    """Mock TinyTroupe observation for testing."""
+    def __init__(self, agent: str, capability: str):
+        self.type = "capability"
+        self.agent = agent
+        self.capability = capability
+        self.confidence = 0.9
+
+class MockMemory(dict):
+    """Mock memory for testing."""
+    def __init__(self, content: str, importance: float = 0.5):
+        super().__init__()
+        self.update({
+            "content": content,
+            "type": MemoryType.EPISODIC,
+            "timestamp": datetime.now().isoformat(),
+            "metadata": {
+                "agents": [],
+                "tasks": [],
+                "interactions": [],
+                "observations": []
+            },
+            "importance": importance,
+            "consolidated": False
+        })
+        
+    def add_agent(self, agent: MockAgent):
+        """Add agent to metadata."""
+        self["metadata"]["agents"].append({
+            "name": agent.name,
+            "type": agent.type,
+            "skills": agent.skills,
+            "state": agent.state
+        })
+        
+    def add_task(self, task: MockTask):
+        """Add task to metadata."""
+        self["metadata"]["tasks"].append({
+            "name": task.name,
+            "category": task.category,
+            "description": task.description,
+            "status": task.status,
+            "priority": task.priority
+        })
+        
+    def add_interaction(self, interaction: MockInteraction):
+        """Add interaction to metadata."""
+        self["metadata"]["interactions"].append({
+            "source_agent": interaction.source_agent,
+            "target_agent": interaction.target_agent,
+            "type": interaction.type,
+            "timestamp": interaction.timestamp,
+            "context": interaction.context
+        })
+        
+    def add_observation(self, observation: MockObservation):
+        """Add observation to metadata."""
+        self["metadata"]["observations"].append({
+            "type": observation.type,
+            "agent": observation.agent,
+            "capability": observation.capability,
+            "confidence": observation.confidence
+        })
 
 @pytest.fixture
-async def store():
-    """Create a Neo4j store for testing."""
-    store = Neo4jMemoryStore()
-    yield store
-    await store.clear_concepts()
-    await store.close()
+def mock_episodic_layer():
+    """Mock episodic layer for testing."""
+    class MockEpisodicLayer:
+        def __init__(self):
+            self.memories = []
+            
+        async def get_consolidation_candidates(self) -> List[Dict]:
+            return self.memories
+            
+    return MockEpisodicLayer()
 
-@pytest.mark.asyncio
-async def test_store_consolidated_concept(store):
-    """Test storing a consolidated concept."""
-    # Store a consolidated concept
-    await store.store_concept(
-        name="test_consolidated",
-        type="test",
-        description="A test consolidated concept",
-        validation={"confidence": 0.8},
-        is_consolidation=True
-    )
-    
-    # Verify the concept was stored with consolidation flag
-    concept = await store.get_concept("test_consolidated")
-    assert concept is not None
-    assert concept["is_consolidation"] is True
-    assert concept["validation"]["confidence"] == 0.8
-
-@pytest.mark.asyncio
-async def test_store_regular_concept(store):
-    """Test storing a regular (non-consolidated) concept."""
-    # Store a regular concept
-    await store.store_concept(
-        name="test_regular",
-        type="test",
-        description="A test regular concept",
-        validation={"confidence": 0.5}
-    )
-    
-    # Verify the concept was stored without consolidation flag
-    concept = await store.get_concept("test_regular")
-    assert concept is not None
-    assert concept["is_consolidation"] is False
-    assert concept["validation"]["confidence"] == 0.5
-
-@pytest.mark.asyncio
-async def test_get_concepts_by_type_consolidation(store):
-    """Test getting concepts by type includes consolidation status."""
-    # Store both types of concepts
-    await store.store_concept(
-        name="consolidated_1",
-        type="test_type",
-        description="Consolidated concept 1",
-        is_consolidation=True
-    )
-    await store.store_concept(
-        name="regular_1",
-        type="test_type",
-        description="Regular concept 1",
-        is_consolidation=False
-    )
-    
-    # Get concepts by type
-    concepts = await store.get_concepts_by_type("test_type")
-    assert len(concepts) == 2
-    
-    # Verify consolidation status is correct
-    consolidated = [c for c in concepts if c["is_consolidation"]]
-    regular = [c for c in concepts if not c["is_consolidation"]]
-    assert len(consolidated) == 1
-    assert len(regular) == 1
-    assert consolidated[0]["name"] == "consolidated_1"
-    assert regular[0]["name"] == "regular_1"
-
-@pytest.mark.asyncio
-async def test_get_related_concepts_consolidation(store):
-    """Test getting related concepts includes consolidation status."""
-    # Store related concepts
-    await store.store_concept(
-        name="parent",
-        type="test",
-        description="Parent concept",
-        related=["child_consolidated", "child_regular"]
-    )
-    await store.store_concept(
-        name="child_consolidated",
-        type="test",
-        description="Consolidated child concept",
-        is_consolidation=True
-    )
-    await store.store_concept(
-        name="child_regular",
-        type="test",
-        description="Regular child concept",
-        is_consolidation=False
-    )
-    
-    # Get related concepts
-    related = await store.get_related_concepts("parent")
-    assert len(related) == 2
-    
-    # Verify consolidation status is correct
-    consolidated = [c for c in related if c["is_consolidation"]]
-    regular = [c for c in related if not c["is_consolidation"]]
-    assert len(consolidated) == 1
-    assert len(regular) == 1
-    assert consolidated[0]["name"] == "child_consolidated"
-    assert regular[0]["name"] == "child_regular"
-
-@pytest.mark.asyncio
-async def test_search_concepts_consolidation(store):
-    """Test searching concepts includes consolidation status."""
-    # Store concepts to search
-    await store.store_concept(
-        name="searchable_consolidated",
-        type="test",
-        description="A searchable consolidated concept",
-        is_consolidation=True
-    )
-    await store.store_concept(
-        name="searchable_regular",
-        type="test",
-        description="A searchable regular concept",
-        is_consolidation=False
-    )
-    
-    # Search for concepts
-    results = await store.search_concepts("searchable")
-    assert len(results) == 2
-    
-    # Verify consolidation status is correct
-    consolidated = [c for c in results if c["is_consolidation"]]
-    regular = [c for c in results if not c["is_consolidation"]]
-    assert len(consolidated) == 1
-    assert len(regular) == 1
-    assert consolidated[0]["name"] == "searchable_consolidated"
-    assert regular[0]["name"] == "searchable_regular"
-
-@pytest.mark.asyncio
-async def test_store_concept_from_json_consolidation(store):
-    """Test storing concepts from JSON with consolidation."""
-    # Test JSON data
-    json_data = {
-        "concepts": [
-            {
-                "name": "json_consolidated",
-                "type": "test",
-                "description": "A consolidated concept from JSON",
-                "is_consolidation": True,
-                "validation": {"confidence": 0.8}
-            },
-            {
-                "name": "json_regular",
-                "type": "test",
-                "description": "A regular concept from JSON",
-                "validation": {"confidence": 0.5}
+@pytest.fixture
+def mock_semantic_layer():
+    """Mock semantic layer for testing."""
+    class MockSemanticLayer:
+        def __init__(self):
+            self.stored_knowledge = {
+                "concepts": [],
+                "relationships": [],
+                "beliefs": []
             }
-        ]
-    }
-    
-    # Store concepts from JSON
-    await store.store_concept_from_json(json_data)
-    
-    # Verify consolidated concept
-    consolidated = await store.get_concept("json_consolidated")
-    assert consolidated is not None
-    assert consolidated["is_consolidation"] is True
-    assert consolidated["validation"]["confidence"] == 0.8
-    
-    # Verify regular concept
-    regular = await store.get_concept("json_regular")
-    assert regular is not None
-    assert regular["is_consolidation"] is False
-    assert regular["validation"]["confidence"] == 0.5
+            
+        async def store_knowledge(self, knowledge: Dict):
+            self.stored_knowledge = knowledge
+            
+    return MockSemanticLayer()
 
 @pytest.mark.asyncio
-async def test_consolidation_with_validation(store):
-    """Test consolidated concepts with full validation data."""
-    validation_data = {
-        "confidence": 0.9,
-        "uncertainties": ["uncertainty1", "uncertainty2"],
-        "supported_by": ["evidence1", "evidence2"],
-        "contradicted_by": ["counter1"],
-        "needs_verification": ["verify1"]
-    }
+async def test_tinytroupe_pattern():
+    """Test TinyTroupe-specific knowledge extraction."""
+    pattern = TinyTroupePattern()
     
-    # Store concept with validation
-    await store.store_concept(
-        name="validated_consolidated",
-        type="test",
-        description="A consolidated concept with validation",
-        validation=validation_data,
-        is_consolidation=True
-    )
+    # Create test memory with TinyTroupe data
+    memory = MockMemory("Test memory")
     
-    # Verify concept and validation data
-    concept = await store.get_concept("validated_consolidated")
-    assert concept is not None
-    assert concept["is_consolidation"] is True
-    assert concept["validation"]["confidence"] == 0.9
-    assert len(concept["validation"]["uncertainties"]) == 2
-    assert len(concept["validation"]["supported_by"]) == 2
-    assert len(concept["validation"]["contradicted_by"]) == 1
-    assert len(concept["validation"]["needs_verification"]) == 1
+    # Add agents
+    memory.add_agent(MockAgent("Agent1", "DialogueAgent"))
+    memory.add_agent(MockAgent("Agent2", "TaskAgent"))
+    
+    # Add tasks
+    memory.add_task(MockTask("Task1"))
+    
+    # Add interactions
+    memory.add_interaction(MockInteraction("Agent1", "Agent2"))
+    
+    # Add observations
+    memory.add_observation(MockObservation("Agent1", "conversation"))
+    memory.add_observation(MockObservation("Agent2", "planning"))
+    
+    # Extract knowledge
+    knowledge = await pattern.extract_knowledge([memory])
+    
+    # Verify extracted concepts
+    assert len(knowledge["concepts"]) == 3  # 2 agents + 1 task
+    assert any(c["name"] == "Agent1" and c["type"] == "Agent" for c in knowledge["concepts"])
+    assert any(c["name"] == "Agent2" and c["type"] == "Agent" for c in knowledge["concepts"])
+    assert any(c["name"] == "Task1" and c["type"] == "Task" for c in knowledge["concepts"])
+    
+    # Verify extracted relationships
+    assert len(knowledge["relationships"]) == 1
+    assert knowledge["relationships"][0]["from"] == "Agent1"
+    assert knowledge["relationships"][0]["to"] == "Agent2"
+    assert knowledge["relationships"][0]["type"] == "COLLABORATES_WITH"
+    
+    # Verify extracted beliefs
+    assert len(knowledge["beliefs"]) == 2
+    assert any(b["subject"] == "Agent1" and b["object"] == "conversation" for b in knowledge["beliefs"])
+    assert any(b["subject"] == "Agent2" and b["object"] == "planning" for b in knowledge["beliefs"])
 
 @pytest.mark.asyncio
-async def test_consolidation_edge_cases(store):
-    """Test edge cases and error handling for consolidation."""
-    # Test updating consolidation status
-    await store.store_concept(
-        name="update_test",
-        type="test",
-        description="Test concept",
-        is_consolidation=False
-    )
+async def test_consolidation_triggers(mock_episodic_layer, mock_semantic_layer):
+    """Test consolidation trigger conditions."""
+    manager = ConsolidationManager(mock_episodic_layer, mock_semantic_layer)
     
-    # Update to consolidated
-    await store.store_concept(
-        name="update_test",
-        type="test",
-        description="Test concept",
-        is_consolidation=True,
-        validation={"confidence": 0.8}
-    )
+    # Test time-based trigger
+    manager.last_consolidation = datetime.now() - timedelta(minutes=10)
+    assert await manager.should_consolidate()
     
-    # Verify update
-    concept = await store.get_concept("update_test")
-    assert concept is not None
-    assert concept["is_consolidation"] is True
-    assert concept["validation"]["confidence"] == 0.8
+    # Test importance-based trigger
+    manager.last_consolidation = datetime.now()  # Reset time
+    memory = MockMemory("Important memory", importance=0.9)
+    mock_episodic_layer.memories = [memory]
+    assert await manager.should_consolidate()
     
-    # Test invalid confidence values
-    with pytest.raises(Exception):
-        await store.store_concept(
-            name="invalid_confidence",
-            type="test",
-            description="Test concept",
-            is_consolidation=True,
-            validation={"confidence": 1.5}  # Invalid confidence > 1.0
-        )
-    
-    # Test empty validation with consolidation
-    await store.store_concept(
-        name="empty_validation",
-        type="test",
-        description="Test concept",
-        is_consolidation=True
-    )
-    
-    concept = await store.get_concept("empty_validation")
-    assert concept is not None
-    assert concept["is_consolidation"] is True
-    assert "validation" not in concept  # No validation data
+    # Test volume-based trigger
+    mock_episodic_layer.memories = [MockMemory(f"Memory {i}") for i in range(15)]
+    assert await manager.should_consolidate()
 
 @pytest.mark.asyncio
-async def test_batch_consolidation(store):
-    """Test batch operations with consolidation."""
-    # Create test data
-    concepts = [
-        {
-            "name": f"batch_concept_{i}",
-            "type": "test",
-            "description": f"Batch concept {i}",
-            "is_consolidation": i % 2 == 0,  # Alternate between consolidated/regular
-            "validation": {"confidence": 0.8 if i % 2 == 0 else 0.5}
-        }
-        for i in range(10)
-    ]
+async def test_knowledge_deduplication(mock_episodic_layer, mock_semantic_layer):
+    """Test deduplication of extracted knowledge."""
+    manager = ConsolidationManager(mock_episodic_layer, mock_semantic_layer)
     
-    # Store concepts in batch
-    for concept in concepts:
-        await store.store_concept(
-            name=concept["name"],
-            type=concept["type"],
-            description=concept["description"],
-            is_consolidation=concept["is_consolidation"],
-            validation=concept["validation"]
-        )
+    # Create test memories with overlapping knowledge
+    memory1 = MockMemory("Memory 1")
+    memory1.add_agent(MockAgent("Agent1", "DialogueAgent"))
+    memory1.add_observation(MockObservation("Agent1", "conversation"))
     
-    # Verify all concepts
-    for concept in concepts:
-        stored = await store.get_concept(concept["name"])
-        assert stored is not None
-        assert stored["is_consolidation"] == concept["is_consolidation"]
-        assert stored["validation"]["confidence"] == concept["validation"]["confidence"]
+    memory2 = MockMemory("Memory 2")
+    memory2.add_agent(MockAgent("Agent1", "DialogueAgent"))  # Same agent
+    memory2.add_observation(MockObservation("Agent1", "conversation"))  # Same observation
     
-    # Search and verify batch results
-    results = await store.search_concepts("batch_concept")
-    assert len(results) == 10
+    # Extract knowledge
+    knowledge = await manager.extract_knowledge([memory1, memory2])
     
-    # Verify consolidation distribution
-    consolidated = [r for r in results if r["is_consolidation"]]
-    regular = [r for r in results if not r["is_consolidation"]]
-    assert len(consolidated) == 5  # Half should be consolidated
-    assert len(regular) == 5  # Half should be regular
+    # Verify deduplication
+    assert len(knowledge["concepts"]) == 1  # Only one agent concept
+    assert len(knowledge["beliefs"]) == 1  # Only one belief about the agent's capability
+
+@pytest.mark.asyncio
+async def test_pattern_management():
+    """Test adding and removing consolidation patterns."""
+    manager = ConsolidationManager(None, None)
     
-    # Verify confidence levels
-    for concept in consolidated:
-        assert concept["validation"]["confidence"] == 0.8
-    for concept in regular:
-        assert concept["validation"]["confidence"] == 0.5
+    # Create custom pattern
+    class CustomPattern(ConsolidationPattern):
+        def __init__(self):
+            super().__init__("custom", threshold=0.5)
+            
+        async def extract_knowledge(self, memories: List[Memory]) -> Dict:
+            return {"concepts": [], "relationships": [], "beliefs": []}
+    
+    # Add custom pattern
+    custom_pattern = CustomPattern()
+    manager.add_pattern(custom_pattern)
+    assert len(manager.patterns) == 2  # TinyTroupePattern + CustomPattern
+    assert any(p.name == "custom" for p in manager.patterns)
+    
+    # Remove pattern
+    manager.remove_pattern("custom")
+    assert len(manager.patterns) == 1
+    assert all(p.name != "custom" for p in manager.patterns)
+
+if __name__ == "__main__":
+    pytest.main([__file__])

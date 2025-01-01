@@ -1,23 +1,23 @@
 """Basic tests for system functionality."""
 
 import pytest
-from nia.memory.agents.meta_agent import MetaAgent
+from nia.nova.core.meta import MetaAgent
 from nia.memory.llm_interface import LLMInterface
-from nia.memory.neo4j_store import Neo4jMemoryStore
-from nia.memory.vector_store import VectorStore
-from nia.memory.embeddings import EmbeddingService
+from nia.memory.neo4j.neo4j_store import Neo4jMemoryStore
+from nia.memory.vector.vector_store import VectorStore
+from nia.memory.vector.embeddings import EmbeddingService
 
 def test_imports():
     """Test that core modules can be imported."""
-    from nia.memory import memory_types
+    from nia.memory.types import memory_types
     from nia.memory import memory_integration
     from nia.memory import llm_interface
-    from nia.memory import vector_store
-    from nia.memory import neo4j_store
-    from nia.memory.agents import meta_agent
-    from nia.memory.agents import belief_agent
-    from nia.memory.agents import emotion_agent
-    from nia.memory.agents import reflection_agent
+    from nia.memory.vector import vector_store
+    from nia.memory.neo4j import neo4j_store
+    from nia.nova.core import meta
+    from nia.agents.specialized import belief_agent
+    from nia.agents.specialized import emotion_agent
+    from nia.agents.specialized import reflection_agent
 
 def test_meta_agent_creation():
     """Test that a MetaAgent can be instantiated."""
@@ -25,12 +25,12 @@ def test_meta_agent_creation():
     embedding_service = EmbeddingService()
     vector_store = VectorStore(embedding_service)
     store = Neo4jMemoryStore()
-    from nia.memory.agents.belief_agent import BeliefAgent
-    from nia.memory.agents.desire_agent import DesireAgent
-    from nia.memory.agents.emotion_agent import EmotionAgent
-    from nia.memory.agents.reflection_agent import ReflectionAgent
-    from nia.memory.agents.research_agent import ResearchAgent
-    from nia.memory.agents.task_planner_agent import TaskPlannerAgent
+    from nia.agents.specialized.belief_agent import BeliefAgent
+    from nia.agents.specialized.desire_agent import DesireAgent
+    from nia.agents.specialized.emotion_agent import EmotionAgent
+    from nia.agents.specialized.reflection_agent import ReflectionAgent
+    from nia.agents.specialized.research_agent import ResearchAgent
+    from nia.nova.tasks.planner import TaskPlannerAgent
 
     # Create sub-agents
     agents = {

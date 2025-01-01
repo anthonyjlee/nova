@@ -2,8 +2,8 @@
 
 import logging
 from typing import Dict, Any, Optional
-from .base import BaseAgent
-from ..prompts import AGENT_PROMPTS
+from ...agents.base import BaseAgent
+from ...memory.prompts import AGENT_PROMPTS
 
 logger = logging.getLogger(__name__)
 

@@ -5,11 +5,11 @@ import logging
 from typing import Dict, List, Optional
 from datetime import datetime
 
-from nia.memory.vector_store import VectorStore, serialize_for_vector_store
-from nia.memory.neo4j_store import Neo4jMemoryStore
+from nia.memory.vector.vector_store import VectorStore, serialize_for_vector_store
+from nia.memory.neo4j.neo4j_store import Neo4jMemoryStore
 from nia.memory.neo4j.concept_store import ConceptStore
-from nia.memory.embeddings import EmbeddingService
-from nia.memory.memory_types import Memory, MemoryType
+from nia.memory.vector.embeddings import EmbeddingService
+from nia.memory.types.memory_types import Memory, MemoryType, EpisodicMemory
 
 logger = logging.getLogger(__name__)
 
@@ -25,16 +25,18 @@ class EpisodicLayer:
             self.store = vector_store
         self.pending_consolidation = set()
         
-    async def store(self, memory: Memory) -> str:
+    async def store_memory(self, memory: Memory) -> str:
         """Store a new episodic memory."""
         try:
             # Create embedding and store
+            memory_dict = memory.dict()
+            memory_dict["consolidated"] = False  # Ensure consolidated field is set
             memory_id = await self.store.store_vector(
-                content=memory.dict(),
+                content=memory_dict,
                 metadata={
                     "type": MemoryType.EPISODIC.value,
                     "timestamp": datetime.now().isoformat(),
-                    "consolidated": False
+                    "context": memory.context if hasattr(memory, "context") else {}
                 }
             )
             
@@ -46,16 +48,11 @@ class EpisodicLayer:
             logger.error(f"Failed to store episodic memory: {str(e)}")
             raise
             
-    async def get_consolidation_candidates(self) -> List[Memory]:
+    async def get_consolidation_candidates(self) -> List[Dict]:
         """Get memories ready for consolidation."""
         try:
-            # Get all pending memories
-            memories = []
-            for memory_id in self.pending_consolidation:
-                memory = await self.store.get_vector(memory_id)
-                if memory:
-                    memories.append(Memory(**memory))
-            return memories
+            # Get all memories
+            return await self.store.search_vectors()
         except Exception as e:
             logger.error(f"Failed to get consolidation candidates: {str(e)}")
             return []
@@ -79,10 +76,27 @@ class SemanticLayer(ConceptStore):
     Inherits from ConceptStore to leverage existing Neo4j functionality.
     """
     
-    def __init__(self, uri: str = "bolt://0.0.0.0:7687", 
-                 user: str = "neo4j", 
-                 password: str = "password"):
-        super().__init__(uri, user, password)
+    def __init__(self, store: Optional[Neo4jMemoryStore] = None):
+        if store is None:
+            super().__init__(
+                uri="bolt://0.0.0.0:7687",
+                user="neo4j",
+                password="password",
+                max_retry_time=30,
+                retry_interval=1
+            )
+        else:
+            # Initialize ConceptStore with store's connection details
+            super().__init__(
+                uri=store.uri,
+                user=store.user,
+                password=store.password,
+                max_retry_time=30,
+                retry_interval=1
+            )
+            # Use the provided store's driver
+            self.driver = store.driver if hasattr(store, 'driver') else store
+            
         self.knowledge_patterns = {
             "concepts": self._create_concept_pattern(),
             "relationships": self._create_relationship_pattern(),
@@ -110,32 +124,63 @@ class SemanticLayer(ConceptStore):
             "properties": ["subject", "predicate", "object", "confidence"]
         }
         
+    async def _create_belief(self, subject: str, predicate: str, object: str, confidence: float = 1.0):
+        """Create a belief in the knowledge graph."""
+        async with self.driver.session() as session:
+            await session.run(
+                """
+                MATCH (s:Concept {name: $subject})
+                MATCH (o:Concept {name: $object})
+                MERGE (s)-[r:BELIEVES {predicate: $predicate, confidence: $confidence}]->(o)
+                """,
+                {
+                    "subject": subject,
+                    "predicate": predicate,
+                    "object": object,
+                    "confidence": confidence
+                }
+            )
+
     async def store_knowledge(self, knowledge: Dict):
         """Store extracted semantic knowledge."""
         try:
             # Create concept nodes
             for concept in knowledge.get("concepts", []):
-                await self.store.create_concept_node(
-                    label=concept["type"],
-                    properties=concept["properties"]
+                await self.store_concept(
+                    name=concept["name"],
+                    type=concept["type"],
+                    description=concept["description"],
+                    validation=concept.get("validation"),
+                    is_consolidation=concept.get("is_consolidation", False)
                 )
                 
             # Create relationships
-            for rel in knowledge.get("relationships", []):
-                await self.store.create_relationship(
-                    start_node=rel["from"],
-                    end_node=rel["to"],
-                    type=rel["type"],
-                    properties=rel.get("properties", {})
-                )
-                
+            async with self.driver.session() as session:
+                for rel in knowledge.get("relationships", []):
+                    # Create source concept if it doesn't exist
+                    await session.run(
+                        """
+                        MERGE (c1:Concept {name: $from})
+                        ON CREATE SET c1.type = 'concept', c1.description = ''
+                        WITH c1
+                        MERGE (c2:Concept {name: $to})
+                        ON CREATE SET c2.type = 'concept', c2.description = ''
+                        MERGE (c1)-[:RELATED_TO {type: $type}]->(c2)
+                        """,
+                        {
+                            "from": rel["from"],
+                            "to": rel["to"],
+                            "type": rel["type"]
+                        }
+                    )
+                    
             # Store beliefs
             for belief in knowledge.get("beliefs", []):
-                await self.store.create_belief(
-                    subject=belief["subject"],
-                    predicate=belief["predicate"],
-                    object=belief["object"],
-                    confidence=belief.get("confidence", 1.0)
+                await self._create_belief(
+                    belief["subject"],
+                    belief["predicate"],
+                    belief["object"],
+                    belief.get("confidence", 1.0)
                 )
         except Exception as e:
             logger.error(f"Failed to store semantic knowledge: {str(e)}")
@@ -148,10 +193,12 @@ class SemanticLayer(ConceptStore):
             cypher = self._build_cypher_query(query)
             
             # Execute query
-            results = await self.store.run_query(cypher)
-            
-            # Process and return results
-            return self._process_query_results(results)
+            async with self.driver.session() as session:
+                result = await session.run(cypher)
+                records = await result.data()  # Get all records
+                
+                # Process and return results
+                return self._process_query_results(records)
         except Exception as e:
             logger.error(f"Failed to query knowledge: {str(e)}")
             return []
@@ -160,8 +207,18 @@ class SemanticLayer(ConceptStore):
         """Build Cypher query from query dict."""
         # Basic query building - extend based on needs
         if query.get("type") == "concept":
+            # Handle both type and label matching
+            conditions = []
+            if "type" in query:
+                conditions.append(f"n.type = '{query['type']}'")
+            if "label" in query:
+                conditions.append(f"n.type = '{query['label']}'")
+            
+            where_clause = " OR ".join(conditions) if conditions else "true"
+            
             return f"""
-            MATCH (n:{query['label']})
+            MATCH (n:Concept)
+            WHERE {where_clause}
             RETURN n
             """
         elif query.get("pattern"):
@@ -176,7 +233,10 @@ class SemanticLayer(ConceptStore):
         processed = []
         for result in results:
             if "n" in result:  # Single node
-                processed.append(result["n"])
+                if isinstance(result["n"], dict) and "properties" in result["n"]:
+                    processed.append(result["n"]["properties"])
+                else:
+                    processed.append(result["n"])
             elif "p" in result:  # Path
                 processed.append(self._process_path(result["p"]))
         return processed
@@ -191,16 +251,16 @@ class SemanticLayer(ConceptStore):
 class TwoLayerMemorySystem:
     """Implements episodic and semantic memory layers."""
     
-    def __init__(self, neo4j_store: Optional[Neo4jMemoryStore] = None, 
+    def __init__(self, neo4j_uri: str = "bolt://0.0.0.0:7687", 
                  vector_store: Optional[VectorStore] = None):
         self.episodic = EpisodicLayer(vector_store)
-        self.semantic = SemanticLayer(neo4j_store)
+        self.semantic = SemanticLayer()
         self.consolidation_manager = None  # Will be set by ConsolidationManager
         
     async def store_experience(self, experience: Memory):
         """Store new experience in episodic memory."""
         # Store in episodic memory first
-        await self.episodic.store(experience)
+        await self.episodic.store_memory(experience)
         
         # Check for consolidation if manager exists
         if self.consolidation_manager and await self.consolidation_manager.should_consolidate():
@@ -225,17 +285,17 @@ class TwoLayerMemorySystem:
         await self.semantic.store_knowledge(knowledge)
         
         # Archive processed memories
-        memory_ids = [m.id for m in memories]
+        memory_ids = [m.id for m in memories if hasattr(m, 'id')]
         await self.episodic.archive_memories(memory_ids)
         
-    async def query_episodic(self, query: Dict) -> List[Memory]:
+    async def query_episodic(self, query: Dict) -> List[EpisodicMemory]:
         """Query episodic memories."""
         try:
             results = await self.episodic.store.search_vectors(
                 content=query.get("content", ""),
                 filter=query.get("filter", {})
             )
-            return [Memory(**r) for r in results]
+            return [EpisodicMemory(**r) for r in results]
         except Exception as e:
             logger.error(f"Failed to query episodic memories: {str(e)}")
             return []

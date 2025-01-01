@@ -36,21 +36,21 @@ def lmstudio_available():
     return asyncio.run(check_lmstudio())
 
 from nia.memory.types.memory_types import AgentResponse, Memory
-from nia.memory.agents.belief_agent import BeliefAgent
-from nia.memory.agents.emotion_agent import EmotionAgent
-from nia.memory.agents.desire_agent import DesireAgent
-from nia.memory.agents.reflection_agent import ReflectionAgent
-from nia.memory.research_agent import ResearchAgent
-from nia.memory.agents.meta_agent import MetaAgent
+from nia.agents.specialized.belief_agent import BeliefAgent
+from nia.agents.specialized.emotion_agent import EmotionAgent
+from nia.agents.specialized.desire_agent import DesireAgent
+from nia.agents.specialized.reflection_agent import ReflectionAgent
+from nia.agents.specialized.research_agent import ResearchAgent
+from nia.agents.specialized.meta_agent import MetaAgent
 from nia.memory.memory_integration import MemorySystem
 from nia.memory.llm_interface import LLMInterface
-from nia.memory.agents.parsing_agent import ParsingAgent
+from nia.agents.specialized.parsing_agent import ParsingAgent
 from nia.memory.neo4j.neo4j_store import Neo4jMemoryStore
 from nia.memory.vector.vector_store import VectorStore
-from nia.memory.embeddings import EmbeddingService
-from nia.memory.agents.task_agent import TaskAgent
-from nia.memory.agents.dialogue_agent import DialogueAgent
-from nia.memory.agents.context_agent import ContextAgent
+from nia.memory.vector.embeddings import EmbeddingService
+from nia.agents.specialized.task_agent import TaskAgent
+from nia.agents.specialized.dialogue_agent import DialogueAgent
+from nia.agents.specialized.context_agent import ContextAgent
 
 # Test data
 TEST_CONTENT = {

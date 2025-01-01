@@ -48,3 +48,5 @@ agent_responses.log
 # Local development
 *.db
 *.sqlite3
+
+.codegpt
