@@ -745,12 +745,14 @@ def create_task_interface(gr):
 
 ## Next Steps
 
-### Core Agent Migration Checklist
+### Phase 1: Core Agent Migration & Nova Enhancement
 
 1. Nova Core Setup:
    - [ ] Create nova directory structure
-   - [ ] Set up core module initialization
-   - [ ] Implement Nova orchestrator base
+   - [ ] Implement Nova's self-model in Neo4j
+   - [ ] Set up initialization protocol
+   - [ ] Implement user proxy capabilities for auto-approval
+   - [ ] Add domain separation (personal vs. professional)
 
 2. Agent Migration:
    - [ ] Move ParsingAgent to nova/core/parsing.py
@@ -759,32 +761,56 @@ def create_task_interface(gr):
    - [ ] Move ContextAgent to nova/core/context.py
    - [ ] Move ResponseProcessor to nova/core/processor.py
    - [ ] Update all import paths
+   - [ ] Add domain access controls for agents
 
 3. Task Management Migration:
    - [ ] Move TaskPlannerAgent to nova/tasks/planner.py
    - [ ] Move ContextBuilder to nova/tasks/context.py
    - [ ] Implement task coordination logic
    - [ ] Update task-related imports
+   - [ ] Add domain-specific task handling
 
-4. Integration Tasks:
-   - [ ] Update agent initialization in Nova class
-   - [ ] Implement TinyTroupe integration points
-   - [ ] Set up agent communication channels
-   - [ ] Add memory system hooks
+4. Memory System Enhancement:
+   - [ ] Implement domain labeling in Neo4j
+   - [ ] Set up personal vs. professional subgraphs
+   - [ ] Add access control for domain-specific queries
+   - [ ] Enhance memory consolidation with domain awareness
 
 5. Testing Requirements:
    - [ ] Create unit tests for Nova core
    - [ ] Add integration tests for agent communication
    - [ ] Test TinyTroupe compatibility
    - [ ] Verify memory system integration
+   - [ ] Test domain separation
+   - [ ] Validate auto-approval mechanisms
+
+### Phase 2: UI Migration (FastAPI + React)
+
+1. Backend Setup:
+   - [ ] Create FastAPI project structure
+   - [ ] Set up WebSocket support for real-time updates
+   - [ ] Implement REST endpoints for agent management
+   - [ ] Add authentication and security
+
+2. Frontend Development:
+   - [ ] Set up React project
+   - [ ] Create chat interface components
+   - [ ] Build agent management dashboard
+   - [ ] Add knowledge graph visualization
+   - [ ] Implement domain-specific views
+
+3. Integration:
+   - [ ] Connect FastAPI with Nova
+   - [ ] Set up WebSocket for real-time agent updates
+   - [ ] Implement domain-aware data flow
+   - [ ] Add error handling and recovery
 
 ### Additional Tasks
 
-1. Implement UI improvements
-2. Add monitoring tools
-3. Enhance error handling
-4. Complete comprehensive testing
-5. Update documentation
+1. Add monitoring tools
+2. Enhance error handling
+3. Complete comprehensive testing
+4. Update documentation
 
 ## Notes
 
