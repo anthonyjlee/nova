@@ -786,24 +786,37 @@ def create_task_interface(gr):
 
 ### Phase 2: UI Migration (FastAPI + React)
 
-1. Backend Setup:
+1. Gradio Removal:
+   - [ ] Remove Gradio dependencies from requirements.txt
+   - [ ] Remove Gradio UI components and handlers
+   - [ ] Remove Gradio-specific code from Nova
+   - [ ] Update documentation to remove Gradio references
+   - [ ] Clean up any remaining Gradio assets
+
+2. Backend Setup:
    - [ ] Create FastAPI project structure
    - [ ] Set up WebSocket support for real-time updates
    - [ ] Implement REST endpoints for agent management
    - [ ] Add authentication and security
 
-2. Frontend Development:
+3. Frontend Development:
    - [ ] Set up React project
    - [ ] Create chat interface components
    - [ ] Build agent management dashboard
    - [ ] Add knowledge graph visualization
    - [ ] Implement domain-specific views
 
-3. Integration:
+4. Integration:
    - [ ] Connect FastAPI with Nova
    - [ ] Set up WebSocket for real-time agent updates
    - [ ] Implement domain-aware data flow
    - [ ] Add error handling and recovery
+
+5. Documentation:
+   - [ ] Update README with new UI setup instructions
+   - [ ] Add FastAPI API documentation
+   - [ ] Add React component documentation
+   - [ ] Update architecture diagrams
 
 ### Additional Tasks
 

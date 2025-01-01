@@ -30,17 +30,20 @@ NIA is designed to be a self-reflective, adaptive system that can:
   - Domain-aware memory categorization
   - Efficient consolidation strategies
   - Memory access control and isolation
+  - Personal vs. Professional domain separation
 
-- **Scalable UI** (In Development):
-  - Hierarchical agent visualization
-  - Performance-optimized Gradio interface
+- **Modern UI**:
+  - FastAPI backend with WebSocket support
+  - React frontend with real-time updates
+  - Knowledge graph visualization
+  - Domain-specific views
   - Real-time agent relationship visualization
-  - Efficient handling of large agent groups
 
 ## Requirements
 
 - Docker and Docker Compose
 - Python 3.8+
+- Node.js 18+
 - Neo4j
 - Qdrant
 - LMStudio (for LLM capabilities)
@@ -58,13 +61,30 @@ This will start:
 
 2. Install Python dependencies:
 ```bash
-pip install -r src/nia/ui/requirements.txt
+pip install -r requirements.txt
 ```
 
-3. Run the chat interface:
+3. Install frontend dependencies:
 ```bash
-python main.py
+cd frontend
+npm install
 ```
+
+4. Start the backend server:
+```bash
+uvicorn main:app --reload
+```
+
+5. Start the frontend development server:
+```bash
+cd frontend
+npm start
+```
+
+The application will be available at:
+- Frontend: http://localhost:3000
+- Backend API: http://localhost:8000
+- API Documentation: http://localhost:8000/docs
 
 ## Architecture
 
@@ -75,11 +95,12 @@ python main.py
   - Manages agent spawning and lifecycle
   - Handles task delegation and memory operations
   - Maintains UI awareness and updates
+  - Acts as user proxy for auto-approval
 
 - **Memory System**: 
   - Neo4j for concept storage and relationships
   - Qdrant for vector storage and similarity search
-  - Domain-aware memory categorization
+  - Domain-aware memory categorization (Personal/Professional)
   - Efficient consolidation strategies
 
 - **Agent System**:
@@ -113,19 +134,34 @@ src/nia/
 │   │   └── task_agent.py
 │   ├── base.py
 │   └── tinytroupe_agent.py
-├── world/
-│   └── environment.py
 ├── nova/
+│   ├── core/
+│   │   ├── parsing.py
+│   │   ├── meta.py
+│   │   ├── structure.py
+│   │   ├── context.py
+│   │   └── processor.py
+│   ├── tasks/
+│   │   ├── planner.py
+│   │   └── context.py
 │   └── orchestrator.py
-└── ui/ (In Development)
-    ├── components/
-    │   ├── agent_display.py
-    │   ├── task_manager.py
-    │   └── conversation.py
-    ├── visualization/
-    │   ├── network.py
-    │   └── metrics.py
-    └── state.py
+├── memory/
+│   ├── neo4j/
+│   ├── vector/
+│   ├── types/
+│   ├── consolidation.py
+│   └── two_layer.py
+└── ui/
+    ├── backend/
+    │   ├── api/
+    │   ├── websocket/
+    │   └── main.py
+    └── frontend/
+        ├── src/
+        │   ├── components/
+        │   ├── pages/
+        │   └── services/
+        └── package.json
 ```
 
 ### Integration with TinyTroupe
@@ -148,9 +184,10 @@ The system leverages TinyTroupe's capabilities through:
 - World environment setup
 - Specialized agent implementations
 - Base TinyTroupe integration
+- Memory domain separation
 
 ### In Progress
-- UI development
+- FastAPI + React UI development
 - Testing implementation
 - Documentation updates
 - Performance optimization
@@ -174,11 +211,12 @@ The system leverages TinyTroupe's capabilities through:
    - Verify all required agents are initialized
    - Check memory system connectivity
 
-3. UI Performance Issues (When Available):
-   - Monitor agent group sizes
-   - Check UI update frequency
-   - Verify memory usage
-   - Consider adjusting batch sizes for updates
+3. UI Issues:
+   - Check both frontend and backend logs
+   - Verify WebSocket connection
+   - Monitor React component updates
+   - Check browser console for errors
+   - Verify API endpoints using Swagger UI
 
 ## Contributing
 
