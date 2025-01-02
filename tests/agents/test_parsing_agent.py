@@ -1,4 +1,4 @@
-"""Tests for the ParsingAgent implementation."""
+"""Tests for the specialized ParsingAgent implementation."""
 
 import pytest
 from unittest.mock import MagicMock, AsyncMock
@@ -16,13 +16,43 @@ def mock_memory_system():
     memory.llm.analyze = AsyncMock(return_value={
         "concepts": [
             {
-                "name": "TestConcept",
-                "type": "test",
-                "description": "A test concept",
-                "confidence": 0.8
+                "statement": "Key concept",
+                "type": "concept",
+                "description": "positive",
+                "confidence": 0.8,
+                "domain_relevance": 0.9,
+                "complexity": 0.7
+            },
+            {
+                "statement": "Need validation",
+                "type": "validation_need",
+                "description": "requires attention",
+                "confidence": 0.7
             }
         ],
-        "key_points": ["Test point"]
+        "key_points": [
+            {
+                "statement": "Main point",
+                "type": "key_point",
+                "confidence": 0.8,
+                "importance": 0.9
+            }
+        ],
+        "structure": {
+            "similar_parses": [
+                {
+                    "content": "Related parse",
+                    "similarity": 0.85,
+                    "timestamp": "2024-01-01T00:00:00Z"
+                }
+            ],
+            "complexity_factors": [
+                {
+                    "factor": "readability",
+                    "weight": 0.8
+                }
+            ]
+        }
     })
     
     # Mock semantic store
@@ -34,6 +64,13 @@ def mock_memory_system():
     # Mock episodic store
     memory.episodic = MagicMock()
     memory.episodic.store = MagicMock()
+    memory.episodic.store.search = AsyncMock(return_value=[
+        {
+            "content": {"content": "Similar parse"},
+            "similarity": 0.9,
+            "timestamp": "2024-01-01T00:00:00Z"
+        }
+    ])
     
     return memory
 
@@ -46,7 +83,7 @@ def mock_world():
 def parsing_agent(mock_memory_system, mock_world):
     """Create a ParsingAgent instance with mock dependencies."""
     return ParsingAgent(
-        name="TestParser",
+        name="TestParsing",
         memory_system=mock_memory_system,
         world=mock_world,
         domain="professional"
@@ -55,7 +92,7 @@ def parsing_agent(mock_memory_system, mock_world):
 @pytest.mark.asyncio
 async def test_initialization(parsing_agent):
     """Test agent initialization."""
-    assert parsing_agent.name == "TestParser"
+    assert parsing_agent.name == "TestParsing"
     assert parsing_agent.domain == "professional"
     assert parsing_agent.agent_type == "parsing"
     
@@ -66,10 +103,15 @@ async def test_initialization(parsing_agent):
     assert "emotions" in attributes
     assert "capabilities" in attributes
     assert attributes["domain"] == "professional"
+    
+    # Verify parsing-specific attributes
+    assert "Extract structured information" in attributes["desires"]
+    assert "towards_content" in attributes["emotions"]
+    assert "text_parsing" in attributes["capabilities"]
 
 @pytest.mark.asyncio
 async def test_process_content(parsing_agent, mock_memory_system):
-    """Test content processing."""
+    """Test content processing with domain awareness."""
     content = {"text": "Test content"}
     metadata = {"source": "test"}
     
@@ -80,84 +122,61 @@ async def test_process_content(parsing_agent, mock_memory_system):
     assert metadata["domain"] == "professional"
     
     # Verify TinyTroupe state updates
-    if hasattr(response, "concepts"):
-        for concept in response.concepts:
-            if concept.get("type") == "complexity":
-                assert "content_complexity" in parsing_agent.emotions
+    assert "content_complexity" in parsing_agent.emotions
+    assert any("Validate" in desire for desire in parsing_agent.desires)
 
 @pytest.mark.asyncio
 async def test_parse_and_store(parsing_agent, mock_memory_system):
-    """Test parsing and storing results."""
-    text = "Test content for parsing"
+    """Test text parsing with domain awareness."""
+    text = "Text content to parse"
+    context = {"setting": "test"}
     
-    result = await parsing_agent.parse_and_store(text)
+    result = await parsing_agent.parse_and_store(text, context)
     
-    # Verify parsing result
+    # Verify result structure
     assert isinstance(result, ParseResult)
     assert len(result.concepts) > 0
     assert len(result.key_points) > 0
+    assert result.confidence > 0
+    assert result.structure is not None
     
     # Verify memory storage
     assert hasattr(parsing_agent, "store_memory")
     
     # Verify reflection was recorded (high confidence case)
     if result.confidence > 0.8:
-        mock_memory_system.semantic.store.record_reflection.assert_called_once()
+        mock_memory_system.semantic.store.record_reflection.assert_called()
 
 @pytest.mark.asyncio
-async def test_domain_access(parsing_agent, mock_memory_system):
+async def test_domain_access_validation(parsing_agent, mock_memory_system):
     """Test domain access validation."""
     # Test allowed domain
-    mock_memory_system.semantic.store.get_domain_access.return_value = True
-    assert await parsing_agent.get_domain_access("professional")
+    await parsing_agent.validate_domain_access("professional")
     
     # Test denied domain
     mock_memory_system.semantic.store.get_domain_access.return_value = False
-    assert not await parsing_agent.get_domain_access("restricted")
-    
-    # Test domain validation
     with pytest.raises(PermissionError):
         await parsing_agent.validate_domain_access("restricted")
 
 @pytest.mark.asyncio
-async def test_reflection_recording(parsing_agent, mock_memory_system):
-    """Test reflection recording with domain awareness."""
-    reflection = "Test reflection"
-    await parsing_agent.record_reflection(reflection)
-    
-    # Verify reflection was recorded with domain
-    mock_memory_system.semantic.store.record_reflection.assert_called_with(
-        content=reflection,
-        domain=parsing_agent.domain
-    )
-
-@pytest.mark.asyncio
-async def test_parse_with_different_domains(mock_memory_system, mock_world):
+async def test_parse_with_different_domains(parsing_agent):
     """Test parsing with different domain configurations."""
-    # Create agents for different domains
-    professional_agent = ParsingAgent(
-        name="ProfessionalParser",
-        memory_system=mock_memory_system,
-        world=mock_world,
-        domain="professional"
+    text = "test content"
+    
+    # Test professional domain
+    prof_result = await parsing_agent.parse_and_store(
+        text,
+        {"domain": "professional"}
     )
+    assert prof_result.metadata["domain"] == "professional"
     
-    personal_agent = ParsingAgent(
-        name="PersonalParser",
-        memory_system=mock_memory_system,
-        world=mock_world,
-        domain="personal"
+    # Test personal domain (assuming access)
+    parsing_agent.domain = "personal"
+    pers_result = await parsing_agent.parse_and_store(
+        text,
+        {"domain": "personal"}
     )
-    
-    text = "Test content"
-    
-    # Test professional domain parsing
-    prof_result = await professional_agent.parse_and_store(text)
-    assert prof_result.metadata.get("domain") == "professional"
-    
-    # Test personal domain parsing
-    pers_result = await personal_agent.parse_and_store(text)
-    assert pers_result.metadata.get("domain") == "personal"
+    assert pers_result.metadata["domain"] == "personal"
 
 @pytest.mark.asyncio
 async def test_error_handling(parsing_agent, mock_memory_system):
@@ -165,26 +184,57 @@ async def test_error_handling(parsing_agent, mock_memory_system):
     # Make LLM raise an error
     mock_memory_system.llm.analyze.side_effect = Exception("Test error")
     
-    # Should still get a valid result with zero confidence
-    result = await parsing_agent.parse_and_store("Test content")
+    result = await parsing_agent.parse_and_store("test")
+    
+    # Verify error handling
     assert isinstance(result, ParseResult)
     assert result.confidence == 0.0
+    assert len(result.concepts) == 0
+    assert len(result.key_points) == 0
     assert "error" in result.metadata
 
 @pytest.mark.asyncio
-async def test_memory_system_integration(parsing_agent):
-    """Test integration with memory system components."""
-    # Verify LLM integration
-    assert parsing_agent.llm is not None
+async def test_reflection_recording(parsing_agent, mock_memory_system):
+    """Test reflection recording with domain awareness."""
+    text = "test content"
     
-    # Verify store integration
-    assert parsing_agent.store is not None
-    assert parsing_agent.vector_store is not None
+    # Force high confidence result
+    mock_memory_system.llm.analyze.return_value["confidence"] = 0.9
     
-    # Verify schema validator initialization
-    assert parsing_agent.schema_validator is not None
-    assert "concepts" in parsing_agent.schema_validator
-    assert "key_points" in parsing_agent.schema_validator
+    result = await parsing_agent.parse_and_store(text)
+    
+    # Verify high confidence reflection
+    reflection_calls = mock_memory_system.semantic.store.record_reflection.call_args_list
+    assert any("High confidence" in str(call) for call in reflection_calls)
+    
+    # Test low confidence case
+    mock_memory_system.llm.analyze.return_value["confidence"] = 0.2
+    
+    result = await parsing_agent.parse_and_store(text)
+    
+    # Verify low confidence reflection
+    reflection_calls = mock_memory_system.semantic.store.record_reflection.call_args_list
+    assert any("Low confidence" in str(call) for call in reflection_calls)
+
+@pytest.mark.asyncio
+async def test_emotion_updates(parsing_agent):
+    """Test emotion updates based on content complexity."""
+    content = {"text": "Test content"}
+    
+    await parsing_agent.process(content)
+    
+    # Verify emotion updates
+    assert "content_complexity" in parsing_agent.emotions
+
+@pytest.mark.asyncio
+async def test_desire_updates(parsing_agent):
+    """Test desire updates based on validation needs."""
+    content = {"text": "Test content"}
+    
+    await parsing_agent.process(content)
+    
+    # Verify desire updates
+    assert any("Validate" in desire for desire in parsing_agent.desires)
 
 if __name__ == "__main__":
     pytest.main([__file__])
