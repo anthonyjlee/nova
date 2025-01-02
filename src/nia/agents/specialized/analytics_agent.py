@@ -49,36 +49,65 @@ class AnalyticsAgent(TinyTroupeAgent, NovaAnalyticsAgent):
         # Initialize analytics-specific attributes
         self._initialize_analytics_attributes()
         
+        # Initialize analytics tracking
+        self.active_analyses = {}  # analysis_id -> analysis_state
+        self.analysis_strategies = {}  # strategy_id -> strategy_config
+        self.pattern_templates = {}  # template_id -> template_config
+        self.insight_models = {}  # model_id -> model_config
+        self.trend_detectors = {}  # detector_id -> detector_config
+        
     def _initialize_analytics_attributes(self):
         """Initialize analytics-specific attributes."""
         self.define(
-            occupation="Analytics Manager",
+            occupation="Advanced Analytics Manager",
             desires=[
                 "Process analytics effectively",
                 "Identify patterns and trends",
                 "Generate insights",
-                "Maintain analytics quality"
+                "Maintain analytics quality",
+                "Analyze data efficiently",
+                "Detect patterns properly",
+                "Generate insights accurately",
+                "Optimize trend analysis",
+                "Manage forecasting",
+                "Adapt to patterns"
             ],
             emotions={
                 "baseline": "analytical",
                 "towards_analytics": "focused",
-                "towards_domain": "mindful"
+                "towards_domain": "mindful",
+                "towards_analysis": "precise",
+                "towards_patterns": "attentive",
+                "towards_insights": "intuitive",
+                "towards_trends": "observant",
+                "towards_forecasting": "predictive",
+                "towards_adaptation": "adaptive"
             },
             domain=self.domain,
             capabilities=[
                 "analytics_processing",
                 "pattern_recognition",
                 "insight_generation",
-                "trend_analysis"
+                "trend_analysis",
+                "analysis_optimization",
+                "pattern_management",
+                "insight_handling",
+                "trend_optimization",
+                "forecast_handling",
+                "pattern_adaptation"
             ]
         )
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
-        """Process content through both systems."""
+        """Process content through both systems with enhanced analytics awareness."""
         # Add domain to metadata
         metadata = metadata or {}
         metadata["domain"] = self.domain
         
+        # Update analysis tracking
+        if analysis_id := content.get("analysis_id"):
+            await self._update_analysis_state(analysis_id, content)
+            
         # Process through memory system
         response = await super().process(content, metadata)
         
@@ -106,6 +135,36 @@ class AnalyticsAgent(TinyTroupeAgent, NovaAnalyticsAgent):
                         self.emotions.update({
                             "domain_state": "low_relevance"
                         })
+                        
+                # Update analysis state emotions
+                if concept.get("type") == "analysis_state":
+                    self.emotions.update({
+                        "analysis_state": concept.get("state", "neutral")
+                    })
+                    
+                # Update pattern state emotions
+                if concept.get("type") == "pattern_state":
+                    self.emotions.update({
+                        "pattern_state": concept.get("state", "neutral")
+                    })
+                    
+                # Update insight state emotions
+                if concept.get("type") == "insight_state":
+                    self.emotions.update({
+                        "insight_state": concept.get("state", "neutral")
+                    })
+                    
+                # Update trend state emotions
+                if concept.get("type") == "trend_state":
+                    self.emotions.update({
+                        "trend_state": concept.get("state", "neutral")
+                    })
+                    
+                # Update forecast state emotions
+                if concept.get("type") == "forecast_state":
+                    self.emotions.update({
+                        "forecast_state": concept.get("state", "neutral")
+                    })
                     
         return response
         
@@ -115,10 +174,26 @@ class AnalyticsAgent(TinyTroupeAgent, NovaAnalyticsAgent):
         analytics_type: str,
         target_domain: Optional[str] = None
     ):
-        """Process analytics and store results with domain awareness."""
+        """Process analytics and store results with enhanced analytics awareness."""
         # Validate domain access if specified
         if target_domain:
             await self.validate_domain_access(target_domain)
+            
+        # Update analysis strategies if needed
+        if strategies := content.get("analysis_strategies"):
+            self._update_analysis_strategies(strategies)
+            
+        # Update pattern templates
+        if templates := content.get("pattern_templates"):
+            self._update_pattern_templates(templates)
+            
+        # Update insight models
+        if models := content.get("insight_models"):
+            self._update_insight_models(models)
+            
+        # Update trend detectors
+        if detectors := content.get("trend_detectors"):
+            self._update_trend_detectors(detectors)
             
         # Process analytics
         result = await self.process_analytics(
@@ -127,7 +202,7 @@ class AnalyticsAgent(TinyTroupeAgent, NovaAnalyticsAgent):
             metadata={"domain": target_domain or self.domain}
         )
         
-        # Store analytics results
+        # Store analytics results with enhanced metadata
         await self.store_memory(
             content={
                 "type": "analytics_processing",
@@ -139,6 +214,11 @@ class AnalyticsAgent(TinyTroupeAgent, NovaAnalyticsAgent):
                     "insights": result.insights,
                     "confidence": result.confidence,
                     "issues": result.issues,
+                    "analysis_states": self.active_analyses,
+                    "strategy_states": self.analysis_strategies,
+                    "pattern_states": self.pattern_templates,
+                    "insight_states": self.insight_models,
+                    "trend_states": self.trend_detectors,
                     "timestamp": datetime.now().isoformat()
                 }
             },
@@ -179,9 +259,345 @@ class AnalyticsAgent(TinyTroupeAgent, NovaAnalyticsAgent):
                 f"Important analytics insights discovered in {self.domain} domain",
                 domain=self.domain
             )
+            
+        # Record analysis-specific reflections
+        for analysis_id, analysis_state in self.active_analyses.items():
+            if analysis_state.get("needs_attention", False):
+                await self.record_reflection(
+                    f"Analysis {analysis_id} requires attention in {self.domain} domain",
+                    domain=self.domain
+                )
+                
+        # Record strategy state reflections
+        for strategy_id, strategy_state in self.analysis_strategies.items():
+            if strategy_state.get("needs_optimization", False):
+                await self.record_reflection(
+                    f"Analysis strategy {strategy_id} needs optimization in {self.domain} domain",
+                    domain=self.domain
+                )
+                
+        # Record pattern state reflections
+        for template_id, template_state in self.pattern_templates.items():
+            if template_state.get("needs_tuning", False):
+                await self.record_reflection(
+                    f"Pattern template {template_id} needs tuning in {self.domain} domain",
+                    domain=self.domain
+                )
+                
+        # Record insight state reflections
+        for model_id, model_state in self.insight_models.items():
+            if model_state.get("needs_update", False):
+                await self.record_reflection(
+                    f"Insight model {model_id} needs update in {self.domain} domain",
+                    domain=self.domain
+                )
+                
+        # Record trend state reflections
+        for detector_id, detector_state in self.trend_detectors.items():
+            if detector_state.get("needs_review", False):
+                await self.record_reflection(
+                    f"Trend detector {detector_id} needs review in {self.domain} domain",
+                    domain=self.domain
+                )
         
         return result
         
+    async def _update_analysis_state(self, analysis_id: str, content: Dict[str, Any]):
+        """Update analysis state tracking."""
+        if analysis_id not in self.active_analyses:
+            self.active_analyses[analysis_id] = {
+                "status": "active",
+                "start_time": datetime.now().isoformat(),
+                "type": "unknown",
+                "data": None,
+                "metadata": {},
+                "needs_attention": False,
+                "patterns": {},
+                "insights": {},
+                "trends": {},
+                "history": []
+            }
+            
+        analysis_state = self.active_analyses[analysis_id]
+        
+        # Update basic state
+        if type_ := content.get("analysis_type"):
+            analysis_state["type"] = type_
+            analysis_state["history"].append({
+                "type": type_,
+                "timestamp": datetime.now().isoformat()
+            })
+            
+        if data := content.get("analysis_data"):
+            analysis_state["data"] = data
+            
+        # Update metadata
+        if metadata := content.get("analysis_metadata", {}):
+            analysis_state["metadata"].update(metadata)
+            
+        # Update patterns
+        if patterns := content.get("analysis_patterns", {}):
+            analysis_state["patterns"].update(patterns)
+            
+        # Update insights
+        if insights := content.get("analysis_insights", {}):
+            analysis_state["insights"].update(insights)
+            
+        # Update trends
+        if trends := content.get("analysis_trends", {}):
+            analysis_state["trends"].update(trends)
+            analysis_state["needs_attention"] = any(
+                trend.get("priority", 0.0) > 0.8
+                for trend in trends.values()
+            )
+            
+        # Apply pattern templates
+        for template_id, template in self.pattern_templates.items():
+            if self._matches_pattern_template(content, template):
+                await self._apply_pattern_template(analysis_id, template_id, template)
+                
+        # Apply insight models
+        for model_id, model in self.insight_models.items():
+            if self._matches_insight_model(content, model):
+                await self._apply_insight_model(analysis_id, model_id, model)
+                
+        # Apply trend detectors
+        for detector_id, detector in self.trend_detectors.items():
+            if self._matches_trend_detector(content, detector):
+                await self._apply_trend_detector(analysis_id, detector_id, detector)
+                
+    def _update_analysis_strategies(self, strategies: Dict[str, Dict]):
+        """Update analysis strategy configurations."""
+        for strategy_id, strategy in strategies.items():
+            if isinstance(strategy, dict):
+                self.analysis_strategies[strategy_id] = {
+                    "type": strategy.get("type", "static"),
+                    "method": strategy.get("method", "statistical"),
+                    "parameters": strategy.get("parameters", {}),
+                    "needs_optimization": strategy.get("needs_optimization", False),
+                    "metadata": strategy.get("metadata", {})
+                }
+                
+    def _update_pattern_templates(self, templates: Dict[str, Dict]):
+        """Update pattern template configurations."""
+        for template_id, template in templates.items():
+            if isinstance(template, dict):
+                self.pattern_templates[template_id] = {
+                    "type": template.get("type", "static"),
+                    "pattern": template.get("pattern", ""),
+                    "recognition": template.get("recognition", {}),
+                    "needs_tuning": template.get("needs_tuning", False),
+                    "metadata": template.get("metadata", {})
+                }
+                
+    def _update_insight_models(self, models: Dict[str, Dict]):
+        """Update insight model configurations."""
+        for model_id, model in models.items():
+            if isinstance(model, dict):
+                self.insight_models[model_id] = {
+                    "type": model.get("type", "static"),
+                    "algorithm": model.get("algorithm", ""),
+                    "parameters": model.get("parameters", {}),
+                    "needs_update": model.get("needs_update", False),
+                    "metadata": model.get("metadata", {})
+                }
+                
+    def _update_trend_detectors(self, detectors: Dict[str, Dict]):
+        """Update trend detector configurations."""
+        for detector_id, detector in detectors.items():
+            if isinstance(detector, dict):
+                self.trend_detectors[detector_id] = {
+                    "type": detector.get("type", "time"),
+                    "window": detector.get("window", "1h"),
+                    "algorithm": detector.get("algorithm", "moving_average"),
+                    "needs_review": detector.get("needs_review", False),
+                    "metadata": detector.get("metadata", {})
+                }
+                
+    def _matches_pattern_template(self, content: Dict[str, Any], template: Dict) -> bool:
+        """Check if content matches a pattern template."""
+        recognition = template.get("recognition", {})
+        if not recognition:
+            return False
+            
+        # Check pattern against content
+        if "data" in content:
+            import re
+            pattern = recognition.get("pattern", "")
+            if pattern:
+                return bool(re.search(pattern, str(content["data"])))
+                
+        return False
+        
+    def _matches_insight_model(self, content: Dict[str, Any], model: Dict) -> bool:
+        """Check if content matches an insight model."""
+        parameters = model.get("parameters", {})
+        if not parameters:
+            return False
+            
+        # Check if required data is present
+        required_fields = parameters.get("required_fields", [])
+        if not required_fields:
+            return False
+            
+        return all(field in content for field in required_fields)
+        
+    def _matches_trend_detector(self, content: Dict[str, Any], detector: Dict) -> bool:
+        """Check if content matches a trend detector."""
+        algorithm = detector.get("algorithm", "")
+        if not algorithm:
+            return False
+            
+        # Check if time series data is present
+        if "data" not in content:
+            return False
+            
+        try:
+            import pandas as pd
+            data = pd.DataFrame(content["data"])
+            return "timestamp" in data.columns
+        except Exception:
+            return False
+            
+    async def _apply_pattern_template(
+        self,
+        analysis_id: str,
+        template_id: str,
+        template: Dict
+    ):
+        """Apply a pattern template's recognition."""
+        analysis_state = self.active_analyses[analysis_id]
+        recognition = template.get("recognition", {})
+        
+        if recognition:
+            try:
+                # Apply pattern recognition
+                import re
+                pattern = recognition.get("pattern", "")
+                if pattern and "data" in analysis_state:
+                    matches = re.findall(pattern, str(analysis_state["data"]))
+                    
+                    # Update analysis state
+                    analysis_state["patterns"][template_id] = {
+                        "matches": matches,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    
+                    # Record reflection if needed
+                    if template.get("needs_tuning", False):
+                        await self.record_reflection(
+                            f"Pattern template {template_id} applied to {analysis_id} needs tuning",
+                            domain=self.domain
+                        )
+                        
+            except Exception as e:
+                logger.error(f"Error applying pattern template: {str(e)}")
+                
+    async def _apply_insight_model(
+        self,
+        analysis_id: str,
+        model_id: str,
+        model: Dict
+    ):
+        """Apply an insight model's algorithm."""
+        analysis_state = self.active_analyses[analysis_id]
+        algorithm = model.get("algorithm", "")
+        parameters = model.get("parameters", {})
+        
+        if algorithm and parameters:
+            try:
+                # Apply insight generation
+                import numpy as np
+                from sklearn import metrics
+                
+                data = analysis_state.get("data")
+                if data is not None:
+                    if algorithm == "clustering":
+                        from sklearn.cluster import KMeans
+                        n_clusters = parameters.get("n_clusters", 3)
+                        kmeans = KMeans(n_clusters=n_clusters)
+                        clusters = kmeans.fit_predict(data)
+                        silhouette = metrics.silhouette_score(data, clusters)
+                        
+                        # Update analysis state
+                        analysis_state["insights"][model_id] = {
+                            "clusters": clusters.tolist(),
+                            "silhouette": silhouette,
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        
+                    elif algorithm == "anomaly_detection":
+                        from sklearn.ensemble import IsolationForest
+                        contamination = parameters.get("contamination", 0.1)
+                        iso_forest = IsolationForest(contamination=contamination)
+                        anomalies = iso_forest.fit_predict(data)
+                        
+                        # Update analysis state
+                        analysis_state["insights"][model_id] = {
+                            "anomalies": anomalies.tolist(),
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        
+                    # Record reflection if needed
+                    if model.get("needs_update", False):
+                        await self.record_reflection(
+                            f"Insight model {model_id} applied to {analysis_id} needs update",
+                            domain=self.domain
+                        )
+                        
+            except Exception as e:
+                logger.error(f"Error applying insight model: {str(e)}")
+                
+    async def _apply_trend_detector(
+        self,
+        analysis_id: str,
+        detector_id: str,
+        detector: Dict
+    ):
+        """Apply a trend detector's algorithm."""
+        analysis_state = self.active_analyses[analysis_id]
+        algorithm = detector.get("algorithm", "")
+        window = detector.get("window", "1h")
+        
+        if algorithm:
+            try:
+                # Apply trend detection
+                import pandas as pd
+                import numpy as np
+                
+                data = pd.DataFrame(analysis_state.get("data", []))
+                if not data.empty and "timestamp" in data.columns:
+                    if algorithm == "moving_average":
+                        window_size = pd.Timedelta(window)
+                        ma = data.rolling(window=window_size).mean()
+                        
+                        # Update analysis state
+                        analysis_state["trends"][detector_id] = {
+                            "moving_average": ma.to_dict(),
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        
+                    elif algorithm == "exponential_smoothing":
+                        from statsmodels.tsa.holtwinters import ExponentialSmoothing
+                        model = ExponentialSmoothing(data)
+                        fitted = model.fit()
+                        
+                        # Update analysis state
+                        analysis_state["trends"][detector_id] = {
+                            "smoothed": fitted.fittedvalues.to_dict(),
+                            "timestamp": datetime.now().isoformat()
+                        }
+                        
+                    # Record reflection if needed
+                    if detector.get("needs_review", False):
+                        await self.record_reflection(
+                            f"Trend detector {detector_id} applied to {analysis_id} needs review",
+                            domain=self.domain
+                        )
+                        
+            except Exception as e:
+                logger.error(f"Error applying trend detector: {str(e)}")
+                
     async def get_domain_access(self, domain: str) -> bool:
         """Check if agent has access to specified domain."""
         if self.memory_system and hasattr(self.memory_system, "semantic"):
