@@ -49,36 +49,63 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
         # Initialize orchestration-specific attributes
         self._initialize_orchestration_attributes()
         
+        # Initialize task flow tracking
+        self.active_flows = {}  # flow_id -> flow_state
+        self.flow_patterns = {}  # pattern_id -> pattern_config
+        self.execution_monitors = {}  # task_id -> monitor_state
+        self.resource_allocations = {}  # resource_id -> allocation_state
+        self.dependency_graph = {}  # task_id -> dependencies
+        
     def _initialize_orchestration_attributes(self):
         """Initialize orchestration-specific attributes."""
         self.define(
-            occupation="Agent Orchestrator",
+            occupation="Advanced Agent Orchestrator",
             desires=[
                 "Coordinate agents effectively",
                 "Optimize agent interactions",
                 "Ensure task completion",
-                "Maintain orchestration quality"
+                "Maintain orchestration quality",
+                "Optimize task flows",
+                "Manage resource allocation",
+                "Monitor execution progress",
+                "Handle dependencies efficiently",
+                "Adapt to changing conditions",
+                "Ensure system resilience"
             ],
             emotions={
                 "baseline": "analytical",
                 "towards_agents": "focused",
-                "towards_domain": "mindful"
+                "towards_domain": "mindful",
+                "towards_flows": "attentive",
+                "towards_resources": "efficient",
+                "towards_execution": "vigilant",
+                "towards_adaptation": "responsive"
             },
             domain=self.domain,
             capabilities=[
                 "agent_orchestration",
                 "flow_coordination",
                 "decision_making",
-                "pattern_orchestration"
+                "pattern_orchestration",
+                "flow_optimization",
+                "resource_management",
+                "execution_monitoring",
+                "dependency_handling",
+                "adaptive_planning",
+                "resilience_management"
             ]
         )
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
-        """Process content through both systems."""
+        """Process content through both systems with enhanced flow awareness."""
         # Add domain to metadata
         metadata = metadata or {}
         metadata["domain"] = self.domain
         
+        # Update flow tracking
+        if flow_id := content.get("flow_id"):
+            await self._update_flow_state(flow_id, content)
+            
         # Process through memory system
         response = await super().process(content, metadata)
         
@@ -106,6 +133,24 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                         self.emotions.update({
                             "domain_state": "low_relevance"
                         })
+                        
+                # Update flow state emotions
+                if concept.get("type") == "flow_state":
+                    self.emotions.update({
+                        "flow_state": concept.get("state", "neutral")
+                    })
+                    
+                # Update resource state emotions
+                if concept.get("type") == "resource_state":
+                    self.emotions.update({
+                        "resource_state": concept.get("state", "neutral")
+                    })
+                    
+                # Update execution state emotions
+                if concept.get("type") == "execution_state":
+                    self.emotions.update({
+                        "execution_state": concept.get("state", "neutral")
+                    })
                     
         return response
         
@@ -115,10 +160,22 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
         orchestration_type: str,
         target_domain: Optional[str] = None
     ):
-        """Orchestrate agents and store results with domain awareness."""
+        """Orchestrate agents and store results with enhanced flow awareness."""
         # Validate domain access if specified
         if target_domain:
             await self.validate_domain_access(target_domain)
+            
+        # Update flow patterns if needed
+        if patterns := content.get("flow_patterns"):
+            self._update_flow_patterns(patterns)
+            
+        # Update resource allocations
+        if resources := content.get("resources"):
+            await self._update_resource_allocations(resources)
+            
+        # Update dependency graph
+        if dependencies := content.get("dependencies"):
+            self._update_dependency_graph(dependencies)
             
         # Orchestrate agents
         result = await self.orchestrate_agents(
@@ -127,7 +184,7 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
             metadata={"domain": target_domain or self.domain}
         )
         
-        # Store orchestration results
+        # Store orchestration results with enhanced metadata
         await self.store_memory(
             content={
                 "type": "agent_orchestration",
@@ -139,6 +196,9 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                     "decisions": result.decisions,
                     "confidence": result.confidence,
                     "issues": result.issues,
+                    "flow_states": self.active_flows,
+                    "resource_states": self.resource_allocations,
+                    "execution_states": self.execution_monitors,
                     "timestamp": datetime.now().isoformat()
                 }
             },
@@ -179,9 +239,150 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                 f"Important agent coordination decisions made in {self.domain} domain orchestration",
                 domain=self.domain
             )
+            
+        # Record flow-specific reflections
+        for flow_id, flow_state in self.active_flows.items():
+            if flow_state.get("needs_attention", False):
+                await self.record_reflection(
+                    f"Flow {flow_id} requires attention in {self.domain} domain",
+                    domain=self.domain
+                )
+                
+        # Record resource-specific reflections
+        for resource_id, allocation in self.resource_allocations.items():
+            if allocation.get("utilization", 0.0) > 0.9:
+                await self.record_reflection(
+                    f"Resource {resource_id} nearing capacity in {self.domain} domain",
+                    domain=self.domain
+                )
+                
+        # Record execution-specific reflections
+        for task_id, monitor in self.execution_monitors.items():
+            if monitor.get("status") == "blocked":
+                await self.record_reflection(
+                    f"Task {task_id} blocked in {self.domain} domain - intervention needed",
+                    domain=self.domain
+                )
         
         return result
         
+    async def _update_flow_state(self, flow_id: str, content: Dict[str, Any]):
+        """Update flow state tracking."""
+        if flow_id not in self.active_flows:
+            self.active_flows[flow_id] = {
+                "status": "active",
+                "start_time": datetime.now().isoformat(),
+                "steps_completed": 0,
+                "current_phase": "initialization",
+                "metrics": {},
+                "needs_attention": False
+            }
+            
+        flow_state = self.active_flows[flow_id]
+        
+        # Update basic state
+        if status := content.get("flow_status"):
+            flow_state["status"] = status
+            
+        if phase := content.get("flow_phase"):
+            flow_state["current_phase"] = phase
+            
+        # Update metrics
+        if metrics := content.get("flow_metrics", {}):
+            flow_state["metrics"].update(metrics)
+            
+        # Update completion tracking
+        if content.get("step_completed"):
+            flow_state["steps_completed"] += 1
+            
+        # Check for attention needs
+        flow_state["needs_attention"] = any([
+            content.get("needs_attention", False),
+            content.get("has_blockers", False),
+            content.get("resource_constraints", False)
+        ])
+        
+        # Apply relevant flow patterns
+        for pattern_id, pattern in self.flow_patterns.items():
+            if self._matches_pattern(content, pattern):
+                await self._apply_flow_pattern(flow_id, pattern_id, pattern)
+                
+    def _update_flow_patterns(self, patterns: Dict[str, Dict]):
+        """Update flow pattern configurations."""
+        for pattern_id, pattern in patterns.items():
+            if isinstance(pattern, dict):
+                self.flow_patterns[pattern_id] = {
+                    "conditions": pattern.get("conditions", {}),
+                    "actions": pattern.get("actions", []),
+                    "priority": float(pattern.get("priority", 0.5))
+                }
+                
+    async def _update_resource_allocations(self, resources: Dict[str, Dict]):
+        """Update resource allocation tracking."""
+        for resource_id, allocation in resources.items():
+            if isinstance(allocation, dict):
+                current = self.resource_allocations.get(resource_id, {})
+                
+                self.resource_allocations[resource_id] = {
+                    "type": allocation.get("type", current.get("type", "unknown")),
+                    "capacity": float(allocation.get("capacity", current.get("capacity", 0.0))),
+                    "utilization": float(allocation.get("utilization", current.get("utilization", 0.0))),
+                    "assigned_to": list(allocation.get("assigned_to", current.get("assigned_to", []))),
+                    "constraints": allocation.get("constraints", current.get("constraints", {}))
+                }
+                
+    def _update_dependency_graph(self, dependencies: Dict[str, List[str]]):
+        """Update task dependency tracking."""
+        for task_id, deps in dependencies.items():
+            if isinstance(deps, (list, set)):
+                self.dependency_graph[task_id] = set(deps)
+                
+    def _matches_pattern(self, content: Dict[str, Any], pattern: Dict) -> bool:
+        """Check if content matches a flow pattern."""
+        conditions = pattern.get("conditions", {})
+        
+        for key, value in conditions.items():
+            if key not in content:
+                return False
+                
+            if isinstance(value, (str, int, float, bool)):
+                if content[key] != value:
+                    return False
+            elif isinstance(value, dict):
+                if not isinstance(content[key], dict):
+                    return False
+                if not all(
+                    content[key].get(k) == v
+                    for k, v in value.items()
+                ):
+                    return False
+                    
+        return True
+        
+    async def _apply_flow_pattern(
+        self,
+        flow_id: str,
+        pattern_id: str,
+        pattern: Dict
+    ):
+        """Apply a flow pattern's actions."""
+        flow_state = self.active_flows[flow_id]
+        
+        for action in pattern.get("actions", []):
+            action_type = action.get("type")
+            
+            if action_type == "update_phase":
+                flow_state["current_phase"] = action["phase"]
+            elif action_type == "add_metric":
+                flow_state["metrics"][action["name"]] = action["value"]
+            elif action_type == "set_attention":
+                flow_state["needs_attention"] = action["value"]
+            elif action_type == "record_reflection":
+                await self.record_reflection(
+                    f"Flow pattern {pattern_id} triggered in {flow_id}: {action['message']}",
+                    domain=self.domain
+                )
+                
     async def get_domain_access(self, domain: str) -> bool:
         """Check if agent has access to specified domain."""
         if self.memory_system and hasattr(self.memory_system, "semantic"):
