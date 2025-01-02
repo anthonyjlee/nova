@@ -775,6 +775,14 @@ def create_task_interface(gr):
    - [ ] Set up personal vs. professional subgraphs
    - [ ] Add access control for domain-specific queries
    - [ ] Enhance memory consolidation with domain awareness
+   - [ ] Add chunk size configuration (512-1000 tokens)
+   - [ ] Implement sliding window and paragraph-based chunking
+   - [ ] Add chunk metadata tracking and consolidation
+   - [ ] Add numeric properties and fact verification to Neo4j
+   - [ ] Implement numeric fact extraction and validation
+   - [ ] Add node embedding generation for Neo4j entities
+   - [ ] Implement graph-based retrieval with BFS expansion
+   - [ ] Add unified retrieval across chunks and nodes
 
 5. Testing Requirements:
    - [ ] Create unit tests for Nova core
