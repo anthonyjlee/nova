@@ -199,6 +199,7 @@ class AgentResponse(JSONSerializable):
     timestamp: datetime = Field(default_factory=datetime.now)
     metadata: Dict = Field(default_factory=dict)
     dialogue_context: Optional[DialogueContext] = None
+    orchestration: Optional[Dict] = Field(default_factory=dict)
 
     def dict(self) -> Dict:
         """Convert to dictionary."""

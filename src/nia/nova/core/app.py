@@ -1,13 +1,20 @@
 """FastAPI application for Nova's server."""
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import uuid
 import logging
 from datetime import datetime
 
 from .endpoints import analytics_router, orchestration_router
-from .error_handling import NovaError, handle_nova_error
+from .error_handling import (
+    NovaError,
+    handle_nova_error,
+    handle_http_error,
+    handle_validation_error
+)
+from .auth import reset_rate_limits
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -35,10 +42,16 @@ app.include_router(orchestration_router)
 
 # Add error handlers
 app.add_exception_handler(NovaError, handle_nova_error)
+app.add_exception_handler(HTTPException, handle_http_error)
+app.add_exception_handler(Exception, handle_validation_error)
 
 @app.middleware("http")
 async def add_request_id(request: Request, call_next):
     """Add request ID to each request."""
+    # Skip WebSocket connections
+    if "upgrade" in request.headers and request.headers["upgrade"].lower() == "websocket":
+        return await call_next(request)
+        
     request_id = str(uuid.uuid4())
     request.state.request_id = request_id
     
@@ -81,6 +94,71 @@ async def add_request_id(request: Request, call_next):
     )
     
     return response
+
+@app.middleware("http")
+async def format_error_responses(request: Request, call_next):
+    """Format error responses to match expected structure."""
+    # Skip WebSocket connections
+    if "upgrade" in request.headers and request.headers["upgrade"].lower() == "websocket":
+        return await call_next(request)
+        
+    response = await call_next(request)
+    
+    if response.status_code >= 400:
+        # Get response body
+        body = b""
+        async for chunk in response.body_iterator:
+            body += chunk
+        
+        # Parse response body
+        try:
+            import json
+            data = json.loads(body)
+            error = None
+            
+            if isinstance(data, dict):
+                if "detail" in data:
+                    if isinstance(data["detail"], dict) and "code" in data["detail"]:
+                        error = data["detail"]
+                    else:
+                        error = {
+                            "code": "ERROR",
+                            "message": str(data["detail"])
+                        }
+                elif "error" in data:
+                    error = data["error"]
+            
+            if error is None:
+                error = {
+                    "code": "ERROR",
+                    "message": "An error occurred"
+                }
+            
+            return JSONResponse(
+                status_code=response.status_code,
+                content={"error": error},
+                headers=dict(response.headers)
+            )
+        except:
+            # If we can't parse the response, return a generic error
+            return JSONResponse(
+                status_code=response.status_code,
+                content={
+                    "error": {
+                        "code": "ERROR",
+                        "message": "An error occurred"
+                    }
+                },
+                headers=dict(response.headers)
+            )
+    
+    return response
+
+@app.on_event("startup")
+async def startup_event():
+    """Run startup tasks."""
+    # Reset rate limits on startup
+    reset_rate_limits()
 
 @app.get("/health")
 async def health_check():

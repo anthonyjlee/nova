@@ -30,8 +30,8 @@ class TinyTroupeAgent(TinyPerson, MemoryBaseAgent):
         # Initialize MemoryBaseAgent
         MemoryBaseAgent.__init__(
             self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
+            llm=None,  # TinyTroupe handles LLM interactions
+            store=memory_system.semantic.driver if memory_system else None,
             vector_store=memory_system.episodic.store if memory_system else None,
             agent_type=agent_type
         )
@@ -92,7 +92,7 @@ class TinyTroupeAgent(TinyPerson, MemoryBaseAgent):
                 # Learn concept
                 await self.learn_concept(
                     name=concept["name"],
-                    category=concept["type"],
+                    type=concept["type"],
                     description=concept["description"],
                     related=concept.get("related", [])
                 )

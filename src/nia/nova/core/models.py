@@ -1,120 +1,131 @@
-"""Pydantic models for Nova's FastAPI server."""
+"""Pydantic models for Nova's API."""
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-class BaseResponse(BaseModel):
-    """Base response model."""
-    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
-
-class ErrorResponse(BaseResponse):
-    """Error response model."""
-    error: Dict[str, Any]
-
 class AnalyticsRequest(BaseModel):
-    """Base analytics request model."""
+    """Request model for analytics endpoints."""
     type: str = Field(..., description="Type of analytics to perform")
-    domain: Optional[str] = Field(None, description="Domain for analytics")
-    
-    @validator("type")
-    def validate_type(cls, v):
-        allowed_types = ["behavioral", "predictive", "performance"]
-        if v not in allowed_types:
-            raise ValueError(f"Type must be one of {allowed_types}")
-        return v
+    flow_id: Optional[str] = Field(None, description="Flow ID for flow analytics")
+    domain: Optional[str] = Field(None, description="Domain for analytics context")
+    parameters: Optional[Dict[str, Any]] = Field(
+        default_factory=dict,
+        description="Additional parameters for analytics"
+    )
 
-class AnalyticsResponse(BaseResponse):
-    """Base analytics response model."""
-    analytics: Dict[str, Any]
-    insights: List[Dict[str, Any]]
-    confidence: float = Field(..., ge=0.0, le=1.0)
+class AnalyticsResponse(BaseModel):
+    """Response model for analytics endpoints."""
+    analytics: Dict[str, Any] = Field(..., description="Analytics results")
+    insights: List[Dict[str, Any]] = Field(..., description="Insights derived from analytics")
+    confidence: float = Field(..., description="Confidence score for analytics")
+    timestamp: str = Field(..., description="Timestamp of analytics generation")
 
 class TaskRequest(BaseModel):
-    """Task creation/update request model."""
+    """Request model for task endpoints."""
     type: str = Field(..., description="Type of task")
-    parameters: Dict[str, Any] = Field(default_factory=dict)
-    priority: int = Field(default=1, ge=1, le=5)
-    deadline: Optional[str] = None
-    dependencies: List[str] = Field(default_factory=list)
+    parameters: Dict[str, Any] = Field(..., description="Task parameters")
+    priority: int = Field(1, description="Task priority (1-5)")
+    deadline: Optional[str] = Field(None, description="Task deadline")
+    dependencies: List[str] = Field(
+        default_factory=list,
+        description="List of task IDs this task depends on"
+    )
 
-class TaskResponse(BaseResponse):
-    """Task response model."""
-    task_id: str
-    status: str
-    orchestration: Dict[str, Any]
-    confidence: float = Field(..., ge=0.0, le=1.0)
+class TaskResponse(BaseModel):
+    """Response model for task endpoints."""
+    task_id: str = Field(..., description="Unique task identifier")
+    status: str = Field(..., description="Task status")
+    orchestration: Dict[str, Any] = Field(..., description="Orchestration details")
+    confidence: float = Field(..., description="Confidence score for orchestration")
+    timestamp: str = Field(..., description="Timestamp of response")
 
 class CoordinationRequest(BaseModel):
-    """Agent coordination request model."""
-    agents: List[str] = Field(..., min_items=1)
-    task: TaskRequest
-    strategy: Optional[str] = None
-    constraints: Dict[str, Any] = Field(default_factory=dict)
+    """Request model for agent coordination."""
+    agents: List[str] = Field(..., description="List of agent IDs to coordinate")
+    task: TaskRequest = Field(..., description="Task to coordinate")
+    strategy: Optional[str] = Field(None, description="Coordination strategy")
+    constraints: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Coordination constraints"
+    )
 
-class CoordinationResponse(BaseResponse):
-    """Agent coordination response model."""
-    coordination_id: str
-    status: str
-    orchestration: Dict[str, Any]
-    confidence: float = Field(..., ge=0.0, le=1.0)
-
-class ResourceAllocationRequest(BaseModel):
-    """Resource allocation request model."""
-    resources: Dict[str, Dict[str, Any]] = Field(..., description="Resources to allocate")
-    constraints: Dict[str, Any] = Field(default_factory=dict)
-    priority: int = Field(default=1, ge=1, le=5)
-
-class ResourceAllocationResponse(BaseResponse):
-    """Resource allocation response model."""
-    allocations: List[Dict[str, Any]]
-    analytics: Dict[str, Any]
-    confidence: float = Field(..., ge=0.0, le=1.0)
-
-class MemoryRequest(BaseModel):
-    """Memory operation request model."""
-    type: str = Field(..., description="Type of memory operation")
-    content: Dict[str, Any] = Field(..., description="Memory content")
-    importance: float = Field(default=0.5, ge=0.0, le=1.0)
-    context: Dict[str, Any] = Field(default_factory=dict)
-    
-    @validator("type")
-    def validate_type(cls, v):
-        allowed_types = ["store", "retrieve", "search", "update", "delete"]
-        if v not in allowed_types:
-            raise ValueError(f"Type must be one of {allowed_types}")
-        return v
-
-class MemoryResponse(BaseResponse):
-    """Memory operation response model."""
-    memory_id: Optional[str] = None
-    content: Optional[Dict[str, Any]] = None
-    matches: Optional[List[Dict[str, Any]]] = None
-    orchestration: Dict[str, Any]
-    confidence: float = Field(..., ge=0.0, le=1.0)
-
-class FlowOptimizationRequest(BaseModel):
-    """Flow optimization request model."""
-    flow_id: str
-    parameters: Dict[str, Any] = Field(default_factory=dict)
-    constraints: Dict[str, Any] = Field(default_factory=dict)
-
-class FlowOptimizationResponse(BaseResponse):
-    """Flow optimization response model."""
-    flow_id: str
-    optimizations: List[Dict[str, Any]]
-    analytics: Dict[str, Any]
-    confidence: float = Field(..., ge=0.0, le=1.0)
+class CoordinationResponse(BaseModel):
+    """Response model for agent coordination."""
+    coordination_id: str = Field(..., description="Unique coordination identifier")
+    status: str = Field(..., description="Coordination status")
+    orchestration: Dict[str, Any] = Field(..., description="Orchestration details")
+    confidence: float = Field(..., description="Confidence score for coordination")
+    timestamp: str = Field(..., description="Timestamp of response")
 
 class AgentAssignmentRequest(BaseModel):
-    """Agent assignment request model."""
-    agent_id: str
-    task: TaskRequest
-    constraints: Dict[str, Any] = Field(default_factory=dict)
+    """Request model for agent assignment."""
+    agent_id: str = Field(..., description="Agent ID to assign task to")
+    task: TaskRequest = Field(..., description="Task to assign")
+    constraints: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Assignment constraints"
+    )
 
-class AgentAssignmentResponse(BaseResponse):
-    """Agent assignment response model."""
-    agent_id: str
-    status: str
-    orchestration: Dict[str, Any]
-    confidence: float = Field(..., ge=0.0, le=1.0)
+class AgentAssignmentResponse(BaseModel):
+    """Response model for agent assignment."""
+    agent_id: str = Field(..., description="Agent ID task was assigned to")
+    status: str = Field(..., description="Assignment status")
+    orchestration: Dict[str, Any] = Field(..., description="Orchestration details")
+    confidence: float = Field(..., description="Confidence score for assignment")
+    timestamp: str = Field(..., description="Timestamp of response")
+
+class ResourceAllocationRequest(BaseModel):
+    """Request model for resource allocation."""
+    resources: Dict[str, Dict[str, float]] = Field(
+        ...,
+        description="Resource requirements (resource_id -> {capacity, etc})"
+    )
+    constraints: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Allocation constraints"
+    )
+    priority: int = Field(1, description="Allocation priority (1-5)")
+
+class ResourceAllocationResponse(BaseModel):
+    """Response model for resource allocation."""
+    allocations: List[Dict[str, Any]] = Field(..., description="Resource allocations")
+    analytics: Dict[str, Any] = Field(..., description="Analytics used for allocation")
+    confidence: float = Field(..., description="Confidence score for allocation")
+    timestamp: str = Field(..., description="Timestamp of response")
+
+class FlowOptimizationRequest(BaseModel):
+    """Request model for flow optimization."""
+    flow_id: str = Field(..., description="Flow ID to optimize")
+    parameters: Dict[str, Any] = Field(..., description="Optimization parameters")
+    constraints: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Optimization constraints"
+    )
+
+class FlowOptimizationResponse(BaseModel):
+    """Response model for flow optimization."""
+    flow_id: str = Field(..., description="Flow ID that was optimized")
+    optimizations: List[Dict[str, Any]] = Field(..., description="Optimization results")
+    analytics: Dict[str, Any] = Field(..., description="Analytics used for optimization")
+    confidence: float = Field(..., description="Confidence score for optimization")
+    timestamp: str = Field(..., description="Timestamp of response")
+
+class MemoryRequest(BaseModel):
+    """Request model for memory operations."""
+    type: str = Field(..., description="Type of memory operation")
+    content: Dict[str, Any] = Field(..., description="Memory content")
+    importance: float = Field(0.5, description="Memory importance (0-1)")
+    context: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Memory context"
+    )
+
+class MemoryResponse(BaseModel):
+    """Response model for memory operations."""
+    memory_id: Optional[str] = Field(None, description="Memory identifier")
+    content: Optional[Dict[str, Any]] = Field(None, description="Memory content")
+    matches: Optional[List[Dict[str, Any]]] = Field(None, description="Search matches")
+    orchestration: Dict[str, Any] = Field(..., description="Orchestration details")
+    confidence: float = Field(..., description="Confidence score for operation")
+    timestamp: str = Field(..., description="Timestamp of response")

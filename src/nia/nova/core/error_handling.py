@@ -1,219 +1,140 @@
-"""Error handling utilities for Nova's FastAPI server."""
+"""Error handling for Nova's FastAPI server."""
 
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
-from typing import Optional, Dict, Any, Type, List
-import time
 from functools import wraps
-import asyncio
+from typing import Any, Callable, Dict, Type, TypeVar
 import logging
+import asyncio
 
 logger = logging.getLogger(__name__)
 
+# Custom exception types
 class NovaError(Exception):
     """Base exception for Nova errors."""
-    def __init__(
-        self,
-        message: str,
-        error_code: str,
-        status_code: int = 500,
-        details: Optional[Dict[str, Any]] = None
-    ):
+    def __init__(self, code: str, message: str):
+        self.code = code
         self.message = message
-        self.error_code = error_code
-        self.status_code = status_code
-        self.details = details or {}
-        super().__init__(self.message)
+        super().__init__(message)
 
 class ValidationError(NovaError):
-    """Raised when request validation fails."""
-    def __init__(
-        self,
-        message: str,
-        details: Optional[Dict[str, Any]] = None
-    ):
-        super().__init__(
-            message=message,
-            error_code="VALIDATION_ERROR",
-            status_code=400,
-            details=details
-        )
+    """Validation error."""
+    def __init__(self, message: str):
+        super().__init__("VALIDATION_ERROR", message)
 
 class AuthenticationError(NovaError):
-    """Raised when authentication fails."""
-    def __init__(
-        self,
-        message: str,
-        details: Optional[Dict[str, Any]] = None
-    ):
-        super().__init__(
-            message=message,
-            error_code="AUTHENTICATION_ERROR",
-            status_code=401,
-            details=details
-        )
+    """Authentication error."""
+    def __init__(self, message: str):
+        super().__init__("AUTHENTICATION_ERROR", message)
 
 class AuthorizationError(NovaError):
-    """Raised when authorization fails."""
-    def __init__(
-        self,
-        message: str,
-        details: Optional[Dict[str, Any]] = None
-    ):
-        super().__init__(
-            message=message,
-            error_code="AUTHORIZATION_ERROR",
-            status_code=403,
-            details=details
-        )
+    """Authorization error."""
+    def __init__(self, message: str):
+        super().__init__("PERMISSION_DENIED", message)
 
 class ResourceNotFoundError(NovaError):
-    """Raised when a requested resource is not found."""
-    def __init__(
-        self,
-        message: str,
-        details: Optional[Dict[str, Any]] = None
-    ):
-        super().__init__(
-            message=message,
-            error_code="RESOURCE_NOT_FOUND",
-            status_code=404,
-            details=details
-        )
+    """Resource not found error."""
+    def __init__(self, message: str):
+        super().__init__("RESOURCE_NOT_FOUND", message)
 
 class RateLimitError(NovaError):
-    """Raised when rate limit is exceeded."""
-    def __init__(
-        self,
-        message: str,
-        details: Optional[Dict[str, Any]] = None
-    ):
-        super().__init__(
-            message=message,
-            error_code="RATE_LIMIT_EXCEEDED",
-            status_code=429,
-            details=details
-        )
+    """Rate limit exceeded error."""
+    def __init__(self, message: str):
+        super().__init__("RATE_LIMIT_EXCEEDED", message)
 
 class ServiceError(NovaError):
-    """Raised when an internal service error occurs."""
-    def __init__(
-        self,
-        message: str,
-        details: Optional[Dict[str, Any]] = None
-    ):
-        super().__init__(
-            message=message,
-            error_code="SERVICE_ERROR",
-            status_code=500,
-            details=details
-        )
+    """Internal service error."""
+    def __init__(self, message: str):
+        super().__init__("SERVICE_ERROR", message)
 
-async def handle_nova_error(
-    request: Request,
-    exc: NovaError
-) -> JSONResponse:
-    """Handle Nova-specific errors."""
-    error_response = {
-        "error": {
-            "code": exc.error_code,
-            "message": exc.message,
-            "details": exc.details,
-            "request_id": request.state.request_id,
-            "timestamp": time.time()
-        }
-    }
-    
-    # Log error with context
-    logger.error(
-        f"Error handling request {request.state.request_id}: {exc.message}",
-        extra={
-            "error_code": exc.error_code,
-            "status_code": exc.status_code,
-            "details": exc.details,
-            "request_id": request.state.request_id,
-            "path": request.url.path,
-            "method": request.method
-        }
+# Error handlers
+async def handle_nova_error(request: Request, exc: NovaError) -> JSONResponse:
+    """Handle Nova errors."""
+    logger.error(f"Error handling request {request.state.request_id}: {exc}")
+    return JSONResponse(
+        status_code=get_status_code(exc),
+        content={"error": {"code": exc.code, "message": exc.message}}
     )
-    
+
+async def handle_http_error(request: Request, exc: HTTPException) -> JSONResponse:
+    """Handle HTTP exceptions."""
+    logger.error(f"Error handling request {request.state.request_id}: {exc.detail}")
+    if isinstance(exc.detail, dict) and "code" in exc.detail:
+        # Already formatted error
+        return JSONResponse(
+            status_code=exc.status_code,
+            content={"error": exc.detail}
+        )
     return JSONResponse(
         status_code=exc.status_code,
-        content=error_response
+        content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}}
     )
 
-def retry_on_error(
-    max_retries: int = 3,
-    retry_delay: float = 1.0,
-    exceptions: List[Type[Exception]] = None,
-    exponential_backoff: bool = True
-):
-    """Decorator to retry operations on failure."""
-    if exceptions is None:
-        exceptions = (ServiceError,)
-        
-    def decorator(func):
+async def handle_validation_error(request: Request, exc: Exception) -> JSONResponse:
+    """Handle validation errors."""
+    logger.error(f"Validation error in request {request.state.request_id}: {exc}")
+    return JSONResponse(
+        status_code=400,
+        content={"error": {"code": "VALIDATION_ERROR", "message": str(exc)}}
+    )
+
+def get_status_code(error: Exception) -> int:
+    """Get HTTP status code for error."""
+    status_codes = {
+        ValidationError: 400,
+        AuthenticationError: 401,
+        AuthorizationError: 403,
+        ResourceNotFoundError: 404,
+        RateLimitError: 429,
+        ServiceError: 500
+    }
+    return status_codes.get(type(error), 500)
+
+# Decorators
+T = TypeVar("T")
+
+def validate_request(model: Type[T]) -> Callable:
+    """Validate request body against Pydantic model."""
+    def decorator(func: Callable) -> Callable:
         @wraps(func)
-        async def wrapper(*args, **kwargs):
-            last_exception = None
-            
-            for attempt in range(max_retries):
-                try:
-                    return await func(*args, **kwargs)
-                except tuple(exceptions) as e:
-                    last_exception = e
-                    
-                    if attempt < max_retries - 1:
-                        delay = (
-                            retry_delay * (2 ** attempt)
-                            if exponential_backoff
-                            else retry_delay
-                        )
-                        
-                        logger.warning(
-                            f"Retry attempt {attempt + 1}/{max_retries} "
-                            f"for {func.__name__} after {delay}s delay"
-                        )
-                        
-                        await asyncio.sleep(delay)
-                    else:
-                        logger.error(
-                            f"All {max_retries} retry attempts failed "
-                            f"for {func.__name__}"
-                        )
-                        
-            raise last_exception
-            
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                # If request body is passed as a keyword argument
+                if "request" in kwargs:
+                    validated = model(**kwargs["request"])
+                    kwargs["request"] = validated
+                # If request body is the first argument
+                elif args and len(args) > 0:
+                    validated = model(**args[0])
+                    args = (validated,) + args[1:]
+                return await func(*args, **kwargs)
+            except Exception as e:
+                raise ValidationError(str(e))
         return wrapper
     return decorator
 
-def validate_request(request_model: Type[Any]):
-    """Decorator to validate request data against a Pydantic model."""
-    def decorator(func):
+def retry_on_error(max_retries: int = 3, delay: float = 1.0) -> Callable:
+    """Retry operation on failure with exponential backoff."""
+    def decorator(func: Callable) -> Callable:
         @wraps(func)
-        async def wrapper(*args, **kwargs):
-            try:
-                # Extract request data from kwargs
-                request_data = next(
-                    (v for k, v in kwargs.items() if isinstance(v, dict)),
-                    None
-                )
-                
-                if request_data:
-                    # Validate against model
-                    validated_data = request_model(**request_data)
-                    # Replace original data with validated data
-                    for k, v in kwargs.items():
-                        if isinstance(v, dict):
-                            kwargs[k] = validated_data.dict()
-                            break
-                            
-                return await func(*args, **kwargs)
-            except Exception as e:
-                raise ValidationError(
-                    message="Request validation failed",
-                    details={"error": str(e)}
-                )
-                
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            last_error = None
+            for attempt in range(max_retries):
+                try:
+                    return await func(*args, **kwargs)
+                except Exception as e:
+                    last_error = e
+                    if attempt < max_retries - 1:
+                        retry_delay = delay * (2 ** attempt)
+                        logger.warning(
+                            f"Retry attempt {attempt + 1}/{max_retries} "
+                            f"for {func.__name__} after {retry_delay}s delay"
+                        )
+                        await asyncio.sleep(retry_delay)
+            
+            logger.error(
+                f"All {max_retries} retry attempts failed for {func.__name__}"
+            )
+            raise last_error
         return wrapper
     return decorator

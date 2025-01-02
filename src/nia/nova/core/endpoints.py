@@ -1,14 +1,22 @@
 """FastAPI endpoints for Nova's analytics and orchestration."""
 
-from fastapi import APIRouter, HTTPException, WebSocket, Depends, Header
-from typing import Dict, List, Optional
+from fastapi import APIRouter, HTTPException, WebSocket, Depends, Header, Request
+from typing import Dict, List, Optional, Any
 from datetime import datetime
 
 from nia.nova.core.analytics import AnalyticsAgent, AnalyticsResult
 from nia.agents.specialized.orchestration_agent import OrchestrationAgent
 from nia.memory.types.memory_types import AgentResponse
 
-from .auth import check_rate_limit, check_domain_access, get_permission
+from .auth import (
+    check_rate_limit,
+    check_domain_access,
+    get_permission,
+    get_api_key,
+    get_ws_api_key,
+    ws_auth,
+    API_KEYS
+)
 from .error_handling import (
     NovaError,
     ValidationError,
@@ -37,8 +45,7 @@ from .models import (
 # Create routers with dependencies
 analytics_router = APIRouter(
     prefix="/api/analytics",
-    tags=["analytics"],
-    dependencies=[Depends(check_rate_limit)]
+    tags=["analytics"]
 )
 
 orchestration_router = APIRouter(
@@ -51,7 +58,59 @@ orchestration_router = APIRouter(
 analytics_agent = AnalyticsAgent(domain="professional")  # Default to professional domain
 orchestration_agent = OrchestrationAgent(name="nova_orchestrator", domain="professional")
 
-@analytics_router.get("/flows", response_model=AnalyticsResponse)
+@analytics_router.websocket("/ws")
+async def analytics_websocket(websocket: WebSocket):
+    """WebSocket endpoint for real-time analytics updates."""
+    try:
+        # Extract API key from headers
+        headers = dict(websocket.headers)
+        api_key = headers.get("x-api-key")
+        
+        if not api_key:
+            await websocket.close(code=4000, reason="API key is required")
+            return
+        
+        if api_key not in API_KEYS:
+            await websocket.close(code=4000, reason="Invalid API key")
+            return
+        
+        await websocket.accept()
+        
+        while True:
+            data = await websocket.receive_json()
+            
+            # Validate request
+            request = AnalyticsRequest(**data)
+            
+            # Process analytics based on data type
+            result = await analytics_agent.process_analytics(
+                content=data,
+                analytics_type=request.type,
+                metadata={"domain": request.domain} if request.domain else None
+            )
+            
+            # Send analytics update
+            await websocket.send_json({
+                "type": "analytics_update",
+                "analytics": result.analytics,
+                "insights": result.insights,
+                "confidence": result.confidence,
+                "timestamp": datetime.now().isoformat()
+            })
+    except Exception as e:
+        if websocket.client_state.value != 3:  # Not closed
+            await websocket.send_json({
+                "type": "error",
+                "error": {
+                    "code": "ERROR",
+                    "message": str(e)
+                }
+            })
+    finally:
+        if websocket.client_state.value != 3:  # Not closed
+            await websocket.close()
+
+@analytics_router.get("/flows", response_model=AnalyticsResponse, dependencies=[Depends(check_rate_limit)])
 @retry_on_error(max_retries=3)
 async def get_flow_analytics(
     flow_id: Optional[str] = None,
@@ -81,7 +140,7 @@ async def get_flow_analytics(
     except Exception as e:
         raise ServiceError(str(e))
 
-@analytics_router.get("/resources", response_model=AnalyticsResponse)
+@analytics_router.get("/resources", response_model=AnalyticsResponse, dependencies=[Depends(check_rate_limit)])
 @retry_on_error(max_retries=3)
 async def get_resource_analytics(
     resource_id: Optional[str] = None,
@@ -111,7 +170,7 @@ async def get_resource_analytics(
     except Exception as e:
         raise ServiceError(str(e))
 
-@analytics_router.get("/agents", response_model=AnalyticsResponse)
+@analytics_router.get("/agents", response_model=AnalyticsResponse, dependencies=[Depends(check_rate_limit)])
 @retry_on_error(max_retries=3)
 async def get_agent_analytics(
     agent_id: Optional[str] = None,
@@ -141,41 +200,29 @@ async def get_agent_analytics(
     except Exception as e:
         raise ServiceError(str(e))
 
-@analytics_router.websocket("/ws")
-async def analytics_websocket(websocket: WebSocket):
-    """WebSocket endpoint for real-time analytics updates."""
-    await websocket.accept()
-    try:
-        while True:
-            data = await websocket.receive_json()
-            
-            # Validate request
-            request = AnalyticsRequest(**data)
-            
-            # Process analytics based on data type
-            result = await analytics_agent.process_analytics(
-                content=data,
-                analytics_type=request.type,
-                metadata={"domain": request.domain} if request.domain else None
-            )
-            
-            # Send analytics update
-            await websocket.send_json({
-                "type": "analytics_update",
-                "analytics": result.analytics,
-                "insights": result.insights,
-                "confidence": result.confidence,
-                "timestamp": datetime.now().isoformat()
-            })
-    except Exception as e:
-        await websocket.send_json({
-            "type": "error",
-            "detail": str(e)
-        })
-    finally:
-        await websocket.close()
-
 # Task Management Endpoints
+@orchestration_router.get("/tasks")
+async def list_tasks(
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("read"))
+) -> Dict:
+    """List all tasks."""
+    try:
+        result = await orchestration_agent.process(
+            content={
+                "type": "task_list",
+                "timestamp": datetime.now().isoformat()
+            },
+            metadata={"domain": domain} if domain else None
+        )
+        
+        return {
+            "tasks": result.orchestration.get("tasks", []),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise ServiceError(str(e))
+
 @orchestration_router.post("/tasks", response_model=TaskResponse)
 @validate_request(TaskRequest)
 @retry_on_error(max_retries=3)
@@ -192,8 +239,11 @@ async def create_task(
             target_domain=domain
         )
         
+        # Generate task ID if not provided by orchestration
+        task_id = result.orchestration.get("task_id") or str(datetime.now().timestamp())
+        
         return {
-            "task_id": result.orchestration.get("task_id"),
+            "task_id": task_id,
             "status": "created",
             "orchestration": result.orchestration,
             "confidence": result.confidence,
@@ -224,9 +274,9 @@ async def get_task(
             
         return {
             "task_id": task_id,
-            "status": result.orchestration.get("status"),
-            "orchestration": result.orchestration,
-            "confidence": result.confidence,
+            "status": result.orchestration.get("status") if hasattr(result, "orchestration") else "success",
+            "orchestration": result.orchestration if hasattr(result, "orchestration") else {},
+            "confidence": result.confidence if hasattr(result, "confidence") else 1.0,
             "timestamp": datetime.now().isoformat()
         }
     except ResourceNotFoundError:
@@ -267,6 +317,7 @@ async def update_task(
 
 # Agent Coordination Endpoints
 @orchestration_router.post("/agents/coordinate", response_model=CoordinationResponse)
+@orchestration_router.get("/agents/coordinate")
 @validate_request(CoordinationRequest)
 @retry_on_error(max_retries=3)
 async def coordinate_agents(
@@ -282,8 +333,11 @@ async def coordinate_agents(
             target_domain=domain
         )
         
+        # Generate coordination ID if not provided by orchestration
+        coordination_id = result.orchestration.get("coordination_id") or str(datetime.now().timestamp())
+        
         return {
-            "coordination_id": result.orchestration.get("coordination_id"),
+            "coordination_id": coordination_id,
             "status": "coordinated",
             "orchestration": result.orchestration,
             "confidence": result.confidence,
@@ -325,11 +379,10 @@ async def assign_agent(
 
 # Flow Optimization Endpoints
 @orchestration_router.post("/flows/{flow_id}/optimize", response_model=FlowOptimizationResponse)
-@validate_request(FlowOptimizationRequest)
 @retry_on_error(max_retries=3)
 async def optimize_flow(
     flow_id: str,
-    request: FlowOptimizationRequest,
+    request: Dict[str, Any],
     domain: Optional[str] = None,
     _: None = Depends(get_permission("write"))
 ) -> Dict:
@@ -340,8 +393,8 @@ async def optimize_flow(
             content={
                 "type": "flow_analytics",
                 "flow_id": flow_id,
-                "parameters": request.parameters,
-                "constraints": request.constraints,
+                "parameters": request.get("parameters", {}),
+                "constraints": request.get("constraints", {}),
                 "timestamp": datetime.now().isoformat()
             },
             analytics_type="predictive",

@@ -6,7 +6,7 @@ from datetime import datetime
 
 from tinytroupe import TinyWorld
 from ..memory.two_layer import TwoLayerMemorySystem
-from ..memory.memory_types import Memory, EpisodicMemory
+from ..memory.types.memory_types import Memory, EpisodicMemory
 
 logger = logging.getLogger(__name__)
 

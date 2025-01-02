@@ -3,7 +3,7 @@
 import asyncio
 import logging
 from typing import Dict, List, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 
 from nia.memory.vector.vector_store import VectorStore, serialize_for_vector_store
 from nia.memory.neo4j.neo4j_store import Neo4jMemoryStore
@@ -75,6 +75,14 @@ class SemanticLayer(ConceptStore):
     
     Inherits from ConceptStore to leverage existing Neo4j functionality.
     """
+    
+    async def record_reflection(self, content: str, domain: Optional[str] = None):
+        """Record a reflection with domain awareness."""
+        await self.store_concept(
+            name=f"reflection_{datetime.now().isoformat()}",
+            type="reflection",
+            description=content
+        )
     
     def __init__(self, store: Optional[Neo4jMemoryStore] = None):
         if store is None:
@@ -255,6 +263,7 @@ class TwoLayerMemorySystem:
                  vector_store: Optional[VectorStore] = None):
         self.episodic = EpisodicLayer(vector_store)
         self.semantic = SemanticLayer()
+        self.semantic.store = self.semantic
         self.consolidation_manager = None  # Will be set by ConsolidationManager
         
     async def store_experience(self, experience: Memory):
