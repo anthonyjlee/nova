@@ -8,7 +8,7 @@ from tinytroupe import TinyPerson
 from .base import BaseAgent as MemoryBaseAgent
 from ..world.environment import NIAWorld
 from ..memory.two_layer import TwoLayerMemorySystem
-from ..memory.memory_types import Memory, EpisodicMemory, Concept, AgentResponse
+from ..memory.types.memory_types import Memory, EpisodicMemory, Concept, AgentResponse
 
 logger = logging.getLogger(__name__)
 
@@ -43,12 +43,12 @@ class TinyTroupeAgent(TinyPerson, MemoryBaseAgent):
     def _initialize_attributes(self, attributes: Optional[Dict] = None):
         """Initialize TinyTroupe attributes."""
         attributes = attributes or {}
-        self.define(
-            occupation=attributes.get("occupation", "Agent"),
-            desires=attributes.get("desires", ["Help users", "Learn and improve"]),
-            emotions=attributes.get("emotions", {"baseline": "neutral"}),
-            memory_references=attributes.get("memory_references", [])
-        )
+        self._configuration.update({
+            "occupation": attributes.get("occupation", "Agent"),
+            "current_goals": attributes.get("desires", ["Help users", "Learn and improve"]),
+            "current_emotions": attributes.get("emotions", {"baseline": "neutral"}),
+            "memory_references": attributes.get("memory_references", [])
+        })
         
     async def observe(self, event: Dict):
         """Process an observation through both systems."""

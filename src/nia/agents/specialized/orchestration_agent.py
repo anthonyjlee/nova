@@ -1,14 +1,15 @@
 """TinyTroupe orchestration agent implementation."""
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 from ...nova.core.orchestration import OrchestrationAgent as NovaOrchestrationAgent
+from ...nova.core.analytics import AnalyticsAgent, AnalyticsResult
 from ..tinytroupe_agent import TinyTroupeAgent
 from ...world.environment import NIAWorld
 from ...memory.two_layer import TwoLayerMemorySystem
-from ...memory.memory_types import AgentResponse
+from ...memory.types.memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,9 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
         # Set domain
         self.domain = domain or "professional"  # Default to professional domain
         
+        # Initialize analytics agent
+        self.analytics = AnalyticsAgent(domain=self.domain)
+        
         # Initialize orchestration-specific attributes
         self._initialize_orchestration_attributes()
         
@@ -58,9 +62,9 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
         
     def _initialize_orchestration_attributes(self):
         """Initialize orchestration-specific attributes."""
-        self.define(
-            occupation="Advanced Agent Orchestrator",
-            desires=[
+        self._configuration.update({
+            "occupation": "Advanced Agent Orchestrator",
+            "current_goals": [
                 "Coordinate agents effectively",
                 "Optimize agent interactions",
                 "Ensure task completion",
@@ -72,7 +76,7 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                 "Adapt to changing conditions",
                 "Ensure system resilience"
             ],
-            emotions={
+            "current_emotions": {
                 "baseline": "analytical",
                 "towards_agents": "focused",
                 "towards_domain": "mindful",
@@ -81,8 +85,8 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                 "towards_execution": "vigilant",
                 "towards_adaptation": "responsive"
             },
-            domain=self.domain,
-            capabilities=[
+            "domain": self.domain,
+            "capabilities": [
                 "agent_orchestration",
                 "flow_coordination",
                 "decision_making",
@@ -94,7 +98,7 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                 "adaptive_planning",
                 "resilience_management"
             ]
-        )
+        })
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems with enhanced flow awareness."""
@@ -102,9 +106,16 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
         metadata = metadata or {}
         metadata["domain"] = self.domain
         
-        # Update flow tracking
+        # Update flow tracking with analytics
         if flow_id := content.get("flow_id"):
             await self._update_flow_state(flow_id, content)
+            
+            # Get flow analytics
+            analytics_result = await self._get_flow_analytics(flow_id)
+            
+            # Update flow state based on analytics
+            if analytics_result and analytics_result.is_valid:
+                await self._apply_analytics_insights(flow_id, analytics_result)
             
         # Process through memory system
         response = await super().process(content, metadata)
@@ -154,6 +165,72 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                     
         return response
         
+    async def _get_flow_analytics(self, flow_id: str) -> Optional[AnalyticsResult]:
+        """Get analytics for a specific flow."""
+        try:
+            flow_state = self.active_flows.get(flow_id)
+            if not flow_state:
+                return None
+                
+            content = {
+                "type": "flow_analytics",
+                "flow_id": flow_id,
+                "flow_state": flow_state,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            return await self.analytics.process_analytics(
+                content=content,
+                analytics_type="behavioral",
+                metadata={"domain": self.domain}
+            )
+        except Exception as e:
+            logger.error(f"Error getting flow analytics: {str(e)}")
+            return None
+            
+    async def _apply_analytics_insights(
+        self,
+        flow_id: str,
+        analytics: AnalyticsResult
+    ):
+        """Apply analytics insights to flow state."""
+        flow_state = self.active_flows.get(flow_id)
+        if not flow_state:
+            return
+            
+        # Update analytics state
+        flow_state["analytics"] = {
+            "last_update": datetime.now().isoformat(),
+            "performance": analytics.analytics.get("analytics", {}),
+            "predictions": {},
+            "optimizations": []
+        }
+        
+        # Apply insights
+        for insight in analytics.insights:
+            if insight.get("type") == "performance":
+                flow_state["analytics"]["performance"].update(
+                    insight.get("metrics", {})
+                )
+            elif insight.get("type") == "prediction":
+                flow_state["analytics"]["predictions"][
+                    insight.get("metric", "unknown")
+                ] = insight.get("value", 0.0)
+            elif insight.get("type") == "optimization":
+                flow_state["analytics"]["optimizations"].append({
+                    "type": insight.get("optimization_type"),
+                    "description": insight.get("description"),
+                    "confidence": insight.get("confidence", 0.0)
+                })
+                
+        # Update attention needs based on analytics
+        if analytics.confidence < 0.5:
+            flow_state["needs_attention"] = True
+            await self.record_reflection(
+                f"Flow {flow_id} needs attention due to low analytics confidence",
+                domain=self.domain
+            )
+            
     async def orchestrate_and_store(
         self,
         content: Dict[str, Any],
@@ -165,13 +242,25 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
         if target_domain:
             await self.validate_domain_access(target_domain)
             
+        # Get analytics for orchestration decision
+        analytics_result = await self.analytics.process_analytics(
+            content={
+                "type": "orchestration_analytics",
+                "content": content,
+                "orchestration_type": orchestration_type,
+                "timestamp": datetime.now().isoformat()
+            },
+            analytics_type="predictive",
+            metadata={"domain": target_domain or self.domain}
+        )
+        
         # Update flow patterns if needed
         if patterns := content.get("flow_patterns"):
             self._update_flow_patterns(patterns)
             
-        # Update resource allocations
+        # Update resource allocations with analytics insights
         if resources := content.get("resources"):
-            await self._update_resource_allocations(resources)
+            await self._update_resource_allocations(resources, analytics_result)
             
         # Update dependency graph
         if dependencies := content.get("dependencies"):
@@ -181,7 +270,10 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
         result = await self.orchestrate_agents(
             content,
             orchestration_type,
-            metadata={"domain": target_domain or self.domain}
+            metadata={
+                "domain": target_domain or self.domain,
+                "analytics": analytics_result.analytics if analytics_result else None
+            }
         )
         
         # Store orchestration results with enhanced metadata
@@ -199,6 +291,7 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                     "flow_states": self.active_flows,
                     "resource_states": self.resource_allocations,
                     "execution_states": self.execution_monitors,
+                    "analytics": analytics_result.analytics if analytics_result else None,
                     "timestamp": datetime.now().isoformat()
                 }
             },
@@ -240,6 +333,15 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                 domain=self.domain
             )
             
+        # Record analytics-based reflections
+        if analytics_result and analytics_result.insights:
+            for insight in analytics_result.insights:
+                if insight.get("importance", 0.0) > 0.7:
+                    await self.record_reflection(
+                        f"Analytics insight: {insight.get('description')}",
+                        domain=self.domain
+                    )
+            
         # Record flow-specific reflections
         for flow_id, flow_state in self.active_flows.items():
             if flow_state.get("needs_attention", False):
@@ -267,7 +369,7 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
         return result
         
     async def _update_flow_state(self, flow_id: str, content: Dict[str, Any]):
-        """Update flow state tracking."""
+        """Update flow state tracking with analytics integration."""
         if flow_id not in self.active_flows:
             self.active_flows[flow_id] = {
                 "status": "active",
@@ -275,7 +377,13 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                 "steps_completed": 0,
                 "current_phase": "initialization",
                 "metrics": {},
-                "needs_attention": False
+                "needs_attention": False,
+                "analytics": {
+                    "last_update": None,
+                    "performance": {},
+                    "predictions": {},
+                    "optimizations": []
+                }
             }
             
         flow_state = self.active_flows[flow_id]
@@ -317,18 +425,34 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                     "priority": float(pattern.get("priority", 0.5))
                 }
                 
-    async def _update_resource_allocations(self, resources: Dict[str, Dict]):
-        """Update resource allocation tracking."""
+    async def _update_resource_allocations(
+        self,
+        resources: Dict[str, Dict],
+        analytics: Optional[AnalyticsResult] = None
+    ):
+        """Update resource allocation tracking with analytics insights."""
         for resource_id, allocation in resources.items():
             if isinstance(allocation, dict):
                 current = self.resource_allocations.get(resource_id, {})
+                
+                # Get analytics prediction if available
+                predicted_utilization = None
+                if analytics and analytics.analytics:
+                    predictions = analytics.analytics.get("analytics", {})
+                    if resource_pred := predictions.get(f"resource_{resource_id}"):
+                        predicted_utilization = resource_pred.get("value")
                 
                 self.resource_allocations[resource_id] = {
                     "type": allocation.get("type", current.get("type", "unknown")),
                     "capacity": float(allocation.get("capacity", current.get("capacity", 0.0))),
                     "utilization": float(allocation.get("utilization", current.get("utilization", 0.0))),
+                    "predicted_utilization": predicted_utilization,
                     "assigned_to": list(allocation.get("assigned_to", current.get("assigned_to", []))),
-                    "constraints": allocation.get("constraints", current.get("constraints", {}))
+                    "constraints": allocation.get("constraints", current.get("constraints", {})),
+                    "analytics": {
+                        "last_update": datetime.now().isoformat(),
+                        "predictions": analytics.analytics if analytics else {}
+                    }
                 }
                 
     def _update_dependency_graph(self, dependencies: Dict[str, List[str]]):
