@@ -1,4 +1,4 @@
-"""Tests for the specialized MetricsAgent implementation."""
+"""Tests for the enhanced MetricsAgent implementation."""
 
 import pytest
 from unittest.mock import MagicMock, AsyncMock
@@ -6,6 +6,7 @@ from datetime import datetime
 
 from src.nia.agents.specialized.metrics_agent import MetricsAgent
 from src.nia.nova.core.metrics import MetricsResult
+from src.nia.memory.memory_types import AgentResponse
 
 @pytest.fixture
 def mock_memory_system():
@@ -17,35 +18,25 @@ def mock_memory_system():
         "metrics": {
             "type": "performance",
             "metrics": {
-                "main": {
-                    "type": "processor",
-                    "value": 85.5,
-                    "unit": "percent"
+                "metric1": {
+                    "type": "latency",
+                    "value": 100.0,
+                    "unit": "ms"
                 }
+            },
+            "metadata": {
+                "service": "test_service"
             }
         },
         "values": [
             {
-                "type": "metric",
-                "description": "positive",
+                "type": "threshold",
+                "description": "Latency within limits",
                 "confidence": 0.8,
-                "domain_relevance": 0.9,
-                "importance": 0.7
-            },
-            {
-                "type": "metrics_need",
-                "description": "requires attention",
-                "confidence": 0.7
+                "importance": 0.9
             }
         ],
-        "issues": [
-            {
-                "type": "missing_threshold",
-                "severity": "medium",
-                "description": "Missing threshold",
-                "domain_impact": 0.3
-            }
-        ]
+        "issues": []
     })
     
     # Mock semantic store
@@ -59,7 +50,7 @@ def mock_memory_system():
     memory.episodic.store = MagicMock()
     memory.episodic.store.search = AsyncMock(return_value=[
         {
-            "content": {"content": "Similar metrics"},
+            "content": {"content": "Previous metric"},
             "similarity": 0.9,
             "timestamp": "2024-01-01T00:00:00Z"
         }
@@ -70,7 +61,9 @@ def mock_memory_system():
 @pytest.fixture
 def mock_world():
     """Create a mock world environment."""
-    return MagicMock()
+    world = MagicMock()
+    world.notify_agent = AsyncMock()
+    return world
 
 @pytest.fixture
 def metrics_agent(mock_memory_system, mock_world):
@@ -84,229 +77,291 @@ def metrics_agent(mock_memory_system, mock_world):
 
 @pytest.mark.asyncio
 async def test_initialization(metrics_agent):
-    """Test agent initialization."""
+    """Test agent initialization with enhanced attributes."""
     assert metrics_agent.name == "TestMetrics"
     assert metrics_agent.domain == "professional"
     assert metrics_agent.agent_type == "metrics"
     
-    # Verify attributes were initialized
+    # Verify enhanced attributes
     attributes = metrics_agent.get_attributes()
-    assert "occupation" in attributes
-    assert "desires" in attributes
-    assert "emotions" in attributes
-    assert "capabilities" in attributes
-    assert attributes["domain"] == "professional"
+    assert attributes["occupation"] == "Advanced Metrics Manager"
+    assert "Collect metrics efficiently" in attributes["desires"]
+    assert "towards_collection" in attributes["emotions"]
+    assert "collection_optimization" in attributes["capabilities"]
     
-    # Verify metrics-specific attributes
-    assert "Process metrics effectively" in attributes["desires"]
-    assert "towards_metrics" in attributes["emotions"]
-    assert "metrics_processing" in attributes["capabilities"]
+    # Verify state tracking initialization
+    assert isinstance(metrics_agent.active_metrics, dict)
+    assert isinstance(metrics_agent.collection_strategies, dict)
+    assert isinstance(metrics_agent.aggregation_rules, dict)
+    assert isinstance(metrics_agent.calculation_templates, dict)
+    assert isinstance(metrics_agent.retention_policies, dict)
 
 @pytest.mark.asyncio
-async def test_process_content(metrics_agent, mock_memory_system):
-    """Test content processing with domain awareness."""
-    content = {"text": "Test content"}
-    metadata = {"source": "test"}
-    
-    response = await metrics_agent.process(content, metadata)
-    
-    # Verify domain was added to metadata
-    assert "domain" in metadata
-    assert metadata["domain"] == "professional"
-    
-    # Verify TinyTroupe state updates
-    assert "metrics_state" in metrics_agent.emotions
-    assert "domain_state" in metrics_agent.emotions
-    assert any("Track" in desire for desire in metrics_agent.desires)
-
-@pytest.mark.asyncio
-async def test_process_and_store(metrics_agent, mock_memory_system):
-    """Test metrics processing with domain awareness."""
-    content = {
-        "text": "Content to process",
-        "type": "performance"
+async def test_process_with_metric_tracking(metrics_agent, mock_memory_system):
+    """Test content processing with metric state tracking."""
+    # Mock memory system response
+    mock_memory_system.llm.analyze.return_value = {
+        "concepts": [
+            {
+                "type": "metrics_result",
+                "description": "successful"
+            },
+            {
+                "type": "collection_state",
+                "state": "optimal"
+            },
+            {
+                "type": "aggregation_state",
+                "state": "efficient"
+            },
+            {
+                "type": "calculation_state",
+                "state": "accurate"
+            }
+        ]
     }
     
-    result = await metrics_agent.process_and_store(
-        content,
-        metrics_type="performance",
-        target_domain="professional"
-    )
+    content = {
+        "metric_id": "metric1",
+        "metric_type": "latency",
+        "metric_value": 100.0,
+        "metric_unit": "ms",
+        "metric_metadata": {"service": "test_service"},
+        "metric_aggregations": {
+            "hourly": {"priority": 0.9}
+        }
+    }
     
-    # Verify result structure
+    response = await metrics_agent.process(content)
+    
+    # Verify metric state tracking
+    assert "metric1" in metrics_agent.active_metrics
+    metric_state = metrics_agent.active_metrics["metric1"]
+    assert metric_state["type"] == "latency"
+    assert metric_state["value"] == 100.0
+    assert metric_state["unit"] == "ms"
+    assert metric_state["metadata"]["service"] == "test_service"
+    assert len(metric_state["history"]) == 1
+    assert metric_state["needs_attention"] is True
+    
+    # Verify emotional updates
+    assert metrics_agent.emotions["collection_state"] == "optimal"
+    assert metrics_agent.emotions["aggregation_state"] == "efficient"
+    assert metrics_agent.emotions["calculation_state"] == "accurate"
+
+@pytest.mark.asyncio
+async def test_collection_strategy_management(metrics_agent):
+    """Test collection strategy management."""
+    # Set up test strategy
+    strategies = {
+        "strategy1": {
+            "type": "time",
+            "interval": "5m",
+            "batch_size": 50,
+            "needs_optimization": True,
+            "metadata": {"source": "test_service"}
+        }
+    }
+    
+    metrics_agent._update_collection_strategies(strategies)
+    
+    # Verify strategy tracking
+    assert "strategy1" in metrics_agent.collection_strategies
+    strategy_state = metrics_agent.collection_strategies["strategy1"]
+    assert strategy_state["type"] == "time"
+    assert strategy_state["interval"] == "5m"
+    assert strategy_state["batch_size"] == 50
+    assert strategy_state["needs_optimization"] is True
+    assert strategy_state["metadata"]["source"] == "test_service"
+
+@pytest.mark.asyncio
+async def test_aggregation_rule_management(metrics_agent):
+    """Test aggregation rule management."""
+    rules = {
+        "rule1": {
+            "type": "static",
+            "function": "percentile",
+            "window": "5m",
+            "needs_tuning": True,
+            "metadata": {"percentile": 95}
+        }
+    }
+    
+    metrics_agent._update_aggregation_rules(rules)
+    
+    # Verify rule tracking
+    assert "rule1" in metrics_agent.aggregation_rules
+    rule_state = metrics_agent.aggregation_rules["rule1"]
+    assert rule_state["type"] == "static"
+    assert rule_state["function"] == "percentile"
+    assert rule_state["window"] == "5m"
+    assert rule_state["needs_tuning"] is True
+    assert rule_state["metadata"]["percentile"] == 95
+
+@pytest.mark.asyncio
+async def test_calculation_template_management(metrics_agent):
+    """Test calculation template management."""
+    templates = {
+        "template1": {
+            "type": "static",
+            "formula": "value * 2",
+            "variables": {
+                "value": {"type": "number"}
+            },
+            "needs_update": True,
+            "metadata": {"description": "Double value"}
+        }
+    }
+    
+    metrics_agent._update_calculation_templates(templates)
+    
+    # Verify template tracking
+    assert "template1" in metrics_agent.calculation_templates
+    template_state = metrics_agent.calculation_templates["template1"]
+    assert template_state["type"] == "static"
+    assert template_state["formula"] == "value * 2"
+    assert template_state["variables"]["value"]["type"] == "number"
+    assert template_state["needs_update"] is True
+    assert template_state["metadata"]["description"] == "Double value"
+
+@pytest.mark.asyncio
+async def test_retention_policy_management(metrics_agent):
+    """Test retention policy management."""
+    policies = {
+        "policy1": {
+            "type": "time",
+            "duration": "7d",
+            "compression": "gzip",
+            "needs_review": True,
+            "metadata": {"max_size": "1GB"}
+        }
+    }
+    
+    metrics_agent._update_retention_policies(policies)
+    
+    # Verify policy tracking
+    assert "policy1" in metrics_agent.retention_policies
+    policy_state = metrics_agent.retention_policies["policy1"]
+    assert policy_state["type"] == "time"
+    assert policy_state["duration"] == "7d"
+    assert policy_state["compression"] == "gzip"
+    assert policy_state["needs_review"] is True
+    assert policy_state["metadata"]["max_size"] == "1GB"
+
+@pytest.mark.asyncio
+async def test_process_and_store_with_enhancements(metrics_agent, mock_memory_system):
+    """Test enhanced metrics processing and storage."""
+    content = {
+        "metric_id": "metric1",
+        "metric_type": "latency",
+        "collection_strategies": {
+            "strategy1": {
+                "type": "time",
+                "interval": "5m"
+            }
+        },
+        "aggregation_rules": {
+            "rule1": {
+                "type": "static",
+                "function": "avg"
+            }
+        }
+    }
+    
+    result = await metrics_agent.process_and_store(content, "performance")
+    
+    # Verify metrics result
     assert isinstance(result, MetricsResult)
-    assert result.metrics["type"] == "performance"
-    assert len(result.metrics["metrics"]) == 1
-    assert len(result.values) > 0
-    assert len(result.issues) > 0
-    assert result.confidence > 0
+    assert result.is_valid is True
     
-    # Verify memory storage
-    assert hasattr(metrics_agent, "store_memory")
+    # Verify metric tracking
+    assert "metric1" in metrics_agent.active_metrics
+    assert metrics_agent.active_metrics["metric1"]["type"] == "latency"
+    
+    # Verify rule tracking
+    assert "strategy1" in metrics_agent.collection_strategies
+    assert "rule1" in metrics_agent.aggregation_rules
+    
+    # Verify reflections were recorded
+    reflection_calls = mock_memory_system.semantic.store.record_reflection.call_args_list
+    assert any(
+        "High confidence metrics completed" in call.args[0]
+        for call in reflection_calls
+    )
+
+@pytest.mark.asyncio
+async def test_calculation_template_application(metrics_agent, mock_memory_system):
+    """Test calculation template application and reflection."""
+    # Set up test template
+    templates = {
+        "template1": {
+            "type": "static",
+            "formula": "value * 2",
+            "variables": {
+                "value": {"type": "number"}
+            },
+            "needs_update": True
+        }
+    }
+    
+    metrics_agent._update_calculation_templates(templates)
+    
+    # Apply template to metric
+    content = {
+        "metric_id": "metric1",
+        "value": 100.0
+    }
+    
+    await metrics_agent._update_metric_state("metric1", content)
+    
+    # Verify template application
+    metric_state = metrics_agent.active_metrics["metric1"]
+    assert metric_state["value"] == 200.0  # 100 * 2
     
     # Verify reflection was recorded
-    mock_memory_system.semantic.store.record_reflection.assert_called()
-
-@pytest.mark.asyncio
-async def test_domain_access_validation(metrics_agent, mock_memory_system):
-    """Test domain access validation."""
-    # Test allowed domain
-    await metrics_agent.validate_domain_access("professional")
-    
-    # Test denied domain
-    mock_memory_system.semantic.store.get_domain_access.return_value = False
-    with pytest.raises(PermissionError):
-        await metrics_agent.validate_domain_access("restricted")
-
-@pytest.mark.asyncio
-async def test_process_with_different_domains(metrics_agent):
-    """Test processing with different domain configurations."""
-    content = {"text": "test"}
-    
-    # Test professional domain
-    prof_result = await metrics_agent.process_and_store(
-        content,
-        metrics_type="performance",
-        target_domain="professional"
+    mock_memory_system.semantic.store.record_reflection.assert_called_with(
+        "Calculation template template1 applied to metric1 needs update",
+        domain="professional"
     )
-    assert prof_result.metadata["domain"] == "professional"
-    
-    # Test personal domain (assuming access)
-    pers_result = await metrics_agent.process_and_store(
-        content,
-        metrics_type="performance",
-        target_domain="personal"
-    )
-    assert pers_result.metadata["domain"] == "personal"
 
 @pytest.mark.asyncio
 async def test_error_handling(metrics_agent, mock_memory_system):
-    """Test error handling during processing."""
+    """Test error handling during metrics processing."""
     # Make LLM raise an error
     mock_memory_system.llm.analyze.side_effect = Exception("Test error")
     
-    result = await metrics_agent.process_and_store(
-        {"content": "test"},
-        metrics_type="performance"
-    )
+    result = await metrics_agent.process_and_store({"type": "test"}, "performance")
     
     # Verify error handling
     assert isinstance(result, MetricsResult)
     assert result.is_valid is False
-    assert result.confidence == 0.0
-    assert len(result.values) == 0
     assert len(result.issues) == 1
     assert "error" in result.metadata
+    
+    # Verify error reflection
+    mock_memory_system.semantic.store.record_reflection.assert_called_with(
+        "Metrics failed - issues detected in professional domain",
+        domain="professional"
+    )
 
 @pytest.mark.asyncio
-async def test_reflection_recording(metrics_agent, mock_memory_system):
-    """Test reflection recording with domain awareness."""
-    content = {"text": "test"}
-    
-    # Force valid result with high confidence
-    mock_memory_system.llm.analyze.return_value["values"] = [
-        {
-            "type": "test_value",
-            "confidence": 0.9,
-            "importance": 0.9
-        }
-    ]
-    mock_memory_system.llm.analyze.return_value["issues"] = []
-    
-    result = await metrics_agent.process_and_store(
-        content,
-        metrics_type="performance"
+async def test_domain_validation(metrics_agent, mock_memory_system):
+    """Test domain access validation."""
+    # Test allowed domain
+    await metrics_agent.process_and_store(
+        {"type": "test"},
+        "performance",
+        target_domain="professional"
     )
     
-    # Verify high confidence reflection
-    reflection_calls = mock_memory_system.semantic.store.record_reflection.call_args_list
-    assert any("High confidence" in str(call) for call in reflection_calls)
-    
-    # Test invalid result
-    mock_memory_system.llm.analyze.return_value["values"] = [
-        {
-            "type": "test_value",
-            "confidence": 0.5,
-            "importance": 0.5
-        }
-    ]
-    
-    result = await metrics_agent.process_and_store(
-        content,
-        metrics_type="performance"
-    )
-    
-    # Verify failure reflection
-    reflection_calls = mock_memory_system.semantic.store.record_reflection.call_args_list
-    assert any("Metrics failed" in str(call) for call in reflection_calls)
-
-@pytest.mark.asyncio
-async def test_critical_issue_reflection(metrics_agent, mock_memory_system):
-    """Test reflection recording for critical issues."""
-    content = {"text": "test"}
-    
-    # Add critical issue
-    mock_memory_system.llm.analyze.return_value["issues"] = [
-        {
-            "type": "critical_issue",
-            "severity": "high",
-            "description": "Critical problem"
-        }
-    ]
-    
-    result = await metrics_agent.process_and_store(
-        content,
-        metrics_type="performance"
-    )
-    
-    # Verify critical issue reflection
-    reflection_calls = mock_memory_system.semantic.store.record_reflection.call_args_list
-    assert any("Critical metrics issues" in str(call) for call in reflection_calls)
-
-@pytest.mark.asyncio
-async def test_important_value_reflection(metrics_agent, mock_memory_system):
-    """Test reflection recording for important values."""
-    content = {"text": "test"}
-    
-    # Add important value
-    mock_memory_system.llm.analyze.return_value["values"] = [
-        {
-            "type": "important_value",
-            "confidence": 0.9,
-            "importance": 0.9,
-            "description": "Critical value"
-        }
-    ]
-    
-    result = await metrics_agent.process_and_store(
-        content,
-        metrics_type="performance"
-    )
-    
-    # Verify important value reflection
-    reflection_calls = mock_memory_system.semantic.store.record_reflection.call_args_list
-    assert any("Important metrics values processed" in str(call) for call in reflection_calls)
-
-@pytest.mark.asyncio
-async def test_emotion_updates(metrics_agent):
-    """Test emotion updates based on metrics results."""
-    content = {"text": "Test content"}
-    
-    await metrics_agent.process(content)
-    
-    # Verify emotion updates
-    assert "metrics_state" in metrics_agent.emotions
-    assert "domain_state" in metrics_agent.emotions
-
-@pytest.mark.asyncio
-async def test_desire_updates(metrics_agent):
-    """Test desire updates based on metrics needs."""
-    content = {"text": "Test content"}
-    
-    await metrics_agent.process(content)
-    
-    # Verify desire updates
-    assert any("Track" in desire for desire in metrics_agent.desires)
+    # Test denied domain
+    mock_memory_system.semantic.store.get_domain_access.return_value = False
+    with pytest.raises(PermissionError):
+        await metrics_agent.process_and_store(
+            {"type": "test"},
+            "performance",
+            target_domain="restricted"
+        )
 
 if __name__ == "__main__":
     pytest.main([__file__])
