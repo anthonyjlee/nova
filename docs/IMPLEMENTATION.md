@@ -792,38 +792,185 @@ def create_task_interface(gr):
    - [ ] Test domain separation
    - [ ] Validate auto-approval mechanisms
 
-### Phase 2: UI Migration (FastAPI + React)
+### Phase 2: Nova's User Proxy & Auto-Approval
 
-1. Gradio Removal:
-   - [ ] Remove Gradio dependencies from requirements.txt
-   - [ ] Remove Gradio UI components and handlers
-   - [ ] Remove Gradio-specific code from Nova
-   - [ ] Update documentation to remove Gradio references
-   - [ ] Clean up any remaining Gradio assets
+1. User Proxy Implementation:
+   - [ ] Implement auto-approval mechanism for agent actions
+   - [ ] Add task completion detection logic
+   - [ ] Implement intervention points for human override
+   - [ ] Add step-by-step approval mode option
+   - [ ] Implement task spawning on user's behalf
 
-2. Backend Setup:
-   - [ ] Create FastAPI project structure
-   - [ ] Set up WebSocket support for real-time updates
-   - [ ] Implement REST endpoints for agent management
-   - [ ] Add authentication and security
+2. Domain Separation:
+   - [ ] Implement personal vs. professional domain labeling
+   - [ ] Add access control for domain-specific queries
+   - [ ] Set up domain-aware agent permissions
+   - [ ] Implement cross-domain relationship handling
+   - [ ] Add domain validation for memory operations
 
-3. Frontend Development:
-   - [ ] Set up React project
-   - [ ] Create chat interface components
-   - [ ] Build agent management dashboard
-   - [ ] Add knowledge graph visualization
-   - [ ] Implement domain-specific views
+3. Initialization Protocol:
+   - [ ] Implement Nova's self-model in Neo4j
+   - [ ] Add user context gathering and storage
+   - [ ] Implement memory layer verification
+   - [ ] Add reflection and reasoning system
+   - [ ] Implement tool and capability awareness
 
-4. Integration:
-   - [ ] Connect FastAPI with Nova
-   - [ ] Set up WebSocket for real-time agent updates
-   - [ ] Implement domain-aware data flow
+### Phase 3: UI Migration (FastAPI + React)
+
+1. Project Structure:
+   - [ ] Set up FastAPI project layout
+   ```
+   nova_fastapi/
+     ├── main.py                # FastAPI entry point
+     ├── requirements.txt       # Dependencies
+     ├── models/               # Pydantic models
+     │   ├── agent.py         # Agent-related models
+     │   ├── memory.py        # Memory-related models
+     │   ├── task.py          # Task-related models
+     │   └── api.py           # API request/response models
+     ├── orchestrator/          # Nova & sub-agent logic
+     ├── memory/               # Memory system integration
+     └── ui/                   # React frontend
+   ```
+
+2. Pydantic Models Implementation:
+   ```python
+   # models/agent.py
+   from pydantic import BaseModel, validator
+   from typing import Dict, List, Any, Optional
+   from enum import Enum
+
+   class AgentDomain(str, Enum):
+       PERSONAL = "personal"
+       WORK = "work"
+
+   class AgentConfig(BaseModel):
+       agent_name: str
+       domain: AgentDomain
+       capabilities: List[str]
+       is_active: bool = True
+
+       @validator('agent_name')
+       def name_not_empty(cls, v):
+           if not v.strip():
+               raise ValueError("Agent name cannot be empty")
+           return v
+
+   # models/task.py
+   class TaskStatus(str, Enum):
+       PENDING = "pending"
+       RUNNING = "running"
+       COMPLETED = "completed"
+       FAILED = "failed"
+
+   class TaskModel(BaseModel):
+       task_id: str
+       description: str
+       status: TaskStatus
+       domain: AgentDomain
+       assigned_agent: Optional[str]
+       inputs: Dict[str, Any] = {}
+
+   # models/memory.py
+   class MemoryChunk(BaseModel):
+       chunk_id: str
+       text: str
+       embedding: List[float]
+       domain: AgentDomain
+       metadata: Dict[str, Any] = {}
+
+   class GraphNode(BaseModel):
+       node_id: str
+       labels: List[str]
+       properties: Dict[str, Any]
+       domain: AgentDomain
+
+   # models/api.py
+   class UserMessage(BaseModel):
+       message: str
+       context: Dict[str, Any] = {}
+       domain: AgentDomain
+       timestamp: float = 0.0
+
+       @validator('timestamp')
+       def positive_timestamp(cls, v):
+           if v < 0:
+               raise ValueError("Timestamp cannot be negative")
+           return v
+
+   class SpawnAgentRequest(BaseModel):
+       agent_config: AgentConfig
+       task_description: Optional[str]
+   ```
+
+2. Backend Implementation:
+   ```python
+   # main.py
+   from fastapi import FastAPI, WebSocket, HTTPException
+   from models.api import UserMessage, SpawnAgentRequest
+   from models.task import TaskModel
+   from models.memory import MemoryChunk, GraphNode
+
+   app = FastAPI()
+   nova = NovaOrchestrator()
+
+   @app.post("/api/chat")
+   async def chat_endpoint(msg: UserMessage):
+       try:
+           response = await nova.process_user_input(msg.message, msg.context, msg.domain)
+           return {"response": response}
+       except Exception as e:
+           raise HTTPException(status_code=500, detail=str(e))
+
+   @app.post("/api/spawn_agent")
+   async def spawn_agent(req: SpawnAgentRequest):
+       try:
+           agent_id = await nova.create_agent(req.agent_config)
+           if req.task_description:
+               await nova.assign_task(agent_id, req.task_description)
+           return {"agent_id": agent_id}
+       except Exception as e:
+           raise HTTPException(status_code=500, detail=str(e))
+
+   @app.websocket("/ws/chat")
+   async def chat_ws(websocket: WebSocket):
+       await websocket.accept()
+       while True:
+           try:
+               data = await websocket.receive_json()
+               msg = UserMessage(**data)
+               response = await nova.process_user_input(
+                   msg.message, msg.context, msg.domain
+               )
+               await websocket.send_json({"response": response})
+           except Exception as e:
+               await websocket.send_json({"error": str(e)})
+   ```
+
+   - [ ] Implement async handlers for real-time updates
+   - [ ] Add authentication and security middleware
+   - [ ] Implement domain-aware API endpoints
    - [ ] Add error handling and recovery
 
+3. Frontend Development:
+   - [ ] Set up React project structure
+   - [ ] Create reusable UI components
+   - [ ] Implement chat interface with WebSocket
+   - [ ] Add task management dashboard
+   - [ ] Create knowledge graph visualization
+   - [ ] Add domain-specific views
+
+4. Integration:
+   - [ ] Connect FastAPI with Nova orchestrator
+   - [ ] Set up WebSocket for real-time updates
+   - [ ] Implement domain-aware data flow
+   - [ ] Add comprehensive error handling
+   - [ ] Implement user proxy controls
+
 5. Documentation:
-   - [ ] Update README with new UI setup instructions
-   - [ ] Add FastAPI API documentation
-   - [ ] Add React component documentation
+   - [ ] Update README with setup instructions
+   - [ ] Add API documentation
+   - [ ] Add component documentation
    - [ ] Update architecture diagrams
 
 ### Additional Tasks
