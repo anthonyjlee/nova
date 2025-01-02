@@ -8,11 +8,11 @@ from ...nova.core.parsing import NovaParser, ParseResult
 from ..tinytroupe_agent import TinyTroupeAgent
 from ...world.environment import NIAWorld
 from ...memory.two_layer import TwoLayerMemorySystem
-from ...memory.memory_types import AgentResponse
+from ...memory.types.memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
-class ParsingAgent(TinyTroupeAgent, NovaParser):
+class ParsingAgent(NovaParser, TinyTroupeAgent):
     """Parsing agent with TinyTroupe and memory capabilities."""
     
     def __init__(
@@ -24,7 +24,7 @@ class ParsingAgent(TinyTroupeAgent, NovaParser):
         domain: Optional[str] = None
     ):
         """Initialize parsing agent."""
-        # Initialize TinyTroupeAgent
+        # Initialize TinyTroupeAgent first
         TinyTroupeAgent.__init__(
             self,
             name=name,
@@ -37,10 +37,14 @@ class ParsingAgent(TinyTroupeAgent, NovaParser):
         # Initialize NovaParser
         NovaParser.__init__(
             self,
-            llm=memory_system.llm if memory_system else None,
+            llm=getattr(memory_system, 'llm', None),
             store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=domain
         )
+        
+        # Store memory_system reference
+        self.memory_system = memory_system
         
         # Set domain
         self.domain = domain or "professional"  # Default to professional domain
@@ -50,25 +54,25 @@ class ParsingAgent(TinyTroupeAgent, NovaParser):
         
     def _initialize_parsing_attributes(self):
         """Initialize parsing-specific attributes."""
-        self.define(
-            occupation="Content Parser",
-            desires=[
+        self._configuration.update({
+            "occupation": "Content Parser",
+            "current_goals": [
                 "Extract structured information",
                 "Identify key concepts",
                 "Validate content structure"
             ],
-            emotions={
+            "current_emotions": {
                 "baseline": "analytical",
                 "towards_content": "focused"
             },
-            domain=self.domain,
-            capabilities=[
+            "domain": self.domain,
+            "skills": [
                 "text_parsing",
                 "concept_extraction",
                 "key_point_identification",
                 "schema_validation"
             ]
-        )
+        })
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems."""
@@ -107,20 +111,19 @@ class ParsingAgent(TinyTroupeAgent, NovaParser):
             "agent": self.name
         })
         
-        # Store parsing memory
-        await self.store_memory(
-            content={
+        # Store parsing memory if memory system is available
+        if self.memory_system and hasattr(self.memory_system, "episodic"):
+            await self.memory_system.episodic.store_memory({
                 "text": text,
                 "analysis": {
                     "concepts": result.concepts,
                     "key_points": result.key_points,
                     "confidence": result.confidence,
                     "timestamp": datetime.now().isoformat()
-                }
-            },
-            importance=0.6,
-            context=context
-        )
+                },
+                "importance": 0.6,
+                "context": context
+            })
         
         # Record reflection if confidence is notable
         if result.confidence > 0.8:

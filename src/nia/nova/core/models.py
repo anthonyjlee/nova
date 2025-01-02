@@ -4,6 +4,15 @@ from pydantic import BaseModel, Field
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
+class ParseRequest(BaseModel):
+    """Request model for text parsing."""
+    text: str = Field(..., description="Text to parse")
+    llm_config: Optional[Dict[str, Any]] = Field(
+        None,
+        description="LLM configuration for parsing"
+    )
+    domain: Optional[str] = Field(None, description="Domain for parsing context")
+
 class AnalyticsRequest(BaseModel):
     """Request model for analytics endpoints."""
     type: str = Field(..., description="Type of analytics to perform")
@@ -119,6 +128,10 @@ class MemoryRequest(BaseModel):
     context: Dict[str, Any] = Field(
         default_factory=dict,
         description="Memory context"
+    )
+    llm_config: Optional[Dict[str, Any]] = Field(
+        None,
+        description="LLM configuration for memory operations"
     )
 
 class MemoryResponse(BaseModel):

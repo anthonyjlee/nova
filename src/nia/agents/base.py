@@ -122,7 +122,7 @@ class BaseAgent:
             response = raw_response
             
             # Initialize response metadata
-            if not response.metadata:
+            if not hasattr(response, 'metadata') or not response.metadata:
                 response.metadata = {}
             
             # Add base metadata
@@ -130,7 +130,8 @@ class BaseAgent:
                 "agent_type": self.agent_type,
                 "timestamp": datetime.now().isoformat(),
                 "whispers": [],
-                "agent_interactions": []
+                "agent_interactions": [],
+                "domain": metadata.get("domain", "professional") if metadata else "professional"
             }
             
             # Add provided metadata
@@ -139,7 +140,7 @@ class BaseAgent:
             
             # Add agent perspective and metadata
             response.perspective = self.agent_type
-            response.metadata.update(base_metadata)
+            response.metadata = base_metadata
             
             # Add dialogue context and message
             if self.current_dialogue:

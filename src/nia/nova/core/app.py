@@ -136,7 +136,10 @@ async def format_error_responses(request: Request, call_next):
             
             return JSONResponse(
                 status_code=response.status_code,
-                content={"error": error},
+                content={
+                    "error": error,
+                    "detail": error
+                },
                 headers=dict(response.headers)
             )
         except:
@@ -145,6 +148,10 @@ async def format_error_responses(request: Request, call_next):
                 status_code=response.status_code,
                 content={
                     "error": {
+                        "code": "ERROR",
+                        "message": "An error occurred"
+                    },
+                    "detail": {
                         "code": "ERROR",
                         "message": "An error occurred"
                     }

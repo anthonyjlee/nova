@@ -13,22 +13,31 @@ logger = logging.getLogger(__name__)
 class NIAWorld(TinyWorld):
     """World environment for NIA agents."""
     
+    _instance = None
+    
+    def __new__(cls, *args, **kwargs):
+        if not cls._instance:
+            cls._instance = super(NIAWorld, cls).__new__(cls)
+        return cls._instance
+    
     def __init__(
         self,
         name: str = "NIAWorld",
         memory_system: Optional[TwoLayerMemorySystem] = None
     ):
         """Initialize world with memory system."""
-        super().__init__(name)
-        self.memory = memory_system
-        self.state = {
-            "tasks_paused": False,
-            "conversation_enabled": True,
-            "active_agents": set(),
-            "pending_tasks": []
-        }
-        self.resources = {}
-        self.task_domains = {}
+        if not hasattr(self, '_initialized'):
+            super().__init__(name)
+            self.memory = memory_system
+            self.state = {
+                "tasks_paused": False,
+                "conversation_enabled": True,
+                "active_agents": set(),
+                "pending_tasks": []
+            }
+            self.resources = {}
+            self.task_domains = {}
+            self._initialized = True
         
     def define_resource(self, name: str, value: Any):
         """Define a world resource."""

@@ -3,10 +3,15 @@
 from fastapi import APIRouter, HTTPException, WebSocket, Depends, Header, Request
 from typing import Dict, List, Optional, Any
 from datetime import datetime
+import aiohttp
 
 from nia.nova.core.analytics import AnalyticsAgent, AnalyticsResult
+from nia.nova.core.parsing import NovaParser
 from nia.agents.specialized.orchestration_agent import OrchestrationAgent
+from nia.agents.specialized.parsing_agent import ParsingAgent
 from nia.memory.types.memory_types import AgentResponse
+from nia.memory.two_layer import TwoLayerMemorySystem
+from nia.world.environment import NIAWorld
 
 from .auth import (
     check_rate_limit,
@@ -25,6 +30,10 @@ from .error_handling import (
     retry_on_error,
     validate_request
 )
+# LM Studio configuration
+CHAT_MODEL = "llama-3.2-3b-instruct"
+EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v1.5@q8_0"
+
 from .models import (
     AnalyticsRequest,
     AnalyticsResponse,
@@ -39,7 +48,8 @@ from .models import (
     FlowOptimizationRequest,
     FlowOptimizationResponse,
     AgentAssignmentRequest,
-    AgentAssignmentResponse
+    AgentAssignmentResponse,
+    ParseRequest
 )
 
 # Create routers with dependencies
@@ -48,15 +58,140 @@ analytics_router = APIRouter(
     tags=["analytics"]
 )
 
+# Initialize memory system and agents
+from nia.memory.neo4j.base_store import Neo4jBaseStore
+from nia.memory.neo4j.concept_store import ConceptStore
+
+# Initialize Neo4j store
+neo4j_store = ConceptStore(
+    uri="bolt://localhost:7687",
+    user="neo4j",
+    password="password"
+)
+
+# Initialize memory system
+memory_system = TwoLayerMemorySystem(
+    neo4j_uri="bolt://localhost:7687"
+)
+
+# Initialize world
+world = NIAWorld()
+
+# Initialize parsing agent
+parsing_agent = ParsingAgent(
+    name="nova_parser",
+    memory_system=memory_system,
+    world=world,
+    domain="professional"
+)
+
+# Initialize analytics agent with LM Studio
+from .llm import LMStudioLLM
+analytics_agent = AnalyticsAgent(
+    domain="professional",
+    llm=LMStudioLLM(
+        chat_model=CHAT_MODEL,
+        embedding_model=EMBEDDING_MODEL
+    ),
+    store=memory_system.semantic.store if memory_system else None,
+    vector_store=memory_system.episodic.store if memory_system else None
+)
+
+# Initialize orchestration agent
+orchestration_agent = OrchestrationAgent(
+    name="nova_orchestrator",
+    memory_system=memory_system,
+    domain="professional"
+)
+# Set LLM after initialization
+orchestration_agent.llm = LMStudioLLM(
+    chat_model=CHAT_MODEL,
+    embedding_model=EMBEDDING_MODEL
+)
+
+@analytics_router.post("/parse", dependencies=[Depends(check_rate_limit)])
+@retry_on_error(max_retries=3)
+async def parse_text(
+    request: Dict,
+    _: None = Depends(get_permission("write"))
+) -> Dict:
+    """Parse text using LM Studio integration."""
+    try:
+        # Parse and validate request
+        try:
+            parse_request = ParseRequest(**request)
+        except Exception as e:
+            raise ValidationError(f"Invalid request format: {str(e)}")
+        
+        # Validate LLM config
+        if parse_request.llm_config:
+            chat_model = parse_request.llm_config.get("chat_model")
+            embedding_model = parse_request.llm_config.get("embedding_model")
+            
+            if not chat_model or not embedding_model:
+                raise ValidationError("LLM config must include both chat_model and embedding_model")
+            
+            # Check if models are available
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get("http://localhost:1234/v1/models") as response:
+                        if response.status != 200:
+                            raise ValidationError("LM Studio API not available")
+                        
+                        models = (await response.json()).get("data", [])
+                        available_models = [model["id"] for model in models]
+                        
+                        if chat_model not in available_models:
+                            raise ValidationError(f"Chat model '{chat_model}' not available")
+                        if embedding_model not in available_models:
+                            raise ValidationError(f"Embedding model '{embedding_model}' not available")
+            except aiohttp.ClientError:
+                raise ValidationError("Could not connect to LM Studio")
+            
+            # Configure LLM if provided
+            if parse_request.llm_config:
+                from .llm import LMStudioLLM
+                # Configure both the parsing agent and its NovaParser base class
+                llm = LMStudioLLM(
+                    chat_model=parse_request.llm_config["chat_model"],
+                    embedding_model=parse_request.llm_config["embedding_model"]
+                )
+                parsing_agent.llm = llm
+                # Also set the LLM for the NovaParser base class
+                NovaParser.__init__(
+                    parsing_agent,
+                    llm=llm,
+                    store=parsing_agent.store,
+                    vector_store=parsing_agent.vector_store,
+                    domain=parsing_agent.domain
+                )
+            
+        # Process the request
+        result = await parsing_agent.parse_text(
+            parse_request.text,
+            metadata={
+                "domain": parse_request.domain,
+                "llm_config": parse_request.llm_config
+            }
+        )
+        
+        return {
+            "concepts": result.concepts,
+            "key_points": result.key_points,
+            "confidence": result.confidence,
+            "timestamp": datetime.now().isoformat()
+        }
+    except ValidationError as e:
+        raise ValidationError(str(e))
+    except Exception as e:
+        raise ServiceError(str(e))
+
 orchestration_router = APIRouter(
     prefix="/api/orchestration",
     tags=["orchestration"],
     dependencies=[Depends(check_rate_limit)]
 )
 
-# Initialize agents
-analytics_agent = AnalyticsAgent(domain="professional")  # Default to professional domain
-orchestration_agent = OrchestrationAgent(name="nova_orchestrator", domain="professional")
 
 @analytics_router.websocket("/ws")
 async def analytics_websocket(websocket: WebSocket):
@@ -473,12 +608,23 @@ async def store_memory(
 ) -> Dict:
     """Store a new memory."""
     try:
+        # Configure LLM if provided
+        if memory.llm_config:
+            llm = LMStudioLLM(
+                chat_model=memory.llm_config["chat_model"],
+                embedding_model=memory.llm_config.get("embedding_model", EMBEDDING_MODEL)
+            )
+            orchestration_agent.llm = llm
+
         result = await orchestration_agent.process(
             content={
                 "type": "memory_store",
                 "memory": memory.dict()
             },
-            metadata={"domain": domain} if domain else None
+            metadata={
+                "domain": domain,
+                "llm_config": memory.llm_config
+            }
         )
         
         return {
@@ -533,12 +679,23 @@ async def search_memories(
 ) -> Dict:
     """Search through stored memories."""
     try:
+        # Configure LLM if provided
+        if query.llm_config:
+            llm = LMStudioLLM(
+                chat_model=query.llm_config["chat_model"],
+                embedding_model=query.llm_config.get("embedding_model", EMBEDDING_MODEL)
+            )
+            orchestration_agent.llm = llm
+
         result = await orchestration_agent.process(
             content={
                 "type": "memory_search",
                 "query": query.dict()
             },
-            metadata={"domain": domain} if domain else None
+            metadata={
+                "domain": domain,
+                "llm_config": query.llm_config
+            }
         )
         
         return {

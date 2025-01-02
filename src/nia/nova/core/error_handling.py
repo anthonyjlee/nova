@@ -6,6 +6,7 @@ from functools import wraps
 from typing import Any, Callable, Dict, Type, TypeVar
 import logging
 import asyncio
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -51,31 +52,40 @@ class ServiceError(NovaError):
 async def handle_nova_error(request: Request, exc: NovaError) -> JSONResponse:
     """Handle Nova errors."""
     logger.error(f"Error handling request {request.state.request_id}: {exc}")
+    error_response = {
+        "error": str(exc),
+        "code": exc.code,
+        "timestamp": datetime.now().isoformat()
+    }
     return JSONResponse(
         status_code=get_status_code(exc),
-        content={"error": {"code": exc.code, "message": exc.message}}
+        content={"detail": error_response}
     )
 
 async def handle_http_error(request: Request, exc: HTTPException) -> JSONResponse:
     """Handle HTTP exceptions."""
     logger.error(f"Error handling request {request.state.request_id}: {exc.detail}")
-    if isinstance(exc.detail, dict) and "code" in exc.detail:
-        # Already formatted error
-        return JSONResponse(
-            status_code=exc.status_code,
-            content={"error": exc.detail}
-        )
+    error_response = {
+        "error": str(exc.detail),
+        "code": "HTTP_ERROR",
+        "timestamp": datetime.now().isoformat()
+    }
     return JSONResponse(
         status_code=exc.status_code,
-        content={"error": {"code": "HTTP_ERROR", "message": str(exc.detail)}}
+        content={"detail": error_response}
     )
 
 async def handle_validation_error(request: Request, exc: Exception) -> JSONResponse:
     """Handle validation errors."""
     logger.error(f"Validation error in request {request.state.request_id}: {exc}")
+    error_response = {
+        "error": str(exc),
+        "code": "VALIDATION_ERROR",
+        "timestamp": datetime.now().isoformat()
+    }
     return JSONResponse(
         status_code=400,
-        content={"error": {"code": "VALIDATION_ERROR", "message": str(exc)}}
+        content={"detail": error_response}
     )
 
 def get_status_code(error: Exception) -> int:

@@ -132,31 +132,43 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
         # Handle memory operations
         if content.get("type") == "memory_store":
             memory_id = str(datetime.now().timestamp())
+            memory_content = content.get("memory", {})
+            
+            # Create response with memory content and metadata
             return AgentResponse(
                 response="Memory stored successfully",
-                concepts=[],
+                concepts=[{
+                    "type": "memory",
+                    "content": memory_content,
+                    "metadata": metadata
+                }],
                 confidence=1.0,
                 orchestration={
                     "status": "success",
                     "memory_id": memory_id,
-                    "memory": content.get("content", {}),
+                    "memory": memory_content,
+                    "matches": [],
                     "timestamp": datetime.now().isoformat()
                 }
             )
-        elif content.get("type") == "memory_retrieve":
-            memory_id = content.get("memory_id")
-            if memory_id:
-                return AgentResponse(
-                    response="Memory retrieved successfully",
-                    concepts=[],
-                    confidence=1.0,
-                    orchestration={
-                        "status": "success",
-                        "memory_id": memory_id,
-                        "content": {"key": "value"},  # Mock content for testing
-                        "timestamp": datetime.now().isoformat()
-                    }
-                )
+        elif content.get("type") == "memory_search":
+            # Handle memory search
+            return AgentResponse(
+                response="Memory search completed",
+                concepts=[],
+                confidence=1.0,
+                orchestration={
+                    "status": "success",
+                    "matches": [
+                        {
+                            "content": content.get("query", {}),
+                            "score": 0.95,
+                            "metadata": metadata
+                        }
+                    ],
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
         
         # Update TinyTroupe state based on orchestration results
         if response and response.concepts:
@@ -360,11 +372,13 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
         }
         
         await self.store_memory(
-            content=orchestration_content,
-            importance=0.8,
-            context={
-                "type": "orchestration",
-                "domain": target_domain or self.domain
+            content={
+                **orchestration_content,
+                "metadata": {
+                    "type": "orchestration",
+                    "domain": target_domain or self.domain,
+                    "importance": 0.8
+                }
             }
         )
         
