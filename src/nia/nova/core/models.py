@@ -53,7 +53,7 @@ class CoordinationRequest(BaseModel):
     """Request model for agent coordination."""
     agents: List[str] = Field(..., description="List of agent IDs to coordinate")
     task: TaskRequest = Field(..., description="Task to coordinate")
-    strategy: Optional[str] = Field(None, description="Coordination strategy")
+    strategy: Optional[Dict[str, Any]] = Field(None, description="Coordination strategy")
     constraints: Dict[str, Any] = Field(
         default_factory=dict,
         description="Coordination constraints"

@@ -19,8 +19,26 @@ class AnalyticsResult:
         issues: Optional[List[Dict]] = None
     ):
         self.is_valid = is_valid
-        self.analytics = analytics
-        self.insights = insights
+        
+        # Handle LM Studio response format
+        if isinstance(analytics, dict) and "choices" in analytics:
+            try:
+                content = analytics["choices"][0]["message"]["content"]
+                if isinstance(content, str):
+                    import json
+                    parsed = json.loads(content)
+                    self.analytics = parsed.get("analytics", {})
+                    self.insights = parsed.get("insights", [])
+                else:
+                    self.analytics = content.get("analytics", {})
+                    self.insights = content.get("insights", [])
+            except:
+                self.analytics = analytics
+                self.insights = insights
+        else:
+            self.analytics = analytics
+            self.insights = insights
+            
         self.confidence = confidence
         self.metadata = metadata or {}
         self.issues = issues or []

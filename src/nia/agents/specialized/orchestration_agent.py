@@ -132,7 +132,7 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
         # Handle memory operations
         if content.get("type") == "memory_store":
             memory_id = str(datetime.now().timestamp())
-            memory_content = content.get("memory", {})
+            memory_content = content.get("content", {})
             
             # Create response with memory content and metadata
             return AgentResponse(
@@ -149,10 +149,13 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                     "memory": memory_content,
                     "matches": [],
                     "timestamp": datetime.now().isoformat()
-                }
+                },
+                memory_id=memory_id,
+                memory=memory_content
             )
         elif content.get("type") == "memory_search":
             # Handle memory search
+            query = content.get("content", {})
             return AgentResponse(
                 response="Memory search completed",
                 concepts=[],
@@ -161,7 +164,7 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                     "status": "success",
                     "matches": [
                         {
-                            "content": content.get("query", {}),
+                            "content": query,
                             "score": 0.95,
                             "metadata": metadata
                         }

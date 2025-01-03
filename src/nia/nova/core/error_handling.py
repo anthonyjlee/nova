@@ -65,11 +65,17 @@ async def handle_nova_error(request: Request, exc: NovaError) -> JSONResponse:
 async def handle_http_error(request: Request, exc: HTTPException) -> JSONResponse:
     """Handle HTTP exceptions."""
     logger.error(f"Error handling request {request.state.request_id}: {exc.detail}")
-    error_response = {
-        "error": str(exc.detail),
-        "code": "HTTP_ERROR",
-        "timestamp": datetime.now().isoformat()
-    }
+    
+    # Extract error code from detail if available
+    if isinstance(exc.detail, dict) and "code" in exc.detail:
+        error_response = exc.detail
+    else:
+        error_response = {
+            "error": str(exc.detail),
+            "code": exc.detail.get("code", "HTTP_ERROR") if isinstance(exc.detail, dict) else "HTTP_ERROR",
+            "timestamp": datetime.now().isoformat()
+        }
+    
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": error_response}

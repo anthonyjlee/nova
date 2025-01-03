@@ -7,7 +7,7 @@ import uuid
 import logging
 from datetime import datetime
 
-from .endpoints import analytics_router, orchestration_router
+from .endpoints import analytics_router, orchestration_router, ws_router
 from .error_handling import (
     NovaError,
     handle_nova_error,
@@ -39,6 +39,7 @@ app.add_middleware(
 # Add routers
 app.include_router(analytics_router)
 app.include_router(orchestration_router)
+app.include_router(ws_router)
 
 # Add error handlers
 app.add_exception_handler(NovaError, handle_nova_error)
@@ -116,29 +117,50 @@ async def format_error_responses(request: Request, call_next):
             data = json.loads(body)
             error = None
             
+            # Extract error details while preserving original error codes
             if isinstance(data, dict):
-                if "detail" in data:
-                    if isinstance(data["detail"], dict) and "code" in data["detail"]:
+                if "detail" in data and isinstance(data["detail"], dict):
+                    # Use existing error structure if it has the expected format
+                    if "code" in data["detail"]:
                         error = data["detail"]
+                    # Extract error from nested structure
+                    elif "error" in data["detail"] and isinstance(data["detail"]["error"], dict):
+                        error = data["detail"]["error"]
                     else:
                         error = {
-                            "code": "ERROR",
+                            "code": data["detail"].get("code", "ERROR"),
                             "message": str(data["detail"])
                         }
-                elif "error" in data:
+                # Handle direct error object
+                elif "error" in data and isinstance(data["error"], dict):
                     error = data["error"]
-            
-            if error is None:
+                # Handle direct code and message
+                elif "code" in data:
+                    error = {
+                        "code": data["code"],
+                        "message": str(data.get("message", "An error occurred"))
+                    }
+                else:
+                    error = {
+                        "code": "ERROR",
+                        "message": str(data.get("message", "An error occurred"))
+                    }
+            else:
                 error = {
                     "code": "ERROR",
-                    "message": "An error occurred"
+                    "message": str(data)
                 }
             
+            # Preserve original status code and headers
             return JSONResponse(
                 status_code=response.status_code,
                 content={
                     "error": error,
-                    "detail": error
+                    "detail": {
+                        "code": error["code"],
+                        "message": error["message"],
+                        "timestamp": datetime.now().isoformat()
+                    }
                 },
                 headers=dict(response.headers)
             )

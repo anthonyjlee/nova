@@ -51,6 +51,30 @@ async def get_api_key(api_key_header: Optional[str] = Security(API_KEY_HEADER)) 
     
     return api_key_header
 
+def get_api_key_dependency():
+    """Get API key dependency that includes request."""
+    async def dependency(request: Request, api_key: str = Depends(API_KEY_HEADER)):
+        if not api_key:
+            raise HTTPException(
+                status_code=HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "AUTHENTICATION_ERROR",
+                    "message": "API key is required"
+                }
+            )
+        
+        if api_key not in API_KEYS:
+            raise HTTPException(
+                status_code=HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "AUTHENTICATION_ERROR",
+                    "message": "Invalid API key"
+                }
+            )
+        
+        return api_key
+    return dependency
+
 def extract_api_key_from_headers(headers: List[Tuple[bytes, bytes]]) -> Optional[str]:
     """Extract API key from raw headers."""
     for key, value in headers:
@@ -107,7 +131,7 @@ async def get_ws_api_key(websocket: WebSocket) -> str:
     
     return api_key
 
-async def check_rate_limit(api_key: str = Depends(get_api_key)) -> None:
+async def check_rate_limit(request: Request, api_key: str = Depends(get_api_key)) -> None:
     """Check if request is within rate limits."""
     now = time.time()
     rate_limit = API_KEYS[api_key]["rate_limit"]
@@ -120,12 +144,6 @@ async def check_rate_limit(api_key: str = Depends(get_api_key)) -> None:
             "requests": [],
             "window_start": now
         }
-    elif now - RATE_LIMITS[api_key]["window_start"] > window:
-        # Reset window if expired
-        RATE_LIMITS[api_key] = {
-            "requests": [],
-            "window_start": now
-        }
     
     # Remove old requests outside current window
     RATE_LIMITS[api_key]["requests"] = [
@@ -134,12 +152,13 @@ async def check_rate_limit(api_key: str = Depends(get_api_key)) -> None:
     ]
     
     # Check if limit exceeded
-    if len(RATE_LIMITS[api_key]["requests"]) >= max_requests:
+    current_requests = len(RATE_LIMITS[api_key]["requests"])
+    if current_requests >= max_requests:
         raise HTTPException(
             status_code=429,
             detail={
                 "code": "RATE_LIMIT_EXCEEDED",
-                "message": f"Rate limit of {max_requests} requests per {window} seconds exceeded"
+                "message": f"Rate limit of {max_requests} requests per {window} seconds exceeded. Current requests: {current_requests}"
             }
         )
     
@@ -149,6 +168,14 @@ async def check_rate_limit(api_key: str = Depends(get_api_key)) -> None:
 def get_permission(required_permission: str):
     """Dependency to check if API key has required permission."""
     async def check_permission(api_key: str = Depends(get_api_key)) -> None:
+        if not api_key:
+            raise HTTPException(
+                status_code=HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "AUTHENTICATION_ERROR",
+                    "message": "API key is required"
+                }
+            )
         if required_permission not in API_KEYS[api_key]["permissions"]:
             raise HTTPException(
                 status_code=403,
@@ -175,18 +202,40 @@ def validate_api_key(api_key: str) -> bool:
     return api_key in API_KEYS
 
 # Custom WebSocket dependency
-async def ws_auth(websocket: WebSocket) -> str:
+async def ws_auth(websocket: Union[WebSocket, Request]) -> str:
     """Custom WebSocket authentication dependency."""
     # Extract API key from headers
-    headers = dict(websocket.headers)
-    api_key = headers.get("x-api-key")
-    
-    if not api_key:
-        await websocket.close(code=4000, reason="API key is required")
-        return None
-    
-    if api_key not in API_KEYS:
-        await websocket.close(code=4000, reason="Invalid API key")
-        return None
+    if isinstance(websocket, WebSocket):
+        headers = dict(websocket.headers)
+        api_key = headers.get("x-api-key")
+        
+        if not api_key:
+            await websocket.close(code=4000, reason="API key is required")
+            return None
+        
+        if api_key not in API_KEYS:
+            await websocket.close(code=4000, reason="Invalid API key")
+            return None
+    else:
+        # Handle Request object
+        api_key = websocket.headers.get("x-api-key")
+        
+        if not api_key:
+            raise HTTPException(
+                status_code=HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "AUTHENTICATION_ERROR",
+                    "message": "API key is required"
+                }
+            )
+        
+        if api_key not in API_KEYS:
+            raise HTTPException(
+                status_code=HTTP_401_UNAUTHORIZED,
+                detail={
+                    "code": "AUTHENTICATION_ERROR",
+                    "message": "Invalid API key"
+                }
+            )
     
     return api_key
