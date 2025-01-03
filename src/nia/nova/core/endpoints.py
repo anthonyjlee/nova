@@ -204,46 +204,58 @@ orchestration_router = APIRouter(
 async def analytics_websocket(websocket: WebSocket):
     """WebSocket endpoint for real-time analytics updates."""
     try:
-        # Extract API key from headers
-        headers = dict(websocket.headers)
-        api_key = headers.get("x-api-key")
-        
+        # Validate API key using dependency
+        api_key = await get_ws_api_key(websocket)
         if not api_key:
-            await websocket.close(code=4000, reason="API key is required")
-            return
-        
-        if api_key not in API_KEYS:
-            await websocket.close(code=4000, reason="Invalid API key")
-            return
+            return  # WebSocket already closed by get_ws_api_key
         
         await websocket.accept()
         
         while True:
-            data = await websocket.receive_json()
-            
-            # Validate request
-            request = AnalyticsRequest(**data)
-            
-            # Process analytics based on data type
-            result = await analytics_agent.process_analytics(
-                content=data,
-                analytics_type=request.type,
-                metadata={"domain": request.domain} if request.domain else None
-            )
-            
-            # Ensure we have valid analytics data
-            analytics = result.analytics if hasattr(result, 'analytics') else {}
-            insights = result.insights if hasattr(result, 'insights') else []
-            confidence = result.confidence if hasattr(result, 'confidence') else 1.0
-            
-            # Send analytics update
-            await websocket.send_json({
-                "type": "analytics_update",
-                "analytics": analytics,
-                "insights": insights,
-                "confidence": confidence,
-                "timestamp": datetime.now().isoformat()
-            })
+            try:
+                data = await websocket.receive_json()
+                
+                # Validate request
+                try:
+                    request = AnalyticsRequest(**data)
+                except Exception as e:
+                    await websocket.send_json({
+                        "type": "error",
+                        "error": {
+                            "code": "VALIDATION_ERROR",
+                            "message": str(e)
+                        }
+                    })
+                    continue
+                
+                # Process analytics based on data type
+                result = await analytics_agent.process_analytics(
+                    content=data,
+                    analytics_type=request.type,
+                    metadata={"domain": request.domain} if request.domain else None
+                )
+                
+                # Ensure we have valid analytics data
+                analytics = result.analytics if hasattr(result, 'analytics') else {}
+                insights = result.insights if hasattr(result, 'insights') else []
+                confidence = result.confidence if hasattr(result, 'confidence') else 1.0
+                
+                # Send analytics update
+                await websocket.send_json({
+                    "type": "analytics_update",
+                    "analytics": analytics,
+                    "insights": insights,
+                    "confidence": confidence,
+                    "timestamp": datetime.now().isoformat()
+                })
+            except Exception as e:
+                await websocket.send_json({
+                    "type": "error",
+                    "error": {
+                        "code": "PROCESSING_ERROR",
+                        "message": str(e)
+                    }
+                })
     except Exception as e:
         if websocket.client_state.value != 3:  # Not closed
             await websocket.send_json({
@@ -480,14 +492,14 @@ async def get_coordination_status(
 ) -> Dict:
     """Get coordination status."""
     raise HTTPException(
-        status_code=401,
+        status_code=405,
         detail={
-            "code": "AUTHENTICATION_ERROR",
-            "message": "API key is required"
+            "code": "METHOD_NOT_ALLOWED",
+            "message": "Method not allowed. Use POST to coordinate agents."
         }
     )
 
-@orchestration_router.post("/agents/coordinate", response_model=CoordinationResponse, dependencies=[Depends(check_rate_limit)])
+@orchestration_router.post("/agents/coordinate", response_model=CoordinationResponse)
 @validate_request(CoordinationRequest)
 @retry_on_error(max_retries=3)
 async def coordinate_agents(
@@ -497,6 +509,16 @@ async def coordinate_agents(
 ) -> Dict:
     """Coordinate multiple agents for a task."""
     try:
+        # Validate request format
+        if not isinstance(coordination_request.dict(), dict):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "VALIDATION_ERROR",
+                    "message": "Invalid request format"
+                }
+            )
+            
         result = await orchestration_agent.orchestrate_and_store(
             content=coordination_request.dict(),
             orchestration_type="agent_coordination",
