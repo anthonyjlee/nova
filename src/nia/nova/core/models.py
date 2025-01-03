@@ -139,6 +139,45 @@ class MemoryResponse(BaseModel):
     memory_id: Optional[str] = Field(None, description="Memory identifier")
     content: Optional[Dict[str, Any]] = Field(None, description="Memory content")
     matches: Optional[List[Dict[str, Any]]] = Field(None, description="Search matches")
-    orchestration: Dict[str, Any] = Field(..., description="Orchestration details")
-    confidence: float = Field(..., description="Confidence score for operation")
-    timestamp: str = Field(..., description="Timestamp of response")
+    orchestration: Dict[str, Any] = Field(
+        ...,
+        description="Orchestration details",
+        example={
+            "status": "success",
+            "details": {
+                "operation": "store",
+                "type": "memory",
+                "memory_id": "123"
+            }
+        }
+    )
+    confidence: float = Field(
+        ...,
+        description="Confidence score for operation",
+        ge=0.0,
+        le=1.0
+    )
+    timestamp: str = Field(
+        ...,
+        description="Timestamp of response",
+        example=datetime.now().isoformat()
+    )
+
+    class Config:
+        """Model configuration."""
+        schema_extra = {
+            "example": {
+                "memory_id": "123",
+                "content": {"data": "Memory content"},
+                "orchestration": {
+                    "status": "success",
+                    "details": {
+                        "operation": "store",
+                        "type": "memory",
+                        "memory_id": "123"
+                    }
+                },
+                "confidence": 0.95,
+                "timestamp": datetime.now().isoformat()
+            }
+        }
