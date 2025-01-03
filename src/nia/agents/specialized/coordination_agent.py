@@ -15,6 +15,11 @@ logger = logging.getLogger(__name__)
 class CoordinationAgent(TinyTroupeAgent, NovaCoordinationAgent):
     """Coordination agent with TinyTroupe and memory capabilities."""
     
+    # Valid swarm architectures
+    VALID_ARCHITECTURES = ["hierarchical", "parallel", "sequential", "mesh"]
+    VALID_SWARM_TYPES = ["MajorityVoting", "RoundRobin", "GraphWorkflow"]
+    VALID_COMMUNICATION_PATTERNS = ["broadcast", "direct", "group"]
+    
     def __init__(
         self,
         name: str,
@@ -49,6 +54,12 @@ class CoordinationAgent(TinyTroupeAgent, NovaCoordinationAgent):
         # Initialize coordination-specific attributes
         self._initialize_coordination_attributes()
         
+        # Initialize swarm state
+        self.active_groups = {}
+        self.agent_assignments = {}
+        self.resource_allocations = {}
+        self.task_dependencies = {}
+        
     def _initialize_coordination_attributes(self):
         """Initialize coordination-specific attributes."""
         self.define(
@@ -70,16 +81,120 @@ class CoordinationAgent(TinyTroupeAgent, NovaCoordinationAgent):
                 "towards_groups": "collaborative"
             },
             domain=self.domain,
-            capabilities=[
-                "group_management",
-                "resource_allocation",
-                "dependency_tracking",
-                "conflict_resolution",
-                "performance_monitoring",
-                "domain_coordination",
-                "state_management"
-            ]
+            capabilities={
+                "group_management": True,
+                "resource_allocation": True,
+                "dependency_tracking": True,
+                "conflict_resolution": True,
+                "performance_monitoring": True,
+                "domain_coordination": True,
+                "state_management": True,
+                "swarm": {
+                    "architectures": self.VALID_ARCHITECTURES,
+                    "types": self.VALID_SWARM_TYPES,
+                    "roles": ["coordinator", "worker", "specialist"]
+                }
+            }
         )
+        
+    async def validate_swarm_architecture(self, architecture: str) -> None:
+        """Validate and update swarm architecture."""
+        if architecture not in self.VALID_ARCHITECTURES:
+            raise ValueError(f"Invalid swarm architecture: {architecture}")
+            
+        self._configuration["swarm_architecture"] = architecture
+        await self.record_reflection(
+            f"Swarm architecture updated to {architecture}",
+            domain=self.domain
+        )
+        
+    async def handle_swarm_communication(self, pattern: str) -> Dict:
+        """Handle swarm communication patterns."""
+        if pattern not in self.VALID_COMMUNICATION_PATTERNS:
+            raise KeyError(f"Invalid communication pattern: {pattern}")
+            
+        result = {
+            "pattern": pattern,
+            "success": True,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        if pattern == "broadcast":
+            result["type"] = "all_agents"
+        elif pattern == "direct":
+            result["type"] = "point_to_point"
+        elif pattern == "group":
+            result["type"] = "group_based"
+            
+        return result
+        
+    async def manage_swarm_resources(self, swarm_type: str) -> Dict:
+        """Manage resources based on swarm type."""
+        if swarm_type not in self.VALID_SWARM_TYPES:
+            raise KeyError(f"Invalid swarm type: {swarm_type}")
+            
+        result = {
+            "type": swarm_type,
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        if swarm_type == "MajorityVoting":
+            result["voting_resources"] = {
+                "voting_power": self.resource_allocations.get("voting_power", 100),
+                "quorum": 0.51
+            }
+        elif swarm_type == "RoundRobin":
+            result["rotation_schedule"] = {
+                "current_index": 0,
+                "rotation_interval": 60  # seconds
+            }
+        elif swarm_type == "GraphWorkflow":
+            result["workflow_resources"] = {
+                "nodes": list(self.active_groups.keys()),
+                "edges": list(self.task_dependencies.items())
+            }
+            
+        return result
+        
+    async def track_swarm_metrics(self) -> Dict:
+        """Track and analyze swarm metrics."""
+        metrics = {
+            "communication_overhead": 0.0,
+            "resource_utilization": 0.0,
+            "task_completion_rate": 0.0,
+            "swarm_health": 0.0
+        }
+        
+        # Calculate communication overhead
+        total_agents = sum(len(agents) for agents in self.agent_assignments.values())
+        if total_agents > 0:
+            metrics["communication_overhead"] = len(self.task_dependencies) / total_agents
+            
+        # Calculate resource utilization
+        total_resources = len(self.resource_allocations)
+        if total_resources > 0:
+            utilized = sum(
+                1 for r in self.resource_allocations.values()
+                if r.get("utilization", 0) > 0.5
+            )
+            metrics["resource_utilization"] = utilized / total_resources
+            
+        # Calculate task completion rate
+        total_groups = len(self.active_groups)
+        if total_groups > 0:
+            completed = sum(
+                1 for g in self.active_groups.values()
+                if g.get("status") == "completed"
+            )
+            metrics["task_completion_rate"] = completed / total_groups
+            
+        # Calculate overall swarm health
+        metrics["swarm_health"] = sum(
+            v for v in metrics.values()
+            if isinstance(v, (int, float))
+        ) / len(metrics)
+        
+        return metrics
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems."""
