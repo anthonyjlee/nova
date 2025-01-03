@@ -211,17 +211,31 @@ Last Updated: 2024-01-02
 - [x] Fixed failing tests in test_server.py (5 failures)
 
 ### Next Steps
+- [ ] Interactive Agent Testing (High Priority):
+  * Set up and test core agents in Jupyter notebook
+  * Verify agent interactions and memory integration
+  * Test domain awareness and error handling
+  * Document agent behavior patterns
+
 - [ ] Fix remaining test failures:
   * test_coordinate_agents (422 vs 200)
   * test_missing_api_key (405 vs 401)
   * test_rate_limiting (HTTP_ERROR vs RATE_LIMIT_EXCEEDED)
   * test_websocket (APIKeyHeader.__call__ missing argument)
   * test_memory_operations (Response validation error)
-- [ ] Implement advanced error handling in FastAPI endpoints
-- [ ] Add request validation for API endpoints
-- [ ] Begin frontend development with SvelteKit
+
+- [ ] FastAPI Enhancements:
+  * Implement advanced error handling
+  * Add request validation
+  * Update response formatting
+
+- [ ] Frontend Development:
+  * Begin SvelteKit setup
+  * Implement three-panel layout
+  * Add WebSocket integration
 
 ### Blockers
+- Need to verify core agent functionality in notebook environment
 - Need to resolve API key authentication issues before proceeding with WebSocket implementation
 - Response validation errors in memory operations need investigation
 
