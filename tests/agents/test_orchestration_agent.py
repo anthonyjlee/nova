@@ -100,6 +100,79 @@ async def test_initialization(orchestration_agent):
     assert isinstance(orchestration_agent.execution_monitors, dict)
     assert isinstance(orchestration_agent.resource_allocations, dict)
     assert isinstance(orchestration_agent.dependency_graph, dict)
+    
+    # Verify swarm capabilities
+    assert "swarm" in attributes["capabilities"]
+    assert "architectures" in attributes["capabilities"]["swarm"]
+    assert "hierarchical" in attributes["capabilities"]["swarm"]["architectures"]
+    assert "types" in attributes["capabilities"]["swarm"]
+    assert "MajorityVoting" in attributes["capabilities"]["swarm"]["types"]
+
+@pytest.mark.asyncio
+async def test_swarm_configuration_management(orchestration_agent):
+    """Test swarm configuration management."""
+    config = {
+        "architecture": "hierarchical",
+        "type": "MajorityVoting",
+        "roles": {
+            "coordinator": ["agent1"],
+            "worker": ["agent2", "agent3"]
+        },
+        "communication": {
+            "pattern": "broadcast",
+            "channels": ["main", "backup"]
+        }
+    }
+    
+    result = await orchestration_agent.configure_swarm(config)
+    
+    # Verify configuration
+    assert result["architecture"] == "hierarchical"
+    assert result["type"] == "MajorityVoting"
+    assert len(result["roles"]["worker"]) == 2
+    assert result["communication"]["pattern"] == "broadcast"
+    
+    # Verify swarm state
+    assert orchestration_agent._configuration["swarm_architecture"] == "hierarchical"
+    assert orchestration_agent._configuration["swarm_type"] == "MajorityVoting"
+
+@pytest.mark.asyncio
+async def test_swarm_type_transitions(orchestration_agent):
+    """Test swarm type transition handling."""
+    # Initial configuration
+    await orchestration_agent.configure_swarm({
+        "architecture": "hierarchical",
+        "type": "MajorityVoting"
+    })
+    
+    # Transition to new type
+    result = await orchestration_agent.transition_swarm_type("RoundRobin")
+    
+    # Verify transition
+    assert result["previous_type"] == "MajorityVoting"
+    assert result["new_type"] == "RoundRobin"
+    assert result["transition_success"] is True
+    
+    # Verify state preservation
+    assert orchestration_agent._configuration["swarm_architecture"] == "hierarchical"
+    assert orchestration_agent._configuration["swarm_type"] == "RoundRobin"
+
+@pytest.mark.asyncio
+async def test_swarm_performance_monitoring(orchestration_agent):
+    """Test swarm performance monitoring."""
+    metrics = await orchestration_agent.monitor_swarm_performance()
+    
+    # Verify metric categories
+    assert "communication_overhead" in metrics
+    assert "resource_utilization" in metrics
+    assert "task_completion_rate" in metrics
+    assert "swarm_health" in metrics
+    
+    # Verify metric values
+    assert isinstance(metrics["communication_overhead"], (int, float))
+    assert isinstance(metrics["resource_utilization"], (int, float))
+    assert isinstance(metrics["task_completion_rate"], (int, float))
+    assert isinstance(metrics["swarm_health"], (int, float))
 
 @pytest.mark.asyncio
 async def test_process_with_flow_tracking(orchestration_agent, mock_memory_system):
@@ -122,6 +195,12 @@ async def test_process_with_flow_tracking(orchestration_agent, mock_memory_syste
             {
                 "type": "execution_state",
                 "state": "running"
+            },
+            {
+                "type": "swarm_operation",
+                "architecture": "hierarchical",
+                "role": "coordinator",
+                "status": "active"
             }
         ]
     }
@@ -131,7 +210,11 @@ async def test_process_with_flow_tracking(orchestration_agent, mock_memory_syste
         "flow_status": "active",
         "flow_phase": "execution",
         "flow_metrics": {"progress": 0.5},
-        "step_completed": True
+        "step_completed": True,
+        "swarm": {
+            "type": "MajorityVoting",
+            "voting_required": True
+        }
     }
     
     response = await orchestration_agent.process(content)
@@ -148,6 +231,11 @@ async def test_process_with_flow_tracking(orchestration_agent, mock_memory_syste
     assert orchestration_agent.emotions["flow_state"] == "progressing"
     assert orchestration_agent.emotions["resource_state"] == "optimal"
     assert orchestration_agent.emotions["execution_state"] == "running"
+    
+    # Verify swarm operation tracking
+    assert "swarm_operations" in response.metadata
+    assert response.metadata["swarm_operations"]["architecture"] == "hierarchical"
+    assert response.metadata["swarm_operations"]["role"] == "coordinator"
 
 @pytest.mark.asyncio
 async def test_flow_pattern_matching(orchestration_agent):
@@ -169,7 +257,8 @@ async def test_flow_pattern_matching(orchestration_agent):
                 "value": True
             }
         ],
-        "priority": 0.8
+        "priority": 0.8,
+        "swarm_type": "MajorityVoting"
     }
     
     orchestration_agent._update_flow_patterns({"pattern1": pattern})
@@ -178,7 +267,11 @@ async def test_flow_pattern_matching(orchestration_agent):
     content = {
         "flow_id": "flow1",
         "flow_phase": "execution",
-        "metrics": {"progress": 0.5}
+        "metrics": {"progress": 0.5},
+        "swarm": {
+            "type": "MajorityVoting",
+            "voting_required": True
+        }
     }
     
     await orchestration_agent._update_flow_state("flow1", content)
@@ -187,10 +280,18 @@ async def test_flow_pattern_matching(orchestration_agent):
     flow_state = orchestration_agent.active_flows["flow1"]
     assert flow_state["current_phase"] == "validation"
     assert flow_state["metrics"]["validation_started"] is True
+    assert flow_state["swarm"]["voting_required"] is True
 
 @pytest.mark.asyncio
-async def test_resource_allocation(orchestration_agent):
-    """Test resource allocation tracking."""
+async def test_emotion_based_resource_allocation(orchestration_agent):
+    """Test emotion-based resource allocation."""
+    # Set emotional state
+    orchestration_agent.emotions.update({
+        "orchestration_state": "highly_focused",
+        "resource_state": "optimal",
+        "execution_state": "running"
+    })
+    
     resources = {
         "cpu": {
             "type": "compute",
@@ -203,14 +304,117 @@ async def test_resource_allocation(orchestration_agent):
     
     await orchestration_agent._update_resource_allocations(resources)
     
-    # Verify resource tracking
-    assert "cpu" in orchestration_agent.resource_allocations
+    # Verify emotion-adjusted allocation
     resource = orchestration_agent.resource_allocations["cpu"]
-    assert resource["type"] == "compute"
-    assert resource["capacity"] == 100.0
-    assert resource["utilization"] == 75.0
-    assert resource["assigned_to"] == ["agent1", "agent2"]
-    assert resource["constraints"] == {"min_free": 10.0}
+    assert resource["capacity"] > 100.0  # Should be increased due to high focus
+    assert "emotional_context" in resource["analytics"]
+    assert resource["analytics"]["emotional_context"]["confidence"] == 1.0
+
+@pytest.mark.asyncio
+async def test_pattern_based_learning(orchestration_agent, mock_memory_system):
+    """Test pattern-based learning for resource allocation."""
+    # Mock historical patterns
+    mock_memory_system.episodic.search.return_value = [
+        {
+            "content": {
+                "type": "resource_allocation_pattern",
+                "resource_id": "cpu",
+                "allocation": {
+                    "assigned_to": ["agent1", "agent3"],
+                    "utilization": 0.8
+                }
+            }
+        }
+    ]
+    
+    resources = {
+        "cpu": {
+            "type": "compute",
+            "utilization": 0.8,
+            "assigned_to": ["agent2"]
+        }
+    }
+    
+    await orchestration_agent._update_resource_allocations(resources)
+    
+    # Verify pattern application
+    resource = orchestration_agent.resource_allocations["cpu"]
+    assert "agent1" in resource["assigned_to"]  # Should learn from pattern
+    assert "pattern_confidence" in resource["analytics"]
+
+@pytest.mark.asyncio
+async def test_collective_memory_utilization(orchestration_agent, mock_memory_system):
+    """Test collective memory utilization for optimization."""
+    # Set up test data
+    await orchestration_agent._store_allocation_pattern(
+        "cpu",
+        {
+            "type": "compute",
+            "utilization": 0.9,
+            "assigned_to": ["agent1", "agent2"]
+        }
+    )
+    
+    patterns = await orchestration_agent._get_allocation_patterns()
+    
+    # Verify pattern storage and retrieval
+    assert len(patterns) > 0
+    assert patterns[0]["resource_id"] == "cpu"
+    assert mock_memory_system.episodic.store.called
+    
+    # Verify pattern metadata
+    stored_pattern = mock_memory_system.episodic.store.call_args[1]
+    assert stored_pattern["metadata"]["type"] == "pattern"
+    assert stored_pattern["metadata"]["importance"] == 0.7
+
+@pytest.mark.asyncio
+async def test_swarm_sentiment_analysis(orchestration_agent):
+    """Test swarm sentiment analysis."""
+    # Set various emotional states
+    orchestration_agent.emotions.update({
+        "orchestration_state": "highly_focused",
+        "resource_state": "optimal",
+        "execution_state": "running"
+    })
+    
+    sentiment = orchestration_agent._get_swarm_sentiment()
+    
+    # Verify sentiment analysis
+    assert sentiment["confidence"] == 1.0  # highly_focused
+    assert sentiment["resource_attitude"] == 1.0  # optimal
+    assert sentiment["execution_mood"] == 1.0  # running
+    
+    # Test sentiment impact on allocation
+    base_capacity = 100.0
+    adjusted = orchestration_agent._adjust_capacity_by_emotion(
+        base_capacity,
+        sentiment
+    )
+    assert adjusted > base_capacity  # Should increase due to positive sentiment
+
+@pytest.mark.asyncio
+async def test_pattern_similarity_calculation(orchestration_agent):
+    """Test pattern similarity calculation."""
+    allocation1 = {
+        "utilization": 0.8,
+        "constraints": ["memory", "cpu"],
+        "assigned_to": ["agent1", "agent2"]
+    }
+    
+    allocation2 = {
+        "utilization": 0.7,
+        "constraints": ["memory", "gpu"],
+        "assigned_to": ["agent1", "agent3"]
+    }
+    
+    similarity = orchestration_agent._calculate_pattern_similarity(
+        allocation1,
+        allocation2
+    )
+    
+    # Verify similarity components
+    assert 0.0 <= similarity <= 1.0
+    assert similarity > 0.5  # Should be somewhat similar
 
 @pytest.mark.asyncio
 async def test_dependency_tracking(orchestration_agent):
@@ -218,7 +422,16 @@ async def test_dependency_tracking(orchestration_agent):
     dependencies = {
         "task1": ["task2", "task3"],
         "task2": ["task4"],
-        "task3": []
+        "task3": [],
+        "swarm": {
+            "type": "GraphWorkflow",
+            "nodes": ["task1", "task2", "task3", "task4"],
+            "edges": [
+                ("task1", "task2"),
+                ("task1", "task3"),
+                ("task2", "task4")
+            ]
+        }
     }
     
     orchestration_agent._update_dependency_graph(dependencies)
@@ -227,6 +440,11 @@ async def test_dependency_tracking(orchestration_agent):
     assert orchestration_agent.dependency_graph["task1"] == {"task2", "task3"}
     assert orchestration_agent.dependency_graph["task2"] == {"task4"}
     assert orchestration_agent.dependency_graph["task3"] == set()
+    
+    # Verify swarm workflow
+    assert "swarm" in orchestration_agent.dependency_graph
+    assert len(orchestration_agent.dependency_graph["swarm"]["nodes"]) == 4
+    assert len(orchestration_agent.dependency_graph["swarm"]["edges"]) == 3
 
 @pytest.mark.asyncio
 async def test_orchestrate_and_store_with_enhancements(orchestration_agent, mock_memory_system):
@@ -248,6 +466,11 @@ async def test_orchestrate_and_store_with_enhancements(orchestration_agent, mock
         },
         "dependencies": {
             "task1": ["task2"]
+        },
+        "swarm": {
+            "architecture": "hierarchical",
+            "type": "MajorityVoting",
+            "voting_threshold": 0.7
         }
     }
     
@@ -267,6 +490,12 @@ async def test_orchestrate_and_store_with_enhancements(orchestration_agent, mock
     # Verify dependency tracking
     assert orchestration_agent.dependency_graph["task1"] == {"task2"}
     
+    # Verify swarm metadata
+    assert "swarm_operations" in result.metadata
+    assert result.metadata["swarm_operations"]["architecture"] == "hierarchical"
+    assert result.metadata["swarm_operations"]["type"] == "MajorityVoting"
+    assert result.metadata["swarm_operations"]["voting_threshold"] == 0.7
+    
     # Verify reflections were recorded
     reflection_calls = mock_memory_system.semantic.store.record_reflection.call_args_list
     assert any(
@@ -280,13 +509,18 @@ async def test_flow_attention_handling(orchestration_agent, mock_memory_system):
     content = {
         "flow_id": "flow1",
         "needs_attention": True,
-        "has_blockers": True
+        "has_blockers": True,
+        "swarm": {
+            "type": "MajorityVoting",
+            "voting_required": True
+        }
     }
     
     await orchestration_agent._update_flow_state("flow1", content)
     
     # Verify attention flag
     assert orchestration_agent.active_flows["flow1"]["needs_attention"] is True
+    assert orchestration_agent.active_flows["flow1"]["swarm"]["voting_required"] is True
     
     # Verify reflection was recorded
     mock_memory_system.semantic.store.record_reflection.assert_called_with(
@@ -301,7 +535,11 @@ async def test_resource_utilization_monitoring(orchestration_agent, mock_memory_
         "gpu": {
             "type": "compute",
             "capacity": 100.0,
-            "utilization": 95.0
+            "utilization": 95.0,
+            "swarm": {
+                "type": "RoundRobin",
+                "rotation_index": 2
+            }
         }
     }
     
@@ -319,7 +557,12 @@ async def test_execution_monitoring(orchestration_agent, mock_memory_system):
     # Set up blocked task
     orchestration_agent.execution_monitors["task1"] = {
         "status": "blocked",
-        "reason": "Dependency not met"
+        "reason": "Dependency not met",
+        "swarm": {
+            "type": "GraphWorkflow",
+            "blocked_node": "task1",
+            "blocking_nodes": ["task2"]
+        }
     }
     
     # Trigger monitoring through orchestration
@@ -350,6 +593,10 @@ async def test_error_handling(orchestration_agent, mock_memory_system):
         "Orchestration failed - issues detected in professional domain",
         domain="professional"
     )
+    
+    # Verify swarm error handling
+    assert "swarm_operations" in result.metadata
+    assert result.metadata["swarm_operations"]["status"] == "error"
 
 @pytest.mark.asyncio
 async def test_domain_validation(orchestration_agent, mock_memory_system):
