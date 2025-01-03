@@ -9,12 +9,13 @@ from src.nia.nova.core.metrics import MetricsResult
 from src.nia.memory.memory_types import AgentResponse
 
 @pytest.fixture
-def mock_memory_system():
-    """Create a mock memory system."""
-    memory = MagicMock()
-    # Mock LLM
-    memory.llm = MagicMock()
-    memory.llm.analyze = AsyncMock(return_value={
+def metrics_agent(mock_memory_system, mock_world, base_agent_config, request):
+    """Create a MetricsAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestMetrics_{request.node.name}"
+    
+    # Update mock memory system for metrics agent
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
         "metrics": {
             "type": "performance",
             "metrics": {
@@ -39,42 +40,21 @@ def mock_memory_system():
         "issues": []
     })
     
-    # Mock semantic store
-    memory.semantic = MagicMock()
-    memory.semantic.store = MagicMock()
-    memory.semantic.store.record_reflection = AsyncMock()
-    memory.semantic.store.get_domain_access = AsyncMock(return_value=True)
+    # Configure domain access
+    mock_memory_system.semantic.store.get_domain_access = AsyncMock(
+        side_effect=lambda agent, domain: domain == "professional"
+    )
     
-    # Mock episodic store
-    memory.episodic = MagicMock()
-    memory.episodic.store = MagicMock()
-    memory.episodic.store.search = AsyncMock(return_value=[
-        {
-            "content": {"content": "Previous metric"},
-            "similarity": 0.9,
-            "timestamp": "2024-01-01T00:00:00Z"
-        }
-    ])
+    # Create agent with updated config
+    config = base_agent_config.copy()
+    config["name"] = agent_name
+    config["domain"] = "professional"
     
-    return memory
-
-@pytest.fixture
-def mock_world():
-    """Create a mock world environment."""
-    world = MagicMock()
-    world.notify_agent = AsyncMock()
-    return world
-
-@pytest.fixture
-def metrics_agent(mock_memory_system, mock_world, request):
-    """Create a MetricsAgent instance with mock dependencies."""
-    # Use test name to create unique agent name
-    agent_name = f"TestMetrics_{request.node.name}"
     return MetricsAgent(
         name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
-        domain="professional"
+        domain=config["domain"]
     )
 
 @pytest.mark.asyncio
@@ -101,8 +81,8 @@ async def test_initialization(metrics_agent):
 @pytest.mark.asyncio
 async def test_process_with_metric_tracking(metrics_agent, mock_memory_system):
     """Test content processing with metric state tracking."""
-    # Mock memory system response
-    mock_memory_system.llm.analyze.return_value = {
+    # Configure mock LLM response
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
         "concepts": [
             {
                 "type": "metrics_result",
@@ -121,7 +101,7 @@ async def test_process_with_metric_tracking(metrics_agent, mock_memory_system):
                 "state": "accurate"
             }
         ]
-    }
+    })
     
     content = {
         "metric_id": "metric1",
@@ -253,6 +233,29 @@ async def test_retention_policy_management(metrics_agent):
 @pytest.mark.asyncio
 async def test_process_and_store_with_enhancements(metrics_agent, mock_memory_system):
     """Test enhanced metrics processing and storage."""
+    # Configure mock LLM response
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
+        "metrics": {
+            "type": "performance",
+            "metrics": {
+                "metric1": {
+                    "type": "latency",
+                    "value": 100.0,
+                    "unit": "ms"
+                }
+            }
+        },
+        "values": [
+            {
+                "type": "threshold",
+                "description": "Latency within limits",
+                "confidence": 0.9,
+                "importance": 0.8
+            }
+        ],
+        "issues": []
+    })
+    
     content = {
         "metric_id": "metric1",
         "metric_type": "latency",
@@ -285,10 +288,9 @@ async def test_process_and_store_with_enhancements(metrics_agent, mock_memory_sy
     assert "rule1" in metrics_agent.aggregation_rules
     
     # Verify reflections were recorded
-    reflection_calls = mock_memory_system.semantic.store.record_reflection.call_args_list
-    assert any(
-        "High confidence metrics completed" in call.args[0]
-        for call in reflection_calls
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "High confidence metrics completed in professional domain",
+        domain="professional"
     )
 
 @pytest.mark.asyncio
@@ -349,15 +351,20 @@ async def test_error_handling(metrics_agent, mock_memory_system):
 @pytest.mark.asyncio
 async def test_domain_validation(metrics_agent, mock_memory_system):
     """Test domain access validation."""
+    # Configure domain access
+    mock_memory_system.semantic.store.get_domain_access = AsyncMock(
+        side_effect=lambda agent, domain: domain == "professional"
+    )
+    
     # Test allowed domain
-    await metrics_agent.process_and_store(
+    result = await metrics_agent.process_and_store(
         {"type": "test"},
         "performance",
         target_domain="professional"
     )
+    assert result.is_valid is True
     
     # Test denied domain
-    mock_memory_system.semantic.store.get_domain_access.return_value = False
     with pytest.raises(PermissionError):
         await metrics_agent.process_and_store(
             {"type": "test"},

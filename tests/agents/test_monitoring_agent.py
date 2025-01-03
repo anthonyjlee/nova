@@ -9,12 +9,13 @@ from src.nia.nova.core.monitoring import MonitoringResult
 from src.nia.memory.memory_types import AgentResponse
 
 @pytest.fixture
-def mock_memory_system():
-    """Create a mock memory system."""
-    memory = MagicMock()
-    # Mock LLM
-    memory.llm = MagicMock()
-    memory.llm.analyze = AsyncMock(return_value={
+def monitoring_agent(mock_memory_system, mock_world, base_agent_config, request):
+    """Create a MonitoringAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestMonitoring_{request.node.name}"
+    
+    # Update mock memory system for monitoring agent
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
         "monitoring": {
             "type": "performance",
             "agents": {
@@ -42,42 +43,21 @@ def mock_memory_system():
         "issues": []
     })
     
-    # Mock semantic store
-    memory.semantic = MagicMock()
-    memory.semantic.store = MagicMock()
-    memory.semantic.store.record_reflection = AsyncMock()
-    memory.semantic.store.get_domain_access = AsyncMock(return_value=True)
+    # Configure domain access
+    mock_memory_system.semantic.store.get_domain_access = AsyncMock(
+        side_effect=lambda agent, domain: domain == "professional"
+    )
     
-    # Mock episodic store
-    memory.episodic = MagicMock()
-    memory.episodic.store = MagicMock()
-    memory.episodic.store.search = AsyncMock(return_value=[
-        {
-            "content": {"content": "Previous monitoring"},
-            "similarity": 0.9,
-            "timestamp": "2024-01-01T00:00:00Z"
-        }
-    ])
+    # Create agent with updated config
+    config = base_agent_config.copy()
+    config["name"] = agent_name
+    config["domain"] = "professional"
     
-    return memory
-
-@pytest.fixture
-def mock_world():
-    """Create a mock world environment."""
-    world = MagicMock()
-    world.notify_agent = AsyncMock()
-    return world
-
-@pytest.fixture
-def monitoring_agent(mock_memory_system, mock_world, request):
-    """Create a MonitoringAgent instance with mock dependencies."""
-    # Use test name to create unique agent name
-    agent_name = f"TestMonitoring_{request.node.name}"
     return MonitoringAgent(
         name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
-        domain="professional"
+        domain=config["domain"]
     )
 
 @pytest.mark.asyncio
@@ -105,8 +85,8 @@ async def test_initialization(monitoring_agent):
 @pytest.mark.asyncio
 async def test_process_with_metric_tracking(monitoring_agent, mock_memory_system):
     """Test content processing with metric state tracking."""
-    # Mock memory system response
-    mock_memory_system.llm.analyze.return_value = {
+    # Configure mock LLM response
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
         "concepts": [
             {
                 "type": "monitoring_result",
@@ -125,7 +105,7 @@ async def test_process_with_metric_tracking(monitoring_agent, mock_memory_system
                 "state": "clear"
             }
         ]
-    }
+    })
     
     content = {
         "metric_id": "cpu_usage",
@@ -157,8 +137,28 @@ async def test_process_with_metric_tracking(monitoring_agent, mock_memory_system
     assert monitoring_agent.emotions["alert_state"] == "clear"
 
 @pytest.mark.asyncio
-async def test_health_check_handling(monitoring_agent):
+async def test_health_check_handling(monitoring_agent, mock_memory_system):
     """Test health check handling and alert generation."""
+    # Configure mock LLM response
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
+        "monitoring": {
+            "type": "health",
+            "checks": {
+                "api_health": {
+                    "status": "failing",
+                    "severity": "high"
+                }
+            }
+        },
+        "issues": [
+            {
+                "type": "health_check",
+                "description": "API health check failing",
+                "confidence": 0.9
+            }
+        ]
+    })
+    
     content = {
         "check_id": "api_health",
         "check_status": "failing",
@@ -230,7 +230,7 @@ async def test_threshold_management(monitoring_agent):
     assert memory_threshold["unit"] == "MB"
 
 @pytest.mark.asyncio
-async def test_trend_analysis(monitoring_agent):
+async def test_trend_analysis(monitoring_agent, mock_memory_system):
     """Test trend analysis tracking."""
     trends = {
         "cpu_trend": {
@@ -261,6 +261,29 @@ async def test_trend_analysis(monitoring_agent):
 @pytest.mark.asyncio
 async def test_monitor_and_store_with_enhancements(monitoring_agent, mock_memory_system):
     """Test enhanced monitoring and storage."""
+    # Configure mock LLM response
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
+        "monitoring": {
+            "type": "performance",
+            "metrics": {
+                "cpu_usage": {
+                    "type": "gauge",
+                    "value": 85.0,
+                    "unit": "percent"
+                }
+            }
+        },
+        "metrics": [
+            {
+                "type": "threshold",
+                "description": "CPU usage high",
+                "confidence": 0.9,
+                "importance": 0.8
+            }
+        ],
+        "issues": []
+    })
+    
     content = {
         "metric_id": "cpu_usage",
         "metric_value": 85.0,
@@ -295,10 +318,9 @@ async def test_monitor_and_store_with_enhancements(monitoring_agent, mock_memory
     assert "cpu_trend" in monitoring_agent.trend_analysis
     
     # Verify reflections were recorded
-    reflection_calls = mock_memory_system.semantic.store.record_reflection.call_args_list
-    assert any(
-        "High confidence monitoring completed" in call.args[0]
-        for call in reflection_calls
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "High confidence monitoring completed in professional domain",
+        domain="professional"
     )
 
 @pytest.mark.asyncio
@@ -369,15 +391,20 @@ async def test_error_handling(monitoring_agent, mock_memory_system):
 @pytest.mark.asyncio
 async def test_domain_validation(monitoring_agent, mock_memory_system):
     """Test domain access validation."""
+    # Configure domain access
+    mock_memory_system.semantic.store.get_domain_access = AsyncMock(
+        side_effect=lambda agent, domain: domain == "professional"
+    )
+    
     # Test allowed domain
-    await monitoring_agent.monitor_and_store(
+    result = await monitoring_agent.monitor_and_store(
         {"type": "test"},
         "performance",
         target_domain="professional"
     )
+    assert result.is_valid is True
     
     # Test denied domain
-    mock_memory_system.semantic.store.get_domain_access.return_value = False
     with pytest.raises(PermissionError):
         await monitoring_agent.monitor_and_store(
             {"type": "test"},

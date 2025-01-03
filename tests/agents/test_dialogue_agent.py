@@ -8,12 +8,13 @@ from src.nia.agents.specialized.dialogue_agent import DialogueAgent
 from src.nia.nova.core.dialogue import DialogueResult
 
 @pytest.fixture
-def mock_memory_system():
-    """Create a mock memory system."""
-    memory = MagicMock()
-    # Mock LLM
-    memory.llm = MagicMock()
-    memory.llm.analyze = AsyncMock(return_value={
+def dialogue_agent(mock_memory_system, mock_world, base_agent_config, request):
+    """Create a DialogueAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestDialogue_{request.node.name}"
+    
+    # Update mock memory system for dialogue agent
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
         "utterances": [
             {
                 "statement": "Let's discuss the project",
@@ -34,42 +35,21 @@ def mock_memory_system():
         }
     })
     
-    # Mock semantic store
-    memory.semantic = MagicMock()
-    memory.semantic.store = MagicMock()
-    memory.semantic.store.record_reflection = AsyncMock()
-    memory.semantic.store.get_domain_access = AsyncMock(return_value=True)
+    # Configure domain access
+    mock_memory_system.semantic.store.get_domain_access = AsyncMock(
+        side_effect=lambda agent, domain: domain == "professional"
+    )
     
-    # Mock episodic store
-    memory.episodic = MagicMock()
-    memory.episodic.store = MagicMock()
-    memory.episodic.store.search = AsyncMock(return_value=[
-        {
-            "content": {"content": "Previous discussion"},
-            "similarity": 0.9,
-            "timestamp": "2024-01-01T00:00:00Z"
-        }
-    ])
+    # Create agent with updated config
+    config = base_agent_config.copy()
+    config["name"] = agent_name
+    config["domain"] = "professional"
     
-    return memory
-
-@pytest.fixture
-def mock_world():
-    """Create a mock world environment."""
-    world = MagicMock()
-    world.notify_agent = AsyncMock()
-    return world
-
-@pytest.fixture
-def dialogue_agent(mock_memory_system, mock_world, request):
-    """Create a DialogueAgent instance with mock dependencies."""
-    # Use test name to create unique agent name
-    agent_name = f"TestDialogue_{request.node.name}"
     return DialogueAgent(
         name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
-        domain="professional"
+        domain=config["domain"]
     )
 
 @pytest.mark.asyncio
@@ -228,6 +208,25 @@ async def test_record_interaction_patterns(dialogue_agent, mock_memory_system):
     """Test interaction pattern recording."""
     conversation_id = "test_conv_1"
     
+    # Configure mock LLM response
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
+        "utterances": [
+            {
+                "statement": "Important point",
+                "confidence": 0.9,
+                "type": "key_point"
+            }
+        ],
+        "context": {
+            "flow_factors": [
+                {
+                    "factor": "topic_focus",
+                    "weight": 0.8
+                }
+            ]
+        }
+    })
+    
     analysis_result = DialogueResult(
         utterances=[
             {
@@ -250,13 +249,38 @@ async def test_record_interaction_patterns(dialogue_agent, mock_memory_system):
     await dialogue_agent._record_interaction_patterns(conversation_id, analysis_result)
     
     # Verify pattern storage
-    mock_memory_system.semantic.store.record_reflection.assert_called()
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Interaction pattern recorded in professional domain",
+        domain="professional"
+    )
 
 @pytest.mark.asyncio
-async def test_process_with_interaction_updates(dialogue_agent):
+async def test_process_with_interaction_updates(dialogue_agent, mock_memory_system):
     """Test content processing with interaction updates."""
     conversation_id = "test_conv_1"
     await dialogue_agent.start_conversation(conversation_id, ["agent1"])
+    
+    # Configure mock LLM response
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
+        "utterances": [
+            {
+                "statement": "Test message",
+                "type": "message",
+                "confidence": 0.9,
+                "domain_relevance": 0.8
+            }
+        ],
+        "context": {
+            "flow_factors": [
+                {
+                    "factor": "topic_focus",
+                    "weight": 0.8
+                }
+            ],
+            "participants": ["agent1"],
+            "topics": ["test"]
+        }
+    })
     
     content = {
         "conversation_id": conversation_id,
@@ -271,6 +295,12 @@ async def test_process_with_interaction_updates(dialogue_agent):
     assert dialogue_agent.interaction_states[conversation_id]["turn_count"] == 1
     assert "test" in dialogue_agent.interaction_states[conversation_id]["active_topics"]
     assert "analysis_state" in dialogue_agent.emotions
+    
+    # Verify reflection was recorded
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Interaction processed in professional domain",
+        domain="professional"
+    )
 
 @pytest.mark.asyncio
 async def test_analyze_and_store_with_patterns(dialogue_agent, mock_memory_system):

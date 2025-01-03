@@ -75,7 +75,7 @@ def mock_memory_system():
                 "domain_standards": {"status": "ready", "confidence": 0.93}
             }
         }
-    })
+    }
     
     # Set up semantic store with async methods
     store = MagicMock()

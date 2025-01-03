@@ -33,7 +33,7 @@ async def get_api_key(api_key_header: Optional[str] = Security(API_KEY_HEADER)) 
     """Dependency for getting API key from request."""
     if not api_key_header:
         raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
+            status_code=401,
             detail={
                 "code": "AUTHENTICATION_ERROR",
                 "message": "API key is required"
@@ -42,7 +42,7 @@ async def get_api_key(api_key_header: Optional[str] = Security(API_KEY_HEADER)) 
     
     if api_key_header not in API_KEYS:
         raise HTTPException(
-            status_code=HTTP_401_UNAUTHORIZED,
+            status_code=401,
             detail={
                 "code": "AUTHENTICATION_ERROR",
                 "message": "Invalid API key"
@@ -50,6 +50,17 @@ async def get_api_key(api_key_header: Optional[str] = Security(API_KEY_HEADER)) 
         )
     
     return api_key_header
+
+async def validate_request_format(request: Any) -> None:
+    """Validate request format."""
+    if not isinstance(request, dict):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "VALIDATION_ERROR",
+                "message": "Invalid request format"
+            }
+        )
 
 def get_api_key_dependency():
     """Get API key dependency that includes request."""

@@ -9,12 +9,13 @@ from src.nia.nova.core.coordination import CoordinationResult
 from src.nia.memory.memory_types import AgentResponse
 
 @pytest.fixture
-def mock_memory_system():
-    """Create a mock memory system."""
-    memory = MagicMock()
-    # Mock LLM
-    memory.llm = MagicMock()
-    memory.llm.analyze = AsyncMock(return_value={
+def coordination_agent(mock_memory_system, mock_world, base_agent_config, request):
+    """Create a CoordinationAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestCoordination_{request.node.name}"
+    
+    # Update mock memory system for coordination agent
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
         "groups": {
             "group1": {
                 "name": "Test Group 1",
@@ -36,45 +37,30 @@ def mock_memory_system():
                 "assigned_to": ["agent1"]
             }
         },
-        "issues": []
+        "issues": [],
+        "swarm": {
+            "architecture": "hierarchical",
+            "type": "MajorityVoting",
+            "role": "coordinator",
+            "status": "active"
+        }
     })
     
-    # Mock semantic store
-    memory.semantic = MagicMock()
-    memory.semantic.store = MagicMock()
-    memory.semantic.store.record_reflection = AsyncMock()
-    memory.semantic.store.get_domain_access = AsyncMock(return_value=True)
+    # Configure domain access
+    mock_memory_system.semantic.store.get_domain_access = AsyncMock(
+        side_effect=lambda agent, domain: domain == "professional"
+    )
     
-    # Mock episodic store
-    memory.episodic = MagicMock()
-    memory.episodic.store = MagicMock()
-    memory.episodic.store.search = AsyncMock(return_value=[
-        {
-            "content": {"content": "Previous coordination"},
-            "similarity": 0.9,
-            "timestamp": "2024-01-01T00:00:00Z"
-        }
-    ])
+    # Create agent with updated config
+    config = base_agent_config.copy()
+    config["name"] = agent_name
+    config["domain"] = "professional"
     
-    return memory
-
-@pytest.fixture
-def mock_world():
-    """Create a mock world environment."""
-    world = MagicMock()
-    world.notify_agent = AsyncMock()
-    return world
-
-@pytest.fixture
-def coordination_agent(mock_memory_system, mock_world, request):
-    """Create a CoordinationAgent instance with mock dependencies."""
-    # Use test name to create unique agent name
-    agent_name = f"TestCoordination_{request.node.name}"
     return CoordinationAgent(
         name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
-        domain="professional"
+        domain=config["domain"]
     )
 
 @pytest.mark.asyncio
@@ -96,6 +82,90 @@ async def test_initialization(coordination_agent):
     assert isinstance(coordination_agent.agent_assignments, dict)
     assert isinstance(coordination_agent.resource_allocations, dict)
     assert isinstance(coordination_agent.task_dependencies, dict)
+    
+    # Verify swarm capabilities
+    assert "swarm" in attributes["capabilities"]
+    assert "architectures" in attributes["capabilities"]["swarm"]
+    assert "hierarchical" in attributes["capabilities"]["swarm"]["architectures"]
+    assert "types" in attributes["capabilities"]["swarm"]
+    assert "MajorityVoting" in attributes["capabilities"]["swarm"]["types"]
+    assert "roles" in attributes["capabilities"]["swarm"]
+    assert "coordinator" in attributes["capabilities"]["swarm"]["roles"]
+
+@pytest.mark.asyncio
+async def test_swarm_architecture_validation(coordination_agent):
+    """Test swarm architecture validation."""
+    # Test valid architecture
+    await coordination_agent.validate_swarm_architecture("hierarchical")
+    
+    # Test invalid architecture
+    with pytest.raises(ValueError):
+        await coordination_agent.validate_swarm_architecture("invalid_arch")
+        
+    # Test architecture transition
+    await coordination_agent.validate_swarm_architecture("parallel")
+    assert coordination_agent._configuration["swarm_architecture"] == "parallel"
+
+@pytest.mark.asyncio
+async def test_swarm_communication_patterns(coordination_agent):
+    """Test swarm communication pattern handling."""
+    # Test broadcast pattern
+    broadcast_result = await coordination_agent.handle_swarm_communication("broadcast")
+    assert broadcast_result["pattern"] == "broadcast"
+    assert broadcast_result["success"] is True
+    
+    # Test direct pattern
+    direct_result = await coordination_agent.handle_swarm_communication("direct")
+    assert direct_result["pattern"] == "direct"
+    assert direct_result["success"] is True
+    
+    # Test group pattern
+    group_result = await coordination_agent.handle_swarm_communication("group")
+    assert group_result["pattern"] == "group"
+    assert group_result["success"] is True
+    
+    # Test invalid pattern
+    with pytest.raises(KeyError):
+        await coordination_agent.handle_swarm_communication("invalid_pattern")
+
+@pytest.mark.asyncio
+async def test_swarm_resource_management(coordination_agent):
+    """Test swarm resource management for different swarm types."""
+    # Test MajorityVoting resources
+    voting_result = await coordination_agent.manage_swarm_resources("MajorityVoting")
+    assert voting_result["type"] == "MajorityVoting"
+    assert "voting_resources" in voting_result
+    
+    # Test RoundRobin resources
+    roundrobin_result = await coordination_agent.manage_swarm_resources("RoundRobin")
+    assert roundrobin_result["type"] == "RoundRobin"
+    assert "rotation_schedule" in roundrobin_result
+    
+    # Test GraphWorkflow resources
+    workflow_result = await coordination_agent.manage_swarm_resources("GraphWorkflow")
+    assert workflow_result["type"] == "GraphWorkflow"
+    assert "workflow_resources" in workflow_result
+    
+    # Test invalid swarm type
+    with pytest.raises(KeyError):
+        await coordination_agent.manage_swarm_resources("invalid_type")
+
+@pytest.mark.asyncio
+async def test_swarm_metrics_tracking(coordination_agent):
+    """Test swarm metrics tracking and analysis."""
+    metrics = await coordination_agent.track_swarm_metrics()
+    
+    # Verify metric categories
+    assert "communication_overhead" in metrics
+    assert "resource_utilization" in metrics
+    assert "task_completion_rate" in metrics
+    assert "swarm_health" in metrics
+    
+    # Verify metric values
+    assert isinstance(metrics["communication_overhead"], (int, float))
+    assert isinstance(metrics["resource_utilization"], (int, float))
+    assert isinstance(metrics["task_completion_rate"], (int, float))
+    assert isinstance(metrics["swarm_health"], (int, float))
 
 @pytest.mark.asyncio
 async def test_process_with_coordination_concepts(coordination_agent, mock_memory_system):
@@ -117,6 +187,12 @@ async def test_process_with_coordination_concepts(coordination_agent, mock_memor
             },
             {
                 "domain_relevance": 0.9
+            },
+            {
+                "type": "swarm_operation",
+                "architecture": "hierarchical",
+                "role": "coordinator",
+                "status": "active"
             }
         ]
     }
@@ -135,6 +211,11 @@ async def test_process_with_coordination_concepts(coordination_agent, mock_memor
     
     # Verify desire updates
     assert "Address resource_reallocation" in coordination_agent.desires
+    
+    # Verify swarm operation tracking
+    assert "swarm_operations" in response.metadata
+    assert response.metadata["swarm_operations"]["architecture"] == "hierarchical"
+    assert response.metadata["swarm_operations"]["role"] == "coordinator"
 
 @pytest.mark.asyncio
 async def test_coordinate_and_store(coordination_agent, mock_memory_system):
@@ -146,6 +227,10 @@ async def test_coordinate_and_store(coordination_agent, mock_memory_system):
                 "name": "Test Group",
                 "status": "active"
             }
+        },
+        "swarm": {
+            "architecture": "hierarchical",
+            "type": "MajorityVoting"
         }
     }
     
@@ -162,12 +247,17 @@ async def test_coordinate_and_store(coordination_agent, mock_memory_system):
     # Verify state updates
     assert "group1" in coordination_agent.active_groups
     assert coordination_agent.active_groups["group1"]["status"] == "active"
+    
+    # Verify swarm metadata
+    assert "swarm_operations" in result.metadata
+    assert result.metadata["swarm_operations"]["architecture"] == "hierarchical"
+    assert result.metadata["swarm_operations"]["type"] == "MajorityVoting"
 
 @pytest.mark.asyncio
 async def test_coordination_with_resource_conflicts(coordination_agent, mock_memory_system):
     """Test coordination handling with resource conflicts."""
-    # Mock coordination result with conflicts
-    mock_memory_system.llm.analyze.return_value = {
+    # Configure mock LLM response with resource conflicts
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
         "groups": {
             "group1": {"status": "active"}
         },
@@ -186,17 +276,25 @@ async def test_coordination_with_resource_conflicts(coordination_agent, mock_mem
                 "severity": "medium",
                 "description": "Resource overallocation"
             }
-        ]
-    }
+        ],
+        "swarm": {
+            "type": "MajorityVoting",
+            "voting_required": True,
+            "status": "conflict_resolution"
+        }
+    })
     
     result = await coordination_agent.coordinate_and_store({"type": "test"})
     
     # Verify conflict reflection
-    reflection_calls = mock_memory_system.semantic.store.record_reflection.call_args_list
-    assert any(
-        "Resource conflicts detected" in call.args[0]
-        for call in reflection_calls
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Resource conflicts detected in professional domain",
+        domain="professional"
     )
+    
+    # Verify swarm voting trigger
+    assert result.metadata["swarm_operations"]["voting_required"] is True
+    assert result.metadata["swarm_operations"]["status"] == "conflict_resolution"
 
 @pytest.mark.asyncio
 async def test_domain_validation(coordination_agent, mock_memory_system):
@@ -239,7 +337,13 @@ async def test_coordination_state_updates(coordination_agent):
                 "assigned_to": ["agent1"]
             }
         },
-        metadata={},
+        metadata={
+            "swarm_operations": {
+                "architecture": "hierarchical",
+                "type": "MajorityVoting",
+                "role": "coordinator"
+            }
+        },
         issues=[]
     )
     
@@ -259,12 +363,16 @@ async def test_coordination_state_updates(coordination_agent):
     
     # Verify dependencies
     assert coordination_agent.task_dependencies["group1"] == {"group2"}
+    
+    # Verify swarm state
+    assert coordination_agent._configuration["swarm_architecture"] == "hierarchical"
+    assert coordination_agent._configuration["swarm_role"] == "coordinator"
 
 @pytest.mark.asyncio
 async def test_error_handling(coordination_agent, mock_memory_system):
     """Test error handling during coordination."""
-    # Make LLM raise an error
-    mock_memory_system.llm.analyze.side_effect = Exception("Test error")
+    # Configure mock LLM to raise an error
+    mock_memory_system.llm.analyze = AsyncMock(side_effect=Exception("Test error"))
     
     result = await coordination_agent.coordinate_and_store({"type": "test"})
     
@@ -275,10 +383,14 @@ async def test_error_handling(coordination_agent, mock_memory_system):
     assert "error" in result.metadata
     
     # Verify error reflection
-    mock_memory_system.semantic.store.record_reflection.assert_called_with(
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
         "Coordination failed - issues detected in professional domain",
         domain="professional"
     )
+    
+    # Verify swarm error handling
+    assert "swarm_operations" in result.metadata
+    assert result.metadata["swarm_operations"]["status"] == "error"
 
 @pytest.mark.asyncio
 async def test_coordination_with_empty_groups(coordination_agent, mock_memory_system):
@@ -288,7 +400,12 @@ async def test_coordination_with_empty_groups(coordination_agent, mock_memory_sy
         "groups": {},
         "assignments": {},
         "resources": {},
-        "issues": []
+        "issues": [],
+        "swarm": {
+            "architecture": "hierarchical",
+            "type": "MajorityVoting",
+            "status": "inactive"
+        }
     }
     
     result = await coordination_agent.coordinate_and_store({"type": "test"})
@@ -299,6 +416,9 @@ async def test_coordination_with_empty_groups(coordination_agent, mock_memory_sy
     assert not result.groups
     assert not result.assignments
     assert not result.resources
+    
+    # Verify swarm status
+    assert result.metadata["swarm_operations"]["status"] == "inactive"
 
 if __name__ == "__main__":
     pytest.main([__file__])

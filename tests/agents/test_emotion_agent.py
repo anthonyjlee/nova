@@ -8,12 +8,13 @@ from src.nia.agents.specialized.emotion_agent import EmotionAgent
 from src.nia.nova.core.emotion import EmotionResult
 
 @pytest.fixture
-def mock_memory_system():
-    """Create a mock memory system."""
-    memory = MagicMock()
-    # Mock LLM
-    memory.llm = MagicMock()
-    memory.llm.analyze = AsyncMock(return_value={
+def emotion_agent(mock_memory_system, mock_world, base_agent_config, request):
+    """Create an EmotionAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestEmotion_{request.node.name}"
+    
+    # Update mock memory system for emotion agent
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
         "emotions": [
             {
                 "name": "joy",
@@ -37,33 +38,21 @@ def mock_memory_system():
         }
     })
     
-    # Mock semantic store
-    memory.semantic = MagicMock()
-    memory.semantic.store = MagicMock()
-    memory.semantic.store.record_reflection = AsyncMock()
-    memory.semantic.store.get_domain_access = AsyncMock(return_value=True)
+    # Configure domain access
+    mock_memory_system.semantic.store.get_domain_access = AsyncMock(
+        side_effect=lambda agent, domain: domain == "professional"
+    )
     
-    # Mock episodic store
-    memory.episodic = MagicMock()
-    memory.episodic.store = MagicMock()
+    # Create agent with updated config
+    config = base_agent_config.copy()
+    config["name"] = agent_name
+    config["domain"] = "professional"
     
-    return memory
-
-@pytest.fixture
-def mock_world():
-    """Create a mock world environment."""
-    return MagicMock()
-
-@pytest.fixture
-def emotion_agent(mock_memory_system, mock_world, request):
-    """Create an EmotionAgent instance with mock dependencies."""
-    # Use test name to create unique agent name
-    agent_name = f"TestEmotion_{request.node.name}"
     return EmotionAgent(
         name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
-        domain="professional"
+        domain=config["domain"]
     )
 
 @pytest.mark.asyncio
@@ -179,23 +168,57 @@ async def test_reflection_recording(emotion_agent, mock_memory_system):
     """Test reflection recording with domain awareness."""
     content = {"content": "test"}
     
-    # Force high confidence result
-    mock_memory_system.llm.analyze.return_value["confidence"] = 0.9
+    # Configure mock LLM response for high confidence case
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
+        "emotions": [
+            {
+                "name": "joy",
+                "type": "emotion",
+                "description": "positive",
+                "intensity": 0.8,
+                "confidence": 0.9,
+                "domain_appropriateness": 0.9
+            }
+        ],
+        "context": {
+            "triggers": ["achievement"],
+            "background": "project success"
+        }
+    })
     
     result = await emotion_agent.analyze_and_store(content)
     
     # Verify high confidence reflection
-    reflection_calls = mock_memory_system.semantic.store.record_reflection.call_args_list
-    assert any("High confidence" in str(call) for call in reflection_calls)
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "High confidence emotion analysis completed in professional domain",
+        domain="professional"
+    )
     
-    # Test low confidence case
-    mock_memory_system.llm.analyze.return_value["confidence"] = 0.2
+    # Configure mock LLM response for low confidence case
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
+        "emotions": [
+            {
+                "name": "uncertainty",
+                "type": "emotion",
+                "description": "unclear",
+                "intensity": 0.3,
+                "confidence": 0.2,
+                "domain_appropriateness": 0.5
+            }
+        ],
+        "context": {
+            "triggers": ["ambiguity"],
+            "background": "unclear situation"
+        }
+    })
     
     result = await emotion_agent.analyze_and_store(content)
     
     # Verify low confidence reflection
-    reflection_calls = mock_memory_system.semantic.store.record_reflection.call_args_list
-    assert any("Low confidence" in str(call) for call in reflection_calls)
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Low confidence emotion analysis in professional domain",
+        domain="professional"
+    )
 
 @pytest.mark.asyncio
 async def test_emotion_updates(emotion_agent):
@@ -223,14 +246,31 @@ async def test_intensity_reflection(emotion_agent, mock_memory_system):
     """Test reflection recording for high intensity emotions."""
     content = {"content": "test"}
     
-    # Force high intensity result
-    mock_memory_system.llm.analyze.return_value["emotions"][0]["intensity"] = 0.9
+    # Configure mock LLM response with high intensity emotion
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
+        "emotions": [
+            {
+                "name": "excitement",
+                "type": "emotion",
+                "description": "very positive",
+                "intensity": 0.95,
+                "confidence": 0.9,
+                "domain_appropriateness": 0.9
+            }
+        ],
+        "context": {
+            "triggers": ["major achievement"],
+            "background": "significant success"
+        }
+    })
     
     result = await emotion_agent.analyze_and_store(content)
     
     # Verify intensity reflection
-    reflection_calls = mock_memory_system.semantic.store.record_reflection.call_args_list
-    assert any("High intensity" in str(call) for call in reflection_calls)
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "High intensity emotions detected in professional domain",
+        domain="professional"
+    )
 
 if __name__ == "__main__":
     pytest.main([__file__])

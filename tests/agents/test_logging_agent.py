@@ -332,24 +332,37 @@ async def test_process_and_store_with_enhancements(logging_agent, mock_memory_sy
 @pytest.mark.asyncio
 async def test_format_template_application(logging_agent, mock_memory_system):
     """Test format template application and reflection."""
-    # Set up test template
+    # Set up test template with detailed configuration
     templates = {
         "template1": {
             "type": "static",
             "pattern": ".*error.*",
             "format": {
-                "timestamp_format": "ISO8601"
+                "timestamp_format": "ISO8601",
+                "level_format": "uppercase",
+                "message_format": "structured",
+                "context_format": "json"
             },
-            "needs_update": True
+            "needs_update": True,
+            "metadata": {
+                "confidence": 0.9,
+                "domain_relevance": 0.9,
+                "importance": "high",
+                "impact": "significant"
+            }
         }
     }
     
     logging_agent._update_format_templates(templates)
     
-    # Apply template to log
+    # Apply template to log with detailed content
     content = {
         "log_id": "log1",
-        "message": "error occurred"
+        "message": "error occurred",
+        "metadata": {
+            "source": "test_service",
+            "confidence": 0.9
+        }
     }
     
     await logging_agent._update_log_state("log1", content)
@@ -357,30 +370,85 @@ async def test_format_template_application(logging_agent, mock_memory_system):
     # Verify template application
     log_state = logging_agent.active_logs["log1"]
     assert log_state["metadata"]["timestamp_format"] == "ISO8601"
+    assert log_state["metadata"]["level_format"] == "uppercase"
+    assert log_state["metadata"]["message_format"] == "structured"
+    assert log_state["metadata"]["context_format"] == "json"
     
-    # Verify reflection was recorded
-    mock_memory_system.semantic.store.record_reflection.assert_called_with(
-        "Format template template1 applied to log1 needs update",
+    # Verify application reflection
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Format template template1 applied to log1 needs update in professional domain",
+        domain="professional"
+    )
+    
+    # Verify confidence reflection
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "High confidence format template results in professional domain",
+        domain="professional"
+    )
+    
+    # Verify impact reflection
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Significant format impact identified in professional domain",
+        domain="professional"
+    )
+    
+    # Verify update reflection
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Format template requires optimization in professional domain",
         domain="professional"
     )
 
 @pytest.mark.asyncio
 async def test_error_handling(logging_agent, mock_memory_system):
     """Test error handling during logging."""
-    # Make LLM raise an error
-    mock_memory_system.llm.analyze.side_effect = Exception("Test error")
+    content = {
+        "log_id": "log1",
+        "log_type": "application",
+        "log_data": {
+            "level": "error",
+            "message": "Test error message",
+            "context": {"service": "test_service"}
+        },
+        "metadata": {
+            "importance": "high",
+            "impact": "critical",
+            "urgency": "immediate"
+        }
+    }
     
-    result = await logging_agent.process_and_store({"type": "test"}, "application")
+    # Configure mock LLM to raise an error
+    mock_memory_system.llm.analyze = AsyncMock(side_effect=Exception("Test error"))
+    
+    result = await logging_agent.process_and_store(content, "application")
     
     # Verify error handling
     assert isinstance(result, LoggingResult)
     assert result.is_valid is False
     assert len(result.issues) == 1
     assert "error" in result.metadata
+    assert result.metadata["error_type"] == "logging_failure"
     
     # Verify error reflection
-    mock_memory_system.semantic.store.record_reflection.assert_called_with(
-        "Logging failed - issues detected in professional domain",
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Logging failed - error encountered in professional domain",
+        domain="professional"
+    )
+    
+    # Verify recovery reflection
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Logging needs retry with adjusted parameters in professional domain",
+        domain="professional"
+    )
+    
+    # Verify impact reflection
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Logging error impacts data quality in professional domain",
+        domain="professional"
+    )
+    
+    # Verify format reflection
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Log format needs verification in professional domain",
         domain="professional"
     )
 

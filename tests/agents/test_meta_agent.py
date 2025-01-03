@@ -8,12 +8,13 @@ from src.nia.agents.specialized.meta_agent import MetaAgent
 from src.nia.nova.core.meta import MetaResult
 
 @pytest.fixture
-def mock_memory_system():
-    """Create a mock memory system."""
-    memory = MagicMock()
-    # Mock LLM
-    memory.llm = MagicMock()
-    memory.llm.analyze = AsyncMock(return_value={
+def meta_agent(mock_memory_system, mock_world, base_agent_config, request):
+    """Create a MetaAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestMeta_{request.node.name}"
+    
+    # Update mock memory system for meta agent
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
         "response": "Synthesized response",
         "concepts": [
             {
@@ -43,28 +44,14 @@ def mock_memory_system():
         }
     })
     
-    # Mock semantic store
-    memory.semantic = MagicMock()
-    memory.semantic.store = MagicMock()
-    memory.semantic.store.record_reflection = AsyncMock()
-    memory.semantic.store.get_domain_access = AsyncMock(return_value=True)
+    # Configure domain access
+    mock_memory_system.semantic.store.get_domain_access = AsyncMock(
+        side_effect=lambda agent, domain: domain == "professional"
+    )
     
-    # Mock episodic store
-    memory.episodic = MagicMock()
-    memory.episodic.store = MagicMock()
-    
-    return memory
-
-@pytest.fixture
-def mock_world():
-    """Create a mock world environment."""
-    return MagicMock()
-
-@pytest.fixture
-def mock_agent():
-    """Create a mock specialized agent."""
-    agent = MagicMock()
-    agent.process = AsyncMock(return_value=MagicMock(
+    # Create mock specialized agent
+    mock_agent = MagicMock()
+    mock_agent.process = AsyncMock(return_value=MagicMock(
         concepts=[{"name": "AgentConcept", "type": "test"}],
         key_points=["Agent key point"],
         confidence=0.7,
@@ -76,8 +63,8 @@ def mock_agent():
             }
         }
     ))
-    agent.get_domain_access = AsyncMock(return_value=True)
-    agent.get_attributes = MagicMock(return_value={
+    mock_agent.get_domain_access = AsyncMock(return_value=True)
+    mock_agent.get_attributes = MagicMock(return_value={
         "capabilities": {
             "swarm": {
                 "architectures": ["hierarchical", "parallel"],
@@ -85,19 +72,18 @@ def mock_agent():
             }
         }
     })
-    return agent
-
-@pytest.fixture
-def meta_agent(mock_memory_system, mock_world, request):
-    """Create a MetaAgent instance with mock dependencies."""
-    # Use test name to create unique agent name
-    agent_name = f"TestMeta_{request.node.name}"
+    
+    # Create agent with updated config
+    config = base_agent_config.copy()
+    config["name"] = agent_name
+    config["domain"] = "professional"
+    
     return MetaAgent(
         name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
-        agents={"test_agent": mock_agent()},
-        domain="professional"
+        agents={"test_agent": mock_agent},
+        domain=config["domain"]
     )
 
 @pytest.mark.asyncio
@@ -151,8 +137,24 @@ async def test_swarm_decision_making(meta_agent, mock_memory_system):
     assert len(result["voting_summary"]) == 3
 
 @pytest.mark.asyncio
-async def test_swarm_strategy_adaptation(meta_agent):
+async def test_swarm_strategy_adaptation(meta_agent, mock_memory_system):
     """Test swarm strategy adaptation."""
+    # Configure initial strategy selection
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
+        "strategy": {
+            "architecture": "hierarchical",
+            "type": "MajorityVoting",
+            "communication_pattern": "hub_and_spoke",
+            "confidence": 0.9,
+            "domain_relevance": 0.9
+        },
+        "analysis": {
+            "task_fit": "high",
+            "resource_efficiency": "medium",
+            "scalability": "good"
+        }
+    })
+    
     # Test strategy selection
     strategy = await meta_agent.select_swarm_strategy({
         "task_complexity": "high",
@@ -161,20 +163,64 @@ async def test_swarm_strategy_adaptation(meta_agent):
     })
     
     # Verify strategy selection
-    assert strategy["architecture"] in ["hierarchical", "parallel", "mesh"]
-    assert strategy["type"] in ["MajorityVoting", "RoundRobin", "GraphWorkflow"]
-    assert "communication_pattern" in strategy
+    assert strategy["architecture"] == "hierarchical"
+    assert strategy["type"] == "MajorityVoting"
+    assert strategy["communication_pattern"] == "hub_and_spoke"
+    
+    # Verify strategy reflection
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Selected optimal swarm strategy in professional domain",
+        domain="professional"
+    )
+    
+    # Configure adaptation analysis
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
+        "strategy": {
+            "architecture": "mesh",
+            "type": "GraphWorkflow",
+            "communication_pattern": "peer_to_peer",
+            "confidence": 0.9,
+            "domain_relevance": 0.9
+        },
+        "adaptation": {
+            "reason": "communication_bottleneck",
+            "impact": "high",
+            "urgency": "medium"
+        }
+    })
     
     # Test strategy adaptation
     adapted = await meta_agent.adapt_swarm_strategy(
         strategy,
-        {"performance": 0.6, "bottlenecks": ["communication"]}
+        {
+            "performance": 0.6,
+            "bottlenecks": ["communication"],
+            "resource_usage": "high"
+        }
     )
     
     # Verify adaptation
-    assert adapted["architecture"] != strategy["architecture"]
+    assert adapted["architecture"] == "mesh"
+    assert adapted["type"] == "GraphWorkflow"
+    assert adapted["communication_pattern"] == "peer_to_peer"
     assert "adaptation_reason" in adapted
     assert "previous_strategy" in adapted
+    
+    # Verify adaptation reflections
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Swarm strategy adapted for performance optimization in professional domain",
+        domain="professional"
+    )
+    
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Communication pattern transition initiated in professional domain",
+        domain="professional"
+    )
+    
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Resource usage optimization needed in professional domain",
+        domain="professional"
+    )
 
 @pytest.mark.asyncio
 async def test_process_content(meta_agent, mock_memory_system):
@@ -278,25 +324,53 @@ async def test_orchestrate_with_different_domains(meta_agent):
 @pytest.mark.asyncio
 async def test_error_handling(meta_agent, mock_memory_system):
     """Test error handling during orchestration."""
-    # Make LLM raise an error
-    mock_memory_system.llm.analyze.side_effect = Exception("Test error")
-    
-    result = await meta_agent.orchestrate_and_store({
+    content = {
         "content": "Test content",
         "swarm": {
             "architecture": "hierarchical",
-            "type": "MajorityVoting"
+            "type": "MajorityVoting",
+            "agents": ["agent1", "agent2"]
         }
-    })
+    }
+    
+    # Configure mock LLM to raise an error
+    mock_memory_system.llm.analyze = AsyncMock(side_effect=Exception("Test error"))
+    
+    result = await meta_agent.orchestrate_and_store(content)
     
     # Verify error handling
     assert isinstance(result, MetaResult)
     assert result.confidence == 0.0
     assert "error" in result.metadata
     
+    # Verify error reflection
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Orchestration failed - error encountered in professional domain",
+        domain="professional"
+    )
+    
+    # Verify recovery reflection
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Orchestration needs retry with adjusted parameters in professional domain",
+        domain="professional"
+    )
+    
     # Verify swarm error handling
     assert "swarm_operations" in result.metadata
     assert result.metadata["swarm_operations"]["status"] == "error"
+    assert result.metadata["swarm_operations"]["error_type"] == "orchestration_failure"
+    
+    # Verify swarm error reflection
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Swarm operation failed in professional domain",
+        domain="professional"
+    )
+    
+    # Verify swarm recovery reflection
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Swarm needs reconfiguration in professional domain",
+        domain="professional"
+    )
 
 @pytest.mark.asyncio
 async def test_reflection_recording(meta_agent, mock_memory_system):
@@ -309,26 +383,65 @@ async def test_reflection_recording(meta_agent, mock_memory_system):
         }
     }
     
-    # Force high confidence result
-    mock_memory_system.llm.analyze.return_value["confidence"] = 0.9
+    # Configure mock LLM response for high confidence case
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
+        "response": "Synthesized response",
+        "concepts": [
+            {
+                "name": "TestConcept",
+                "type": "synthesis_quality",
+                "description": "excellent",
+                "confidence": 0.9
+            }
+        ],
+        "key_points": ["Test point"],
+        "swarm_operations": {
+            "architecture": "hierarchical",
+            "type": "MajorityVoting",
+            "status": "active"
+        }
+    })
     
     result = await meta_agent.orchestrate_and_store(content)
     
     # Verify high confidence reflection
-    reflection_calls = mock_memory_system.semantic.store.record_reflection.call_args_list
-    assert any("High confidence" in str(call) for call in reflection_calls)
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "High confidence orchestration completed in professional domain",
+        domain="professional"
+    )
     
-    # Test low confidence case
-    mock_memory_system.llm.analyze.return_value["confidence"] = 0.2
+    # Configure mock LLM response for low confidence case
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
+        "response": "Uncertain response",
+        "concepts": [
+            {
+                "name": "TestConcept",
+                "type": "synthesis_quality",
+                "description": "poor",
+                "confidence": 0.2
+            }
+        ],
+        "key_points": ["Uncertain point"],
+        "swarm_operations": {
+            "architecture": "hierarchical",
+            "type": "MajorityVoting",
+            "status": "uncertain"
+        }
+    })
     
     result = await meta_agent.orchestrate_and_store(content)
     
     # Verify low confidence reflection
-    reflection_calls = mock_memory_system.semantic.store.record_reflection.call_args_list
-    assert any("Low confidence" in str(call) for call in reflection_calls)
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Low confidence orchestration in professional domain",
+        domain="professional"
+    )
     
-    # Verify swarm reflections
-    assert any("swarm architecture" in str(call).lower() for call in reflection_calls)
+    # Verify swarm reflection
+    mock_memory_system.semantic.store.record_reflection.assert_any_call(
+        "Swarm architecture transition in professional domain",
+        domain="professional"
+    )
 
 @pytest.mark.asyncio
 async def test_emotion_updates(meta_agent):
