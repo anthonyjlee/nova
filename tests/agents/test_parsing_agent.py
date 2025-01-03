@@ -7,10 +7,16 @@ from datetime import datetime
 from src.nia.agents.specialized.parsing_agent import ParsingAgent
 from src.nia.nova.core.parsing import ParseResult
 
+@pytest.fixture(autouse=True)
+def clear_agent_registry():
+    """Clear TinyTroupe agent registry between tests."""
+    from tinytroupe.agent import TinyPerson
+    TinyPerson.all_agents.clear()
+
 @pytest.fixture
 def mock_memory_system():
     """Create a mock memory system."""
-    memory = MagicMock()
+    memory = AsyncMock()
     # Mock LLM
     memory.llm = MagicMock()
     memory.llm.analyze = AsyncMock(return_value={
@@ -56,14 +62,15 @@ def mock_memory_system():
     })
     
     # Mock semantic store
-    memory.semantic = MagicMock()
-    memory.semantic.store = MagicMock()
+    memory.semantic = AsyncMock()
+    memory.semantic.store = AsyncMock()
     memory.semantic.store.record_reflection = AsyncMock()
     memory.semantic.store.get_domain_access = AsyncMock(return_value=True)
+    memory.semantic.store.store_memory = AsyncMock()
     
     # Mock episodic store
-    memory.episodic = MagicMock()
-    memory.episodic.store = MagicMock()
+    memory.episodic = AsyncMock()
+    memory.episodic.store = AsyncMock()
     memory.episodic.store.search = AsyncMock(return_value=[
         {
             "content": {"content": "Similar parse"},
@@ -71,6 +78,7 @@ def mock_memory_system():
             "timestamp": "2024-01-01T00:00:00Z"
         }
     ])
+    memory.episodic.store.store_memory = AsyncMock()
     
     return memory
 
@@ -80,10 +88,12 @@ def mock_world():
     return MagicMock()
 
 @pytest.fixture
-def parsing_agent(mock_memory_system, mock_world):
+def parsing_agent(mock_memory_system, mock_world, request):
     """Create a ParsingAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestParsing_{request.node.name}"
     return ParsingAgent(
-        name="TestParsing",
+        name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
         domain="professional"
@@ -92,7 +102,7 @@ def parsing_agent(mock_memory_system, mock_world):
 @pytest.mark.asyncio
 async def test_initialization(parsing_agent):
     """Test agent initialization."""
-    assert parsing_agent.name == "TestParsing"
+    assert "TestParsing" in parsing_agent.name
     assert parsing_agent.domain == "professional"
     assert parsing_agent.agent_type == "parsing"
     
@@ -106,7 +116,7 @@ async def test_initialization(parsing_agent):
     
     # Verify parsing-specific attributes
     assert "Extract structured information" in attributes["desires"]
-    assert "towards_content" in attributes["emotions"]
+    assert attributes["emotions"]["towards_content"] == "focused"
     assert "text_parsing" in attributes["capabilities"]
 
 @pytest.mark.asyncio
@@ -140,8 +150,8 @@ async def test_parse_and_store(parsing_agent, mock_memory_system):
     assert result.confidence > 0
     assert result.structure is not None
     
-    # Verify memory storage
-    assert hasattr(parsing_agent, "store_memory")
+    # Verify memory storage was attempted
+    mock_memory_system.episodic.store.store_memory.assert_called_once()
     
     # Verify reflection was recorded (high confidence case)
     if result.confidence > 0.8:
@@ -189,8 +199,10 @@ async def test_error_handling(parsing_agent, mock_memory_system):
     # Verify error handling
     assert isinstance(result, ParseResult)
     assert result.confidence == 0.0
-    assert len(result.concepts) == 0
-    assert len(result.key_points) == 0
+    assert len(result.concepts) == 1
+    assert result.concepts[0]["type"] == "error"
+    assert len(result.key_points) == 1
+    assert result.key_points[0]["type"] == "error"
     assert "error" in result.metadata
 
 @pytest.mark.asyncio
@@ -199,22 +211,32 @@ async def test_reflection_recording(parsing_agent, mock_memory_system):
     text = "test content"
     
     # Force high confidence result
-    mock_memory_system.llm.analyze.return_value["confidence"] = 0.9
+    mock_memory_system.llm.analyze.return_value = {
+        "concepts": [{"type": "concept", "description": "positive"}],
+        "key_points": [],
+        "confidence": 0.9,
+        "structure": {}
+    }
     
     result = await parsing_agent.parse_and_store(text)
     
     # Verify high confidence reflection
     reflection_calls = mock_memory_system.semantic.store.record_reflection.call_args_list
-    assert any("High confidence" in str(call) for call in reflection_calls)
+    assert any("High confidence" in str(call.args[0]) for call in reflection_calls)
     
     # Test low confidence case
-    mock_memory_system.llm.analyze.return_value["confidence"] = 0.2
+    mock_memory_system.llm.analyze.return_value = {
+        "concepts": [{"type": "concept", "description": "negative"}],
+        "key_points": [],
+        "confidence": 0.2,
+        "structure": {}
+    }
     
     result = await parsing_agent.parse_and_store(text)
     
     # Verify low confidence reflection
     reflection_calls = mock_memory_system.semantic.store.record_reflection.call_args_list
-    assert any("Low confidence" in str(call) for call in reflection_calls)
+    assert any("Low confidence" in str(call.args[0]) for call in reflection_calls)
 
 @pytest.mark.asyncio
 async def test_emotion_updates(parsing_agent):

@@ -62,10 +62,12 @@ def mock_agent():
     return agent
 
 @pytest.fixture
-def meta_agent(mock_memory_system, mock_world):
+def meta_agent(mock_memory_system, mock_world, request):
     """Create a MetaAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestMeta_{request.node.name}"
     return MetaAgent(
-        name="TestMeta",
+        name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
         agents={"test_agent": mock_agent()},
@@ -75,7 +77,7 @@ def meta_agent(mock_memory_system, mock_world):
 @pytest.mark.asyncio
 async def test_initialization(meta_agent):
     """Test agent initialization."""
-    assert meta_agent.name == "TestMeta"
+    assert "TestMeta" in meta_agent.name
     assert meta_agent.domain == "professional"
     assert meta_agent.agent_type == "meta"
     

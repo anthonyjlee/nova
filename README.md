@@ -4,6 +4,29 @@ NIA is a sophisticated multi-agent system built on TinyTroupe that combines meta
 
 ## System Overview
 
+### Configuration System
+
+The system uses a centralized configuration system for all agents:
+- Unified prompt templates and responsibilities
+- Domain-aware configuration validation
+- Standardized agent initialization
+- Centralized configuration management
+
+Key components:
+- `BASE_AGENT_TEMPLATE`: Core template all agents extend
+- `AGENT_RESPONSIBILITIES`: Role-specific responsibilities
+- Configuration validation with domain boundaries
+- Standardized error handling
+
+Example agent configuration:
+```python
+config = {
+    "name": "validation_agent",
+    "agent_type": "validation",
+    "domain": "professional"
+}
+```
+
 ### Nova Orchestrator
 The core orchestration system that combines metacognition with specialized agents to:
 - Build and maintain a self-model in Neo4j for reflection and adaptation

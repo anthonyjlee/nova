@@ -73,10 +73,12 @@ def mock_world():
     return MagicMock()
 
 @pytest.fixture
-def integration_agent(mock_memory_system, mock_world):
+def integration_agent(mock_memory_system, mock_world, request):
     """Create an IntegrationAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestIntegration_{request.node.name}"
     return IntegrationAgent(
-        name="TestIntegration",
+        name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
         domain="professional"
@@ -85,7 +87,7 @@ def integration_agent(mock_memory_system, mock_world):
 @pytest.mark.asyncio
 async def test_initialization(integration_agent):
     """Test agent initialization."""
-    assert integration_agent.name == "TestIntegration"
+    assert "TestIntegration" in integration_agent.name
     assert integration_agent.domain == "professional"
     assert integration_agent.agent_type == "integration"
     

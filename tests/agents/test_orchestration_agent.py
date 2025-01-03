@@ -69,10 +69,12 @@ def mock_world():
     return world
 
 @pytest.fixture
-def orchestration_agent(mock_memory_system, mock_world):
+def orchestration_agent(mock_memory_system, mock_world, request):
     """Create an OrchestrationAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestOrchestration_{request.node.name}"
     return OrchestrationAgent(
-        name="TestOrchestration",
+        name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
         domain="professional"
@@ -81,7 +83,7 @@ def orchestration_agent(mock_memory_system, mock_world):
 @pytest.mark.asyncio
 async def test_initialization(orchestration_agent):
     """Test agent initialization with enhanced attributes."""
-    assert orchestration_agent.name == "TestOrchestration"
+    assert "TestOrchestration" in orchestration_agent.name
     assert orchestration_agent.domain == "professional"
     assert orchestration_agent.agent_type == "orchestration"
     

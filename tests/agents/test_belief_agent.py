@@ -41,10 +41,13 @@ def mock_memory_system():
     memory.semantic.store = MagicMock()
     memory.semantic.store.record_reflection = AsyncMock()
     memory.semantic.store.get_domain_access = AsyncMock(return_value=True)
+    memory.semantic.store.store_concept = AsyncMock()
+    memory.semantic.store.store_memory = AsyncMock()
     
     # Mock episodic store
     memory.episodic = MagicMock()
     memory.episodic.store = MagicMock()
+    memory.episodic.store.store = AsyncMock()
     
     return memory
 
@@ -54,10 +57,12 @@ def mock_world():
     return MagicMock()
 
 @pytest.fixture
-def belief_agent(mock_memory_system, mock_world):
+def belief_agent(mock_memory_system, mock_world, request):
     """Create a BeliefAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestBelief_{request.node.name}"
     return BeliefAgent(
-        name="TestBelief",
+        name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
         domain="professional"
@@ -66,7 +71,7 @@ def belief_agent(mock_memory_system, mock_world):
 @pytest.mark.asyncio
 async def test_initialization(belief_agent):
     """Test agent initialization."""
-    assert belief_agent.name == "TestBelief"
+    assert "TestBelief" in belief_agent.name
     assert belief_agent.domain == "professional"
     assert belief_agent.agent_type == "belief"
     
@@ -129,27 +134,42 @@ async def test_analyze_and_store(belief_agent, mock_memory_system):
 @pytest.mark.asyncio
 async def test_domain_access_validation(belief_agent, mock_memory_system):
     """Test domain access validation."""
-    # Test allowed domain
-    await belief_agent.validate_domain_access("professional")
+    # Mock domain access based on domain
+    async def mock_domain_access(agent_name, domain):
+        if domain == "professional":
+            return False  # Deny professional domain for test
+        return True  # Allow other domains
+        
+    mock_memory_system.semantic.store.get_domain_access = AsyncMock(side_effect=mock_domain_access)
     
     # Test denied domain
-    mock_memory_system.semantic.store.get_domain_access.return_value = False
     with pytest.raises(PermissionError):
-        await belief_agent.validate_domain_access("restricted")
+        await belief_agent.validate_domain_access("professional")
+        
+    # Test allowed domain
+    await belief_agent.validate_domain_access("personal")
 
 @pytest.mark.asyncio
 async def test_analyze_with_different_domains(belief_agent):
     """Test analysis with different domain configurations."""
     content = {"content": "test"}
     
-    # Test professional domain
-    prof_result = await belief_agent.analyze_and_store(
-        content,
-        target_domain="professional"
-    )
-    assert prof_result.metadata["domain"] == "professional"
+    # Mock domain access
+    async def mock_domain_access(agent_name, domain):
+        if domain == "professional":
+            return False
+        return True
+        
+    belief_agent.memory_system.semantic.store.get_domain_access = AsyncMock(side_effect=mock_domain_access)
     
-    # Test personal domain (assuming access)
+    # Test professional domain (should fail)
+    with pytest.raises(PermissionError):
+        await belief_agent.analyze_and_store(
+            content,
+            target_domain="professional"
+        )
+    
+    # Test personal domain (should succeed)
     pers_result = await belief_agent.analyze_and_store(
         content,
         target_domain="personal"

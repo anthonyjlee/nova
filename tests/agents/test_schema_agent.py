@@ -80,10 +80,12 @@ def mock_world():
     return MagicMock()
 
 @pytest.fixture
-def schema_agent(mock_memory_system, mock_world):
+def schema_agent(mock_memory_system, mock_world, request):
     """Create a SchemaAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestSchema_{request.node.name}"
     return SchemaAgent(
-        name="TestSchema",
+        name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
         domain="professional"
@@ -92,7 +94,7 @@ def schema_agent(mock_memory_system, mock_world):
 @pytest.mark.asyncio
 async def test_initialization(schema_agent):
     """Test agent initialization."""
-    assert schema_agent.name == "TestSchema"
+    assert "TestSchema" in schema_agent.name
     assert schema_agent.domain == "professional"
     assert schema_agent.agent_type == "schema"
     

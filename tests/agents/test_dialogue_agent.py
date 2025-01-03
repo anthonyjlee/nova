@@ -61,10 +61,12 @@ def mock_world():
     return world
 
 @pytest.fixture
-def dialogue_agent(mock_memory_system, mock_world):
+def dialogue_agent(mock_memory_system, mock_world, request):
     """Create a DialogueAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestDialogue_{request.node.name}"
     return DialogueAgent(
-        name="TestDialogue",
+        name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
         domain="professional"
@@ -73,7 +75,7 @@ def dialogue_agent(mock_memory_system, mock_world):
 @pytest.mark.asyncio
 async def test_initialization(dialogue_agent):
     """Test agent initialization with enhanced attributes."""
-    assert dialogue_agent.name == "TestDialogue"
+    assert "TestDialogue" in dialogue_agent.name
     assert dialogue_agent.domain == "professional"
     assert dialogue_agent.agent_type == "dialogue"
     
@@ -216,7 +218,7 @@ async def test_handle_flow_intervention(dialogue_agent, mock_world):
                 "priority": "high"
             },
             "timestamp": mock_world.notify_agent.call_args[0][1]["timestamp"],
-            "source_agent": "TestDialogue",
+            "source_agent": dialogue_agent.name,
             "domain": "professional"
         }
     )

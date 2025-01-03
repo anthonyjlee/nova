@@ -69,10 +69,12 @@ def mock_world():
     return world
 
 @pytest.fixture
-def execution_agent(mock_memory_system, mock_world):
+def execution_agent(mock_memory_system, mock_world, request):
     """Create an ExecutionAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestExecution_{request.node.name}"
     return ExecutionAgent(
-        name="TestExecution",
+        name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
         domain="professional"
@@ -81,7 +83,7 @@ def execution_agent(mock_memory_system, mock_world):
 @pytest.mark.asyncio
 async def test_initialization(execution_agent):
     """Test agent initialization with enhanced attributes."""
-    assert execution_agent.name == "TestExecution"
+    assert "TestExecution" in execution_agent.name
     assert execution_agent.domain == "professional"
     assert execution_agent.agent_type == "execution"
     

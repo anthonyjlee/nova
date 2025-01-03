@@ -66,10 +66,12 @@ def mock_world():
     return world
 
 @pytest.fixture
-def coordination_agent(mock_memory_system, mock_world):
+def coordination_agent(mock_memory_system, mock_world, request):
     """Create a CoordinationAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestCoordination_{request.node.name}"
     return CoordinationAgent(
-        name="TestCoordination",
+        name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
         domain="professional"
@@ -78,7 +80,7 @@ def coordination_agent(mock_memory_system, mock_world):
 @pytest.mark.asyncio
 async def test_initialization(coordination_agent):
     """Test agent initialization with TinyTroupe integration."""
-    assert coordination_agent.name == "TestCoordination"
+    assert "TestCoordination" in coordination_agent.name
     assert coordination_agent.domain == "professional"
     assert coordination_agent.agent_type == "coordination"
     

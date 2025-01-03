@@ -54,10 +54,12 @@ def mock_world():
     return MagicMock()
 
 @pytest.fixture
-def context_agent(mock_memory_system, mock_world):
+def context_agent(mock_memory_system, mock_world, request):
     """Create a ContextAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestContext_{request.node.name}"
     return ContextAgent(
-        name="TestContext",
+        name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
         domain="professional"
@@ -66,7 +68,7 @@ def context_agent(mock_memory_system, mock_world):
 @pytest.mark.asyncio
 async def test_initialization(context_agent):
     """Test agent initialization."""
-    assert context_agent.name == "TestContext"
+    assert "TestContext" in context_agent.name
     assert context_agent.domain == "professional"
     assert context_agent.agent_type == "context"
     

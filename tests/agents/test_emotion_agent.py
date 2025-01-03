@@ -55,10 +55,12 @@ def mock_world():
     return MagicMock()
 
 @pytest.fixture
-def emotion_agent(mock_memory_system, mock_world):
+def emotion_agent(mock_memory_system, mock_world, request):
     """Create an EmotionAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestEmotion_{request.node.name}"
     return EmotionAgent(
-        name="TestEmotion",
+        name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
         domain="professional"
@@ -67,7 +69,7 @@ def emotion_agent(mock_memory_system, mock_world):
 @pytest.mark.asyncio
 async def test_initialization(emotion_agent):
     """Test agent initialization."""
-    assert emotion_agent.name == "TestEmotion"
+    assert "TestEmotion" in emotion_agent.name
     assert emotion_agent.domain == "professional"
     assert emotion_agent.agent_type == "emotion"
     

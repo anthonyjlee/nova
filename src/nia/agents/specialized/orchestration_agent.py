@@ -71,9 +71,9 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
         
     def _initialize_orchestration_attributes(self):
         """Initialize orchestration-specific attributes."""
-        self._configuration.update({
-            "occupation": "Advanced Agent Orchestrator",
-            "current_goals": [
+        self.define(
+            occupation="Advanced Agent Orchestrator",
+            desires=[
                 "Coordinate agents effectively",
                 "Optimize agent interactions",
                 "Ensure task completion",
@@ -85,7 +85,7 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                 "Adapt to changing conditions",
                 "Ensure system resilience"
             ],
-            "current_emotions": {
+            emotions={
                 "baseline": "analytical",
                 "towards_agents": "focused",
                 "towards_domain": "mindful",
@@ -94,8 +94,8 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                 "towards_execution": "vigilant",
                 "towards_adaptation": "responsive"
             },
-            "domain": self.domain,
-            "capabilities": [
+            domain=self.domain,
+            capabilities=[
                 "agent_orchestration",
                 "flow_coordination",
                 "decision_making",
@@ -107,7 +107,7 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                 "adaptive_planning",
                 "resilience_management"
             ]
-        })
+        )
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems with enhanced flow awareness."""

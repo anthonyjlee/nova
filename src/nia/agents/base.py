@@ -4,7 +4,7 @@ import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 from ..memory.types.memory_types import AgentResponse, DialogueMessage
-from ..memory.prompts import AGENT_PROMPTS
+from ..config.agent_config import get_agent_prompt, validate_agent_config
 
 logger = logging.getLogger(__name__)
 
@@ -25,11 +25,95 @@ class BaseAgent:
         self.vector_store = vector_store
         self.agent_type = agent_type
         self.current_dialogue = None
+        self.emotions = {}
+        self.desires = {}
+        self.occupation = "agent"
+        self.domains = ["professional", "personal"]  # Default domain access
+        self.capabilities = {
+            "memory": True,
+            "learning": True,
+            "reflection": True,
+            "domain_access": self.domains
+        }
         
-        # Get prompt template for this agent type
-        if agent_type not in AGENT_PROMPTS:
-            raise ValueError(f"No prompt template found for agent type: {agent_type}")
-        self.prompt_template = AGENT_PROMPTS[agent_type]
+        # Validate configuration
+        config = {
+            "name": "base",
+            "agent_type": agent_type,
+            "domain": "professional"
+        }
+        validate_agent_config(agent_type, config)
+        
+        # Get prompt template
+        self.prompt_template = get_agent_prompt(agent_type)
+        
+    @property
+    def memory_system(self):
+        """Access to the memory system components."""
+        return {
+            'semantic': self.store,
+            'episodic': self.vector_store
+        }
+        
+    def get_attributes(self):
+        """Get agent attributes."""
+        return {
+            'type': self.agent_type,
+            'emotions': self.emotions,
+            'desires': self.desires,
+            'occupation': self.occupation,
+            'capabilities': self.capabilities
+        }
+        
+    async def learn_concept(self, name: str = None, type: str = None, description: str = None, 
+                          related: List[str] = None, concept: Dict[str, Any] = None):
+        """Learn a new concept.
+        
+        Args:
+            name: Concept name
+            type: Concept type
+            description: Concept description
+            related: Related concept names
+            concept: Full concept dictionary (alternative to individual params)
+        """
+        if concept:
+            name = concept.get("name")
+            type = concept.get("type")
+            description = concept.get("description")
+            related = concept.get("related", [])
+            
+        await self.store.store_concept(
+            name=name,
+            type=type,
+            description=description,
+            related=related or []
+        )
+        
+    async def store_memory(self, content: str, metadata: Optional[Dict] = None,
+                         importance: float = None, domain: str = None,
+                         context: Optional[Dict] = None):
+        """Store a memory.
+        
+        Args:
+            content: Memory content
+            metadata: Optional metadata
+            importance: Memory importance score
+            domain: Memory domain
+        """
+        if metadata is None:
+            metadata = {}
+            
+        metadata.update({
+            'agent_type': self.agent_type,
+            'timestamp': datetime.now().isoformat(),
+            'importance': importance,
+            'domain': domain or 'professional',
+            'context': context
+        })
+        
+        # Store in both memory systems
+        await self.vector_store.store(content, metadata)
+        await self.store.store_memory(content, metadata)
     
     def _format_prompt(self, content: Dict[str, Any]) -> str:
         """Format prompt for agent using template.

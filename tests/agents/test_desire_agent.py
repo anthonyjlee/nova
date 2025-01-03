@@ -59,10 +59,12 @@ def mock_world():
     return MagicMock()
 
 @pytest.fixture
-def desire_agent(mock_memory_system, mock_world):
+def desire_agent(mock_memory_system, mock_world, request):
     """Create a DesireAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestDesire_{request.node.name}"
     return DesireAgent(
-        name="TestDesire",
+        name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
         domain="professional"
@@ -71,7 +73,7 @@ def desire_agent(mock_memory_system, mock_world):
 @pytest.mark.asyncio
 async def test_initialization(desire_agent):
     """Test agent initialization."""
-    assert desire_agent.name == "TestDesire"
+    assert "TestDesire" in desire_agent.name
     assert desire_agent.domain == "professional"
     assert desire_agent.agent_type == "desire"
     

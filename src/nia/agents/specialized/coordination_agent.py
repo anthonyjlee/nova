@@ -1,4 +1,4 @@
-t"""TinyTroupe coordination agent implementation."""
+"""TinyTroupe coordination agent implementation."""
 
 import logging
 from typing import Dict, Any, Optional, List, Set

@@ -6,6 +6,7 @@ from datetime import datetime
 
 from src.nia.agents.specialized.validation_agent import ValidationAgent
 from src.nia.nova.core.validation import ValidationResult
+from src.nia.memory.memory_types import AgentResponse
 
 @pytest.fixture
 def mock_memory_system():
@@ -13,38 +14,63 @@ def mock_memory_system():
     memory = MagicMock()
     # Mock LLM
     memory.llm = MagicMock()
-    memory.llm.analyze = AsyncMock(return_value={
-        "validations": [
-            {
-                "rule": "test_rule",
-                "passed": True,
+    # Mock LLM responses
+    def mock_analyze(*args, **kwargs):
+        if "validation_type" in kwargs:
+            # For validation_and_store
+            return {
+                "is_valid": True,
+                "validations": [{
+                    "rule": "test_rule",
+                    "passed": True,
+                    "confidence": 0.8,
+                    "description": "positive"
+                }],
                 "confidence": 0.8,
-                "description": "positive",
-                "domain_relevance": 0.9,
-                "severity": "low"
-            },
-            {
-                "rule": "validation_need",
-                "passed": False,
-                "confidence": 0.7,
-                "description": "requires attention"
+                "metadata": {"domain": kwargs.get("metadata", {}).get("domain", "professional")},
+                "issues": [{
+                    "type": "test_issue",
+                    "severity": "medium",
+                    "description": "Test issue"
+                }]
             }
-        ],
-        "issues": [
-            {
-                "type": "test_issue",
-                "severity": "medium",
-                "description": "Test issue",
-                "domain_impact": 0.3
-            }
-        ]
-    })
+        else:
+            # For process
+            response = AgentResponse(
+                content="Test validation result",
+                confidence=0.8,
+                metadata={
+                    "domain": "professional",
+                    "agent_type": "validation",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+            # Add concepts directly to response
+            response.concepts = [{
+                "name": "Validation Analysis",
+                "type": "validation_result",
+                "description": "Test validation result",
+                "domain_relevance": 0.8,
+                "related": []
+            }, {
+                "name": "Test Need",
+                "type": "validation_need",
+                "description": "Requires validation",
+                "domain_relevance": 0.7,
+                "related": []
+            }]
+            return response
+    
+    memory.llm = MagicMock()
+    memory.llm.analyze = AsyncMock(side_effect=mock_analyze)
     
     # Mock semantic store
     memory.semantic = MagicMock()
     memory.semantic.store = MagicMock()
     memory.semantic.store.record_reflection = AsyncMock()
     memory.semantic.store.get_domain_access = AsyncMock(return_value=True)
+    memory.semantic.store.store_concept = AsyncMock()
+    memory.semantic.driver = memory.semantic.store
     
     # Mock episodic store
     memory.episodic = MagicMock()
@@ -57,6 +83,9 @@ def mock_memory_system():
         }
     ])
     
+    # Mock store method
+    memory.store = AsyncMock()
+    
     return memory
 
 @pytest.fixture
@@ -64,11 +93,21 @@ def mock_world():
     """Create a mock world environment."""
     return MagicMock()
 
+@pytest.fixture(autouse=True)
+def clear_tinyperson_registry():
+    """Clear TinyPerson's agent registry before each test."""
+    from tinytroupe import TinyPerson
+    TinyPerson.all_agents.clear()
+    yield
+    TinyPerson.all_agents.clear()
+
 @pytest.fixture
-def validation_agent(mock_memory_system, mock_world):
+def validation_agent(mock_memory_system, mock_world, clear_tinyperson_registry, request):
     """Create a ValidationAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestValidation_{request.node.name}"
     return ValidationAgent(
-        name="TestValidation",
+        name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
         domain="professional"
@@ -77,7 +116,7 @@ def validation_agent(mock_memory_system, mock_world):
 @pytest.mark.asyncio
 async def test_initialization(validation_agent):
     """Test agent initialization."""
-    assert validation_agent.name == "TestValidation"
+    assert "TestValidation" in validation_agent.name
     assert validation_agent.domain == "professional"
     assert validation_agent.agent_type == "validation"
     
@@ -194,14 +233,32 @@ async def test_reflection_recording(validation_agent, mock_memory_system):
     content = {"content": "test"}
     
     # Force valid result with high confidence
-    mock_memory_system.llm.analyze.return_value["validations"] = [
-        {
-            "rule": "test_rule",
-            "passed": True,
-            "confidence": 0.9
-        }
-    ]
-    mock_memory_system.llm.analyze.return_value["issues"] = []
+    def mock_analyze_valid(*args, **kwargs):
+        if "validation_type" in kwargs:
+            return {
+                "is_valid": True,
+                "validations": [{
+                    "rule": "test_rule",
+                    "passed": True,
+                    "confidence": 0.9,
+                    "description": "positive"
+                }],
+                "confidence": 0.9,
+                "metadata": {"domain": kwargs.get("metadata", {}).get("domain", "professional")},
+                "issues": []
+            }
+        else:
+            return AgentResponse(
+                content="Test validation result",
+                confidence=0.9,
+                metadata={
+                    "domain": "professional",
+                    "agent_type": "validation",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+    
+    mock_memory_system.llm.analyze = AsyncMock(side_effect=mock_analyze_valid)
     
     result = await validation_agent.validate_and_store(
         content,
@@ -213,13 +270,36 @@ async def test_reflection_recording(validation_agent, mock_memory_system):
     assert any("High confidence" in str(call) for call in reflection_calls)
     
     # Test invalid result
-    mock_memory_system.llm.analyze.return_value["validations"] = [
-        {
-            "rule": "test_rule",
-            "passed": False,
-            "confidence": 0.5
-        }
-    ]
+    def mock_analyze_invalid(*args, **kwargs):
+        if "validation_type" in kwargs:
+            return {
+                "is_valid": False,
+                "validations": [{
+                    "rule": "test_rule",
+                    "passed": False,
+                    "confidence": 0.5,
+                    "description": "negative"
+                }],
+                "confidence": 0.5,
+                "metadata": {"domain": kwargs.get("metadata", {}).get("domain", "professional")},
+                "issues": [{
+                    "type": "test_issue",
+                    "severity": "medium",
+                    "description": "Test issue"
+                }]
+            }
+        else:
+            return AgentResponse(
+                content="Test validation result",
+                confidence=0.5,
+                metadata={
+                    "domain": "professional",
+                    "agent_type": "validation",
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+    
+    mock_memory_system.llm.analyze = AsyncMock(side_effect=mock_analyze_invalid)
     
     result = await validation_agent.validate_and_store(
         content,
@@ -236,13 +316,20 @@ async def test_critical_issue_reflection(validation_agent, mock_memory_system):
     content = {"content": "test"}
     
     # Add critical issue
-    mock_memory_system.llm.analyze.return_value["issues"] = [
-        {
-            "type": "critical_issue",
-            "severity": "high",
-            "description": "Critical problem"
+    def mock_analyze_critical(*args, **kwargs):
+        return {
+            "is_valid": False,
+            "validations": [],
+            "confidence": 0.5,
+            "metadata": {"domain": kwargs.get("metadata", {}).get("domain", "professional")},
+            "issues": [{
+                "type": "critical_issue",
+                "severity": "high",
+                "description": "Critical problem"
+            }]
         }
-    ]
+    
+    mock_memory_system.llm.analyze = AsyncMock(side_effect=mock_analyze_critical)
     
     result = await validation_agent.validate_and_store(
         content,

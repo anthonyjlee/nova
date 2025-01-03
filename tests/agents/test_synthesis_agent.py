@@ -73,10 +73,12 @@ def mock_world():
     return MagicMock()
 
 @pytest.fixture
-def synthesis_agent(mock_memory_system, mock_world):
+def synthesis_agent(mock_memory_system, mock_world, request):
     """Create a SynthesisAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestSynthesis_{request.node.name}"
     return SynthesisAgent(
-        name="TestSynthesis",
+        name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
         domain="professional"
@@ -85,7 +87,7 @@ def synthesis_agent(mock_memory_system, mock_world):
 @pytest.mark.asyncio
 async def test_initialization(synthesis_agent):
     """Test agent initialization."""
-    assert synthesis_agent.name == "TestSynthesis"
+    assert "TestSynthesis" in synthesis_agent.name
     assert synthesis_agent.domain == "professional"
     assert synthesis_agent.agent_type == "synthesis"
     

@@ -50,10 +50,12 @@ def mock_world():
     return MagicMock()
 
 @pytest.fixture
-def structure_agent(mock_memory_system, mock_world):
+def structure_agent(mock_memory_system, mock_world, request):
     """Create a StructureAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestStructure_{request.node.name}"
     return StructureAgent(
-        name="TestStructure",
+        name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
         domain="professional"
@@ -62,7 +64,7 @@ def structure_agent(mock_memory_system, mock_world):
 @pytest.mark.asyncio
 async def test_initialization(structure_agent):
     """Test agent initialization."""
-    assert structure_agent.name == "TestStructure"
+    assert "TestStructure" in structure_agent.name
     assert structure_agent.domain == "professional"
     assert structure_agent.agent_type == "structure"
     

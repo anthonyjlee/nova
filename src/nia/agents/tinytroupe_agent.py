@@ -9,6 +9,7 @@ from .base import BaseAgent as MemoryBaseAgent
 from ..world.environment import NIAWorld
 from ..memory.two_layer import TwoLayerMemorySystem
 from ..memory.types.memory_types import Memory, EpisodicMemory, Concept, AgentResponse
+from ..config import validate_agent_config
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +25,21 @@ class TinyTroupeAgent(TinyPerson, MemoryBaseAgent):
         agent_type: str = "base"
     ):
         """Initialize agent with both TinyTroupe and memory capabilities."""
+        # Validate configuration
+        config = {
+            "name": name,
+            "agent_type": agent_type,
+            "domain": "professional"
+        }
+        validate_agent_config(agent_type, config)
+        
         # Initialize TinyPerson
         TinyPerson.__init__(self, name)
         
         # Initialize MemoryBaseAgent
         MemoryBaseAgent.__init__(
             self,
-            llm=None,  # TinyTroupe handles LLM interactions
+            llm=memory_system.llm if memory_system else None,
             store=memory_system.semantic.driver if memory_system else None,
             vector_store=memory_system.episodic.store if memory_system else None,
             agent_type=agent_type
@@ -47,8 +56,32 @@ class TinyTroupeAgent(TinyPerson, MemoryBaseAgent):
             "occupation": attributes.get("occupation", "Agent"),
             "current_goals": attributes.get("desires", ["Help users", "Learn and improve"]),
             "current_emotions": attributes.get("emotions", {"baseline": "neutral"}),
-            "memory_references": attributes.get("memory_references", [])
+            "memory_references": attributes.get("memory_references", []),
+            "capabilities": attributes.get("capabilities", [])
         })
+        
+    def define(self, occupation: str = None, desires: List[str] = None, 
+              emotions: Dict[str, str] = None, domain: str = None,
+              capabilities: List[str] = None):
+        """Define or update agent attributes.
+        
+        Args:
+            occupation: Agent's role/occupation
+            desires: List of agent's goals/desires
+            emotions: Dictionary of emotional states
+            domain: Agent's operating domain
+            capabilities: List of agent capabilities
+        """
+        if occupation:
+            self._configuration["occupation"] = occupation
+        if desires:
+            self._configuration["current_goals"] = desires
+        if emotions:
+            self._configuration["current_emotions"] = emotions
+        if domain:
+            self._configuration["domain"] = domain
+        if capabilities:
+            self._configuration["capabilities"] = capabilities
         
     async def observe(self, event: Dict):
         """Process an observation through both systems."""

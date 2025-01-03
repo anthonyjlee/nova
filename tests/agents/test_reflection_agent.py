@@ -67,10 +67,12 @@ def mock_world():
     return MagicMock()
 
 @pytest.fixture
-def reflection_agent(mock_memory_system, mock_world):
+def reflection_agent(mock_memory_system, mock_world, request):
     """Create a ReflectionAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestReflection_{request.node.name}"
     return ReflectionAgent(
-        name="TestReflection",
+        name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
         domain="professional"
@@ -79,7 +81,7 @@ def reflection_agent(mock_memory_system, mock_world):
 @pytest.mark.asyncio
 async def test_initialization(reflection_agent):
     """Test agent initialization."""
-    assert reflection_agent.name == "TestReflection"
+    assert "TestReflection" in reflection_agent.name
     assert reflection_agent.domain == "professional"
     assert reflection_agent.agent_type == "reflection"
     

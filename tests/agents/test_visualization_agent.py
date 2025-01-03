@@ -68,10 +68,12 @@ def mock_world():
     return world
 
 @pytest.fixture
-def visualization_agent(mock_memory_system, mock_world):
+def visualization_agent(mock_memory_system, mock_world, request):
     """Create a VisualizationAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestVisualization_{request.node.name}"
     return VisualizationAgent(
-        name="TestVisualization",
+        name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
         domain="professional"
@@ -80,7 +82,7 @@ def visualization_agent(mock_memory_system, mock_world):
 @pytest.mark.asyncio
 async def test_initialization(visualization_agent):
     """Test agent initialization with enhanced attributes."""
-    assert visualization_agent.name == "TestVisualization"
+    assert "TestVisualization" in visualization_agent.name
     assert visualization_agent.domain == "professional"
     assert visualization_agent.agent_type == "visualization"
     

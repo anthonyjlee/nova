@@ -26,6 +26,11 @@ class ParseResult:
 
 class NovaParser:
     """Core parsing functionality for Nova's ecosystem."""
+
+    async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> ParseResult:
+        """Process content through parsing."""
+        text = content.get("text", "")
+        return await self.parse_text(text, metadata)
     
     def __init__(
         self,
@@ -74,8 +79,8 @@ class NovaParser:
             key_points = self._extract_key_points(analysis)
             structure = self._extract_structure(analysis)
             
-            # Calculate confidence
-            confidence = self._calculate_confidence(concepts, key_points, structure)
+            # Use confidence from analysis if available, otherwise calculate
+            confidence = analysis.get("confidence", self._calculate_confidence(concepts, key_points, structure))
             
             return ParseResult(
                 concepts=concepts,
@@ -95,14 +100,14 @@ class NovaParser:
                 concepts=[{
                     "statement": "Error occurred during parsing",
                     "type": "error",
-                    "confidence": 0.8
+                    "confidence": 0.0
                 }],
                 key_points=[{
                     "statement": str(e),
                     "type": "error",
-                    "confidence": 0.8
+                    "confidence": 0.0
                 }],
-                confidence=0.8,
+                confidence=0.0,
                 metadata={"error": str(e)},
                 structure={"error": str(e)}
             )
@@ -110,12 +115,20 @@ class NovaParser:
     async def _get_similar_parses(self, text: str) -> List[Dict]:
         """Get similar parses from vector store."""
         try:
-            results = await self.vector_store.search_vectors(
-                content=text,
-                limit=5,
-                layer="parse",
-                include_metadata=True
-            )
+            if hasattr(self.vector_store, 'search_vectors'):
+                results = await self.vector_store.search_vectors(
+                    content=text,
+                    limit=5,
+                    layer="parse",
+                    include_metadata=True
+                )
+            elif hasattr(self.vector_store, 'search'):
+                results = await self.vector_store.search(
+                    content=text,
+                    limit=5
+                )
+            else:
+                results = []
             return results
         except Exception as e:
             logger.error(f"Error getting similar parses: {str(e)}")
