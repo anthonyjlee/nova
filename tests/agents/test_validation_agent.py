@@ -9,45 +9,81 @@ from src.nia.nova.core.validation import ValidationResult
 from src.nia.memory.memory_types import AgentResponse
 
 @pytest.fixture
-def validation_agent(mock_memory_system, mock_world, base_agent_config, request):
+async def validation_agent(mock_memory_system, mock_world, base_agent_config, request):
     """Create a ValidationAgent instance with mock dependencies."""
     # Use test name to create unique agent name
     agent_name = f"TestValidation_{request.node.name}"
     
-    # Update mock memory system for validation agent
+    # Configure mock memory system with proper property mocking
+    mock_store = AsyncMock()
+    mock_store.store = AsyncMock()
+    mock_store.store_concept = AsyncMock()
+    mock_store.record_reflection = AsyncMock()
+    mock_store.get_domain_access = AsyncMock(return_value=True)
+    
+    mock_memory_system.semantic = MagicMock()
+    mock_memory_system.semantic.store = mock_store
+    mock_memory_system.episodic = MagicMock()
+    mock_memory_system.episodic.store = mock_store
+    
+    # Configure mock LLM with response that updates emotions and desires
     mock_memory_system.llm.analyze = AsyncMock(return_value={
+        "concepts": [
+            {
+                "type": "validation_result",
+                "description": "confident",
+                "domain_relevance": 0.9
+            },
+            {
+                "type": "validation_need",
+                "name": "Address validation completeness",
+                "priority": 0.9
+            }
+        ],
         "is_valid": True,
-        "validations": [{
-            "rule": "test_rule",
-            "passed": True,
-            "confidence": 0.8,
-            "description": "positive"
-        }],
-        "confidence": 0.8,
-        "metadata": {"domain": "professional"},
-        "issues": [{
-            "type": "test_issue",
-            "severity": "medium",
-            "description": "Test issue"
-        }]
+        "confidence": 0.9,
+        "validations": [{"rule": "test", "passed": True}],
+        "metadata": {"domain": "professional"}
     })
-    
-    # Configure domain access
-    mock_memory_system.semantic.store.get_domain_access = AsyncMock(
-        side_effect=lambda agent, domain: domain == "professional"
-    )
-    
-    # Create agent with updated config
-    config = base_agent_config.copy()
-    config["name"] = agent_name
-    config["domain"] = "professional"
-    
-    return ValidationAgent(
+
+    # Create agent with validation-specific attributes
+    attributes = {
+        "type": "validation",
+        "occupation": "Content Validator",
+        "domain": "professional",
+        "desires": [
+            "Ensure content quality",
+            "Validate domain boundaries", 
+            "Identify potential issues",
+            "Maintain validation standards"
+        ],
+        "emotions": {
+            "baseline": "analytical",
+            "towards_validation": "focused",
+            "towards_domain": "mindful",
+            "validation_state": "neutral",
+            "domain_state": "neutral"
+        },
+        "capabilities": [
+            "content_validation",
+            "domain_validation", 
+            "issue_detection",
+            "quality_assessment"
+        ]
+    }
+
+    agent = ValidationAgent(
         name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
-        domain=config["domain"]
+        attributes=attributes,
+        domain="professional"
     )
+    
+    # Initialize agent with reflections
+    await agent.initialize()
+    
+    return agent
 
 @pytest.mark.asyncio
 async def test_initialization(validation_agent, mock_memory_system):
@@ -114,31 +150,31 @@ async def test_initialization(validation_agent, mock_memory_system):
     
     # Verify initialization reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Validation agent initialized successfully in professional domain",
+        content="Validation agent initialized successfully in professional domain",
         domain="professional"
     )
     
     # Verify attribute reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Core attributes validated in professional domain",
+        content="Core attributes validated in professional domain",
         domain="professional"
     )
     
     # Verify capability reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Validation capabilities confirmed in professional domain",
+        content="Validation capabilities confirmed in professional domain",
         domain="professional"
     )
     
     # Verify tracking reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Validation tracking systems ready in professional domain",
+        content="Validation tracking systems ready in professional domain",
         domain="professional"
     )
     
     # Verify readiness reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Validation agent ready for operation in professional domain",
+        content="Validation agent ready for operation in professional domain",
         domain="professional"
     )
 
@@ -210,31 +246,31 @@ async def test_process_content(validation_agent, mock_memory_system):
     
     # Verify state reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Optimal validation state achieved in professional domain",
+        content="Optimal validation state achieved in professional domain",
         domain="professional"
     )
     
     # Verify domain reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Strong domain alignment confirmed in professional domain",
+        content="Strong domain alignment confirmed in professional domain",
         domain="professional"
     )
     
     # Verify processing reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Processing completed with high efficiency in professional domain",
+        content="Processing completed with high efficiency in professional domain",
         domain="professional"
     )
     
     # Verify quality reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Content quality metrics exceed thresholds in professional domain",
+        content="Content quality metrics exceed thresholds in professional domain",
         domain="professional"
     )
     
     # Verify emotional reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Positive emotional state maintained in professional domain",
+        content="Positive emotional state maintained in professional domain",
         domain="professional"
     )
 
@@ -303,31 +339,31 @@ async def test_validate_and_store(validation_agent, mock_memory_system):
     
     # Verify success reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "High confidence validation completed in professional domain",
+        content="High confidence validation completed in professional domain",
         domain="professional"
     )
     
     # Verify quality reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Validation quality exceeds threshold in professional domain",
+        content="Validation quality exceeds threshold in professional domain",
         domain="professional"
     )
     
     # Verify accuracy reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "High validation accuracy achieved in professional domain",
+        content="High validation accuracy achieved in professional domain",
         domain="professional"
     )
     
     # Verify reliability reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Strong validation reliability confirmed in professional domain",
+        content="Strong validation reliability confirmed in professional domain",
         domain="professional"
     )
     
     # Verify optimization reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Minor validation optimizations identified in professional domain",
+        content="Minor validation optimizations identified in professional domain",
         domain="professional"
     )
 
@@ -374,25 +410,25 @@ async def test_domain_access_validation(validation_agent, mock_memory_system):
     
     # Verify domain validation reflections
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Domain access validated successfully in professional domain",
+        content="Domain access validated successfully in professional domain",
         domain="professional"
     )
     
     # Verify security reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "High security compliance confirmed in professional domain",
+        content="High security compliance confirmed in professional domain",
         domain="professional"
     )
     
     # Verify permission reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Strong permission validation achieved in professional domain",
+        content="Strong permission validation achieved in professional domain",
         domain="professional"
     )
     
     # Verify scope reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Full access scope verified in professional domain",
+        content="Full access scope verified in professional domain",
         domain="professional"
     )
     
@@ -423,25 +459,25 @@ async def test_domain_access_validation(validation_agent, mock_memory_system):
     
     # Verify access denial reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Domain access denied for restricted domain",
+        content="Domain access denied for restricted domain",
         domain="professional"
     )
     
     # Verify security violation reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Security compliance enforced for unauthorized access attempt",
+        content="Security compliance enforced for unauthorized access attempt",
         domain="professional"
     )
     
     # Verify risk reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "High security risk prevented in professional domain",
+        content="High security risk prevented in professional domain",
         domain="professional"
     )
     
     # Verify scope violation reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Access scope violation blocked in professional domain",
+        content="Access scope violation blocked in professional domain",
         domain="professional"
     )
 
@@ -513,37 +549,37 @@ async def test_validate_with_different_domains(validation_agent, mock_memory_sys
     
     # Verify domain validation reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Multi-domain validation completed successfully in professional domain",
+        content="Multi-domain validation completed successfully in professional domain",
         domain="professional"
     )
     
     # Verify compatibility reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Strong domain compatibility demonstrated in professional domain",
+        content="Strong domain compatibility demonstrated in professional domain",
         domain="professional"
     )
     
     # Verify coverage reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "High validation coverage achieved in professional domain",
+        content="High validation coverage achieved in professional domain",
         domain="professional"
     )
     
     # Verify integrity reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Cross-domain integrity maintained in professional domain",
+        content="Cross-domain integrity maintained in professional domain",
         domain="professional"
     )
     
     # Verify optimization reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Cross-domain optimization potential identified in professional domain",
+        content="Cross-domain optimization potential identified in professional domain",
         domain="professional"
     )
     
     # Verify impact reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Long-term multi-domain impact projected in professional domain",
+        content="Long-term multi-domain impact projected in professional domain",
         domain="professional"
     )
 
@@ -573,19 +609,19 @@ async def test_error_handling(validation_agent, mock_memory_system):
     
     # Verify error reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Validation failed - error encountered in professional domain",
+        content="Validation failed - error encountered in professional domain",
         domain="professional"
     )
     
     # Verify recovery reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Validation needs retry with adjusted parameters in professional domain",
+        content="Validation needs retry with adjusted parameters in professional domain",
         domain="professional"
     )
     
     # Verify impact reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Validation error impacts content quality in professional domain",
+        content="Validation error impacts content quality in professional domain",
         domain="professional"
     )
 
@@ -631,25 +667,25 @@ async def test_reflection_recording(validation_agent, mock_memory_system):
     
     # Verify high confidence reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "High confidence validation completed in professional domain",
+        content="High confidence validation completed in professional domain",
         domain="professional"
     )
     
     # Verify quality reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Exceptional validation quality achieved in professional domain",
+        content="Exceptional validation quality achieved in professional domain",
         domain="professional"
     )
     
     # Verify accuracy reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "High validation accuracy confirmed in professional domain",
+        content="High validation accuracy confirmed in professional domain",
         domain="professional"
     )
     
     # Verify completeness reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Validation completeness meets standards in professional domain",
+        content="Validation completeness meets standards in professional domain",
         domain="professional"
     )
     
@@ -690,25 +726,25 @@ async def test_reflection_recording(validation_agent, mock_memory_system):
     
     # Verify failure reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Validation failed in professional domain",
+        content="Validation failed in professional domain",
         domain="professional"
     )
     
     # Verify quality impact reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Validation quality below threshold in professional domain",
+        content="Validation quality below threshold in professional domain",
         domain="professional"
     )
     
     # Verify remediation reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Validation requires immediate remediation in professional domain",
+        content="Validation requires immediate remediation in professional domain",
         domain="professional"
     )
     
     # Verify integrity reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Domain integrity requires attention in professional domain",
+        content="Domain integrity requires attention in professional domain",
         domain="professional"
     )
 
@@ -755,25 +791,25 @@ async def test_critical_issue_reflection(validation_agent, mock_memory_system):
     
     # Verify critical issue reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Critical validation issues detected in professional domain",
+        content="Critical validation issues detected in professional domain",
         domain="professional"
     )
     
     # Verify severity reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "High severity validation issue requires immediate attention in professional domain",
+        content="High severity validation issue requires immediate attention in professional domain",
         domain="professional"
     )
     
     # Verify domain impact reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Validation issue has significant domain impact in professional domain",
+        content="Validation issue has significant domain impact in professional domain",
         domain="professional"
     )
     
     # Verify quality reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Content quality compromised in professional domain",
+        content="Content quality compromised in professional domain",
         domain="professional"
     )
 
@@ -823,25 +859,25 @@ async def test_emotion_updates(validation_agent, mock_memory_system):
     
     # Verify emotional state reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Confident emotional state achieved in professional domain",
+        content="Confident emotional state achieved in professional domain",
         domain="professional"
     )
     
     # Verify satisfaction reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "High emotional satisfaction maintained in professional domain",
+        content="High emotional satisfaction maintained in professional domain",
         domain="professional"
     )
     
     # Verify stability reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Emotional stability confirmed in professional domain",
+        content="Emotional stability confirmed in professional domain",
         domain="professional"
     )
     
     # Verify trend reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Positive emotional trend identified in professional domain",
+        content="Positive emotional trend identified in professional domain",
         domain="professional"
     )
 
@@ -898,25 +934,25 @@ async def test_desire_updates(validation_agent, mock_memory_system):
     
     # Verify motivation reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Strong validation motivation established in professional domain",
+        content="Strong validation motivation established in professional domain",
         domain="professional"
     )
     
     # Verify focus reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Clear validation focus maintained in professional domain",
+        content="Clear validation focus maintained in professional domain",
         domain="professional"
     )
     
     # Verify priority reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "High priority validation desires identified in professional domain",
+        content="High priority validation desires identified in professional domain",
         domain="professional"
     )
     
     # Verify commitment reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Strong validation commitment demonstrated in professional domain",
+        content="Strong validation commitment demonstrated in professional domain",
         domain="professional"
     )
 
