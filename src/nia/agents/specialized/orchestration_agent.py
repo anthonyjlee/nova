@@ -513,7 +513,13 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
         resources: Dict[str, Dict],
         analytics: Optional[AnalyticsResult] = None
     ):
-        """Update resource allocation tracking with analytics insights."""
+        """Update resource allocation tracking with analytics insights and emotional context."""
+        # Get collective emotional state
+        swarm_sentiment = self._get_swarm_sentiment()
+        
+        # Get historical allocation patterns
+        historical_patterns = await self._get_allocation_patterns()
+        
         for resource_id, allocation in resources.items():
             if isinstance(allocation, dict):
                 current = self.resource_allocations.get(resource_id, {})
@@ -525,18 +531,36 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                     if resource_pred := predictions.get(f"resource_{resource_id}"):
                         predicted_utilization = resource_pred.get("value")
                 
+                # Apply emotional context to allocation
+                emotion_adjusted_capacity = self._adjust_capacity_by_emotion(
+                    float(allocation.get("capacity", current.get("capacity", 0.0))),
+                    swarm_sentiment
+                )
+                
+                # Learn from historical patterns
+                pattern_based_allocation = self._apply_allocation_patterns(
+                    resource_id, 
+                    allocation,
+                    historical_patterns
+                )
+                
                 self.resource_allocations[resource_id] = {
                     "type": allocation.get("type", current.get("type", "unknown")),
-                    "capacity": float(allocation.get("capacity", current.get("capacity", 0.0))),
+                    "capacity": emotion_adjusted_capacity,
                     "utilization": float(allocation.get("utilization", current.get("utilization", 0.0))),
                     "predicted_utilization": predicted_utilization,
-                    "assigned_to": list(allocation.get("assigned_to", current.get("assigned_to", []))),
+                    "assigned_to": list(pattern_based_allocation.get("assigned_to", [])),
                     "constraints": allocation.get("constraints", current.get("constraints", {})),
                     "analytics": {
                         "last_update": datetime.now().isoformat(),
-                        "predictions": analytics.analytics if analytics else {}
+                        "predictions": analytics.analytics if analytics else {},
+                        "emotional_context": swarm_sentiment,
+                        "pattern_confidence": pattern_based_allocation.get("confidence", 0.0)
                     }
                 }
+                
+                # Store allocation pattern for learning
+                await self._store_allocation_pattern(resource_id, self.resource_allocations[resource_id])
                 
     def _update_dependency_graph(self, dependencies: Dict[str, List[str]]):
         """Update task dependency tracking."""
@@ -544,27 +568,146 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
             if isinstance(deps, (list, set)):
                 self.dependency_graph[task_id] = set(deps)
                 
-    def _matches_pattern(self, content: Dict[str, Any], pattern: Dict) -> bool:
-        """Check if content matches a flow pattern."""
-        conditions = pattern.get("conditions", {})
+    def _get_swarm_sentiment(self) -> Dict[str, float]:
+        """Analyze collective emotional state for resource decisions."""
+        # Aggregate emotional states
+        sentiment = {
+            "confidence": self.emotions.get("orchestration_state", "neutral"),
+            "resource_attitude": self.emotions.get("resource_state", "neutral"),
+            "execution_mood": self.emotions.get("execution_state", "neutral")
+        }
         
-        for key, value in conditions.items():
-            if key not in content:
-                return False
+        # Convert to numerical values
+        sentiment_values = {}
+        for key, value in sentiment.items():
+            if value == "highly_focused":
+                sentiment_values[key] = 1.0
+            elif value == "neutral":
+                sentiment_values[key] = 0.5
+            else:
+                sentiment_values[key] = 0.0
                 
-            if isinstance(value, (str, int, float, bool)):
-                if content[key] != value:
-                    return False
-            elif isinstance(value, dict):
-                if not isinstance(content[key], dict):
-                    return False
-                if not all(
-                    content[key].get(k) == v
-                    for k, v in value.items()
-                ):
-                    return False
+        return sentiment_values
+        
+    def _adjust_capacity_by_emotion(
+        self,
+        base_capacity: float,
+        sentiment: Dict[str, float]
+    ) -> float:
+        """Adjust resource capacity based on emotional context."""
+        # Apply confidence-based adjustment
+        confidence_factor = 1.0 + (sentiment["confidence"] - 0.5) * 0.2
+        
+        # Apply resource attitude adjustment
+        resource_factor = 1.0 + (sentiment["resource_attitude"] - 0.5) * 0.1
+        
+        # Apply execution mood adjustment
+        execution_factor = 1.0 + (sentiment["execution_mood"] - 0.5) * 0.15
+        
+        return base_capacity * confidence_factor * resource_factor * execution_factor
+        
+    async def _get_allocation_patterns(self) -> List[Dict]:
+        """Retrieve historical allocation patterns from memory."""
+        if not self.memory_system:
+            return []
+            
+        # Search for recent allocation patterns
+        patterns = await self.memory_system.episodic.search(
+            query="resource_allocation_pattern",
+            limit=10,
+            metadata_filter={"domain": self.domain}
+        )
+        
+        return [p["content"] for p in patterns]
+        
+    def _apply_allocation_patterns(
+        self,
+        resource_id: str,
+        allocation: Dict,
+        patterns: List[Dict]
+    ) -> Dict:
+        """Apply learned patterns to current allocation."""
+        if not patterns:
+            return allocation
+            
+        # Find matching patterns
+        matching_patterns = []
+        for pattern in patterns:
+            if pattern["resource_id"] == resource_id:
+                similarity = self._calculate_pattern_similarity(
+                    allocation,
+                    pattern["allocation"]
+                )
+                if similarity > 0.7:  # Threshold for pattern matching
+                    matching_patterns.append({
+                        "pattern": pattern,
+                        "similarity": similarity
+                    })
                     
-        return True
+        if not matching_patterns:
+            return allocation
+            
+        # Sort by similarity
+        matching_patterns.sort(key=lambda x: x["similarity"], reverse=True)
+        best_pattern = matching_patterns[0]["pattern"]
+        
+        # Apply pattern insights
+        return {
+            **allocation,
+            "assigned_to": best_pattern["allocation"]["assigned_to"],
+            "confidence": matching_patterns[0]["similarity"]
+        }
+        
+    def _calculate_pattern_similarity(
+        self,
+        allocation1: Dict,
+        allocation2: Dict
+    ) -> float:
+        """Calculate similarity between allocation patterns."""
+        factors = []
+        
+        # Compare utilization
+        if "utilization" in allocation1 and "utilization" in allocation2:
+            util_diff = abs(allocation1["utilization"] - allocation2["utilization"])
+            factors.append(1.0 - util_diff)
+            
+        # Compare constraints
+        if "constraints" in allocation1 and "constraints" in allocation2:
+            common_constraints = set(allocation1["constraints"]) & set(allocation2["constraints"])
+            all_constraints = set(allocation1["constraints"]) | set(allocation2["constraints"])
+            if all_constraints:
+                factors.append(len(common_constraints) / len(all_constraints))
+                
+        # Compare assigned agents
+        if "assigned_to" in allocation1 and "assigned_to" in allocation2:
+            common_agents = set(allocation1["assigned_to"]) & set(allocation2["assigned_to"])
+            all_agents = set(allocation1["assigned_to"]) | set(allocation2["assigned_to"])
+            if all_agents:
+                factors.append(len(common_agents) / len(all_agents))
+                
+        return sum(factors) / len(factors) if factors else 0.0
+        
+    async def _store_allocation_pattern(self, resource_id: str, allocation: Dict):
+        """Store allocation pattern for future learning."""
+        if not self.memory_system:
+            return
+            
+        pattern = {
+            "type": "resource_allocation_pattern",
+            "resource_id": resource_id,
+            "allocation": allocation,
+            "timestamp": datetime.now().isoformat(),
+            "domain": self.domain
+        }
+        
+        await self.memory_system.episodic.store(
+            content=pattern,
+            metadata={
+                "type": "pattern",
+                "domain": self.domain,
+                "importance": 0.7
+            }
+        )
         
     async def _apply_flow_pattern(
         self,
