@@ -11,49 +11,105 @@ logger = logging.getLogger(__name__)
 class BaseAgent:
     """Base agent with common functionality."""
     
-    def __init__(self, llm, store, vector_store, agent_type: str):
+    def __init__(self, llm=None, store=None, vector_store=None, agent_type: str = None, domain: str = "professional", **kwargs):
         """Initialize base agent.
         
         Args:
             llm: LLM interface
             store: Neo4j store
             vector_store: Vector store
-            agent_type: Type of agent
+            agent_type: Type of agent (defaults to class name without 'Agent')
+            domain: Domain for agent (defaults to professional)
+            **kwargs: Additional configuration
         """
         self.llm = llm
         self.store = store
         self.vector_store = vector_store
+        self._memory_system = None
+        
+        # Set agent type from class name if not provided
+        if agent_type is None:
+            agent_type = self.__class__.__name__.lower().replace('agent', '')
         self.agent_type = agent_type
+        
+        # Initialize state
         self.current_dialogue = None
         self.emotions = {}
         self.desires = {}
-        self.occupation = "agent"
-        self.domains = ["professional", "personal"]  # Default domain access
+        self.occupation = kwargs.get('occupation', 'agent')
+        
+        # Set up domain access
+        self.domain = domain
+        self.domains = kwargs.get('domains', ["professional", "personal"])
+        if self.domain not in self.domains:
+            self.domains.append(self.domain)
+            
+        # Set up capabilities
         self.capabilities = {
             "memory": True,
             "learning": True,
             "reflection": True,
-            "domain_access": self.domains
+            "domain_access": self.domains,
+            **kwargs.get('capabilities', {})
         }
         
         # Validate configuration
         config = {
-            "name": "base",
-            "agent_type": agent_type,
-            "domain": "professional"
+            "name": kwargs.get('name', 'base'),
+            "agent_type": self.agent_type,
+            "domain": self.domain,
+            **kwargs
         }
-        validate_agent_config(agent_type, config)
+        validate_agent_config(self.agent_type, config)
         
         # Get prompt template
-        self.prompt_template = get_agent_prompt(agent_type)
+        self.prompt_template = get_agent_prompt(self.agent_type)
         
     @property
     def memory_system(self):
         """Access to the memory system components."""
+        if hasattr(self, '_memory_system'):
+            return self._memory_system
         return {
             'semantic': self.store,
             'episodic': self.vector_store
         }
+
+    @memory_system.setter
+    def memory_system(self, value):
+        """Set memory system for testing."""
+        self._memory_system = value
+
+    async def record_reflection(self, content: str, domain: str):
+        """Record agent reflection.
+        
+        Args:
+            content: Reflection content
+            domain: Domain for reflection
+        """
+        if not self.validate_domain_access(domain):
+            raise PermissionError(f"{self.__class__.__name__} {self.agent_type} does not have access to domain: {domain}")
+            
+        await self.store_memory(
+            content=content,
+            metadata={
+                'type': 'reflection',
+                'domain': domain,
+                'agent_type': self.agent_type
+            },
+            domain=domain
+        )
+
+    def validate_domain_access(self, domain: str) -> bool:
+        """Validate agent has access to domain.
+        
+        Args:
+            domain: Domain to validate
+            
+        Returns:
+            True if access is allowed
+        """
+        return domain in self.domains
         
     def get_attributes(self):
         """Get agent attributes."""

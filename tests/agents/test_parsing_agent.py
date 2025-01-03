@@ -118,6 +118,9 @@ async def test_initialization(parsing_agent, mock_memory_system):
         }
     })
     
+    # Process empty content to trigger initialization reflections
+    await parsing_agent.process({"text": "Initialize"})
+    
     # Verify basic attributes
     assert "TestParsing" in parsing_agent.name
     assert parsing_agent.domain == "professional"
@@ -221,7 +224,37 @@ async def test_process_content(parsing_agent, mock_memory_system):
             "areas_for_improvement": [
                 "edge_case_handling"
             ]
-        }
+        },
+        "reflections": [
+            {
+                "content": "High confidence parsing completed in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Strong parsing motivation established in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Edge case handling improvements identified in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "High quality processing completed in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Strong processing accuracy achieved in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Good content structure maintained in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "High processing efficiency demonstrated in professional domain",
+                "domain": "professional"
+            }
+        ]
     })
     
     response = await parsing_agent.process(content, metadata)
@@ -325,7 +358,21 @@ async def test_parse_and_store(parsing_agent, mock_memory_system):
             "areas_for_improvement": [
                 "context_integration"
             ]
-        }
+        },
+        "reflections": [
+            {
+                "content": "High confidence parsing completed in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Edge case handling improvements identified in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Strong parsing motivation established in professional domain",
+                "domain": "professional"
+            }
+        ]
     })
     
     result = await parsing_agent.parse_and_store(text, context)
@@ -510,7 +557,21 @@ async def test_parse_with_different_domains(parsing_agent, mock_memory_system):
             "overall_score": 0.93,
             "strengths": ["domain_specific_parsing", "content_structure"],
             "areas_for_improvement": ["edge_cases"]
-        }
+        },
+        "reflections": [
+            {
+                "content": "High confidence parsing completed in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Edge case handling improvements identified in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Strong parsing motivation established in professional domain",
+                "domain": "professional"
+            }
+        ]
     })
     
     # Test professional domain
@@ -604,14 +665,26 @@ async def test_parse_with_different_domains(parsing_agent, mock_memory_system):
 async def test_error_handling(parsing_agent, mock_memory_system):
     """Test error handling during parsing."""
     # Configure mock LLM response with detailed error analysis
-    mock_memory_system.llm.analyze = AsyncMock(side_effect=Exception("Test error"))
-    
-    # Configure mock error analysis response
     mock_memory_system.llm.analyze = AsyncMock(return_value={
+        "concepts": [
+            {
+                "statement": "Error occurred during parsing",
+                "type": "error",
+                "description": "parsing_failure",
+                "confidence": 0.0
+            }
+        ],
+        "key_points": [
+            {
+                "statement": "Error occurred during parsing",
+                "type": "error",
+                "confidence": 0.0
+            }
+        ],
         "error_analysis": {
             "type": "parsing_failure",
             "severity": "high",
-            "confidence": 0.95,
+            "confidence": 0.0,
             "metrics": {
                 "impact_severity": 0.92,
                 "recovery_potential": 0.85,
@@ -639,7 +712,33 @@ async def test_error_handling(parsing_agent, mock_memory_system):
             "duration": "temporary",
             "affected_operations": ["parsing", "analysis"],
             "mitigation_potential": "high"
-        }
+        },
+        "reflections": [
+            {
+                "content": "Parsing failed - error encountered in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "High severity parsing error detected in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Localized error impact identified in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "System stability maintained despite error in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Automated recovery possible with medium effort in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Data integrity preserved during error in professional domain",
+                "domain": "professional"
+            }
+        ]
     })
     
     result = await parsing_agent.parse_and_store("test")
@@ -714,7 +813,41 @@ async def test_reflection_recording(parsing_agent, mock_memory_system):
         "structure": {
             "complexity": "low",
             "readability": "high"
-        }
+        },
+        "reflections": [
+            {
+                "content": "High confidence parsing completed in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Confident parsing state achieved in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "High content clarity maintained in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Deep parsing engagement confirmed in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Strong parsing confidence demonstrated in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Strong domain alignment achieved in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "High parsing quality confirmed in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Strong parsing accuracy demonstrated in professional domain",
+                "domain": "professional"
+            }
+        ]
     })
     
     result = await parsing_agent.parse_and_store(text)
@@ -794,7 +927,25 @@ async def test_emotion_updates(parsing_agent, mock_memory_system):
                 "depth": "high",
                 "sustainability": "strong"
             }
-        }
+        },
+        "reflections": [
+            {
+                "content": "Confident parsing state achieved in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "High content clarity maintained in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Deep parsing engagement confirmed in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Strong parsing confidence demonstrated in professional domain",
+                "domain": "professional"
+            }
+        ]
     })
     
     await parsing_agent.process(content)
@@ -875,7 +1026,25 @@ async def test_desire_updates(parsing_agent, mock_memory_system):
                 "urgency": "immediate",
                 "sustainability": "strong"
             }
-        }
+        },
+        "reflections": [
+            {
+                "content": "Strong parsing motivation established in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Clear parsing focus maintained in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "High parsing quality commitment identified in professional domain",
+                "domain": "professional"
+            },
+            {
+                "content": "Strong parsing precision demonstrated in professional domain",
+                "domain": "professional"
+            }
+        ]
     })
     
     await parsing_agent.process(content)
