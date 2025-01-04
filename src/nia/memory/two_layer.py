@@ -76,6 +76,19 @@ class SemanticLayer(ConceptStore):
     Inherits from ConceptStore to leverage existing Neo4j functionality.
     """
     
+    async def _execute_with_retry(self, operation):
+        """Execute an operation with retry logic."""
+        max_retries = 3
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                return await operation()
+            except Exception as e:
+                retry_count += 1
+                if retry_count == max_retries:
+                    raise e
+                await asyncio.sleep(1)  # Wait before retrying
+
     async def record_reflection(self, content: str, domain: Optional[str] = None):
         """Record a reflection with domain awareness."""
         await self.store_concept(

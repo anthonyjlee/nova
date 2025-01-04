@@ -1,425 +1,351 @@
-"""Tests for Nova's integration functionality."""
+"""Integration tests for Nova's complete system."""
 
 import pytest
-from unittest.mock import MagicMock, AsyncMock
+from fastapi.testclient import TestClient
 from datetime import datetime
 
-from src.nia.nova.core.integration import IntegrationAgent, IntegrationResult
+from nia.nova.core.app import app
+from nia.nova.core.auth import API_KEYS
+from nia.nova.core.endpoints import (
+    get_analytics_agent,
+    get_memory_system,
+    get_orchestration_agent,
+    get_parsing_agent
+)
+from nia.nova.core.test_data import (
+    VALID_ANALYTICS_REQUEST,
+    VALID_TASK,
+    VALID_COORDINATION_REQUEST
+)
+from nia.memory.two_layer import TwoLayerMemorySystem
+from nia.nova.core.analytics import AnalyticsAgent
+from nia.agents.specialized.orchestration_agent import OrchestrationAgent
+from nia.agents.specialized.parsing_agent import ParsingAgent
+from nia.world.environment import NIAWorld
+
+# Test API key
+TEST_API_KEY = "test-key"
+assert TEST_API_KEY in API_KEYS, "Test API key not found in API_KEYS"
 
 @pytest.fixture
-def mock_llm():
-    """Create a mock LLM."""
-    llm = MagicMock()
-    llm.analyze = AsyncMock(return_value={
-        "integration": {
-            "type": "synthesis",
-            "components": {
-                "main": {
-                    "type": "section",
-                    "importance": 0.8,
-                    "description": "Main content",
-                    "connections": ["conn1", "conn2"]
-                },
-                "sub": {
-                    "type": "subsection",
-                    "importance": 0.6,
-                    "metadata": {
-                        "key": "value"
+async def memory_system():
+    """Create real memory system for testing."""
+    memory = TwoLayerMemorySystem(
+        neo4j_uri="bolt://localhost:7687",
+        vector_store_host="localhost",
+        vector_store_port=6333
+    )
+    try:
+        # Initialize connections
+        await memory.semantic.connect()
+        await memory.episodic.connect()
+        await memory.vector_store.connect()
+        
+        # Create test collections
+        await memory.episodic.ensure_collection()
+        await memory.vector_store.ensure_collection()
+        
+        yield memory
+    finally:
+        # Cleanup
+        await memory.semantic.close()
+        await memory.episodic.close()
+        await memory.vector_store.close()
+
+@pytest.fixture
+async def world():
+    """Create world instance for testing."""
+    return NIAWorld()
+
+@pytest.fixture
+async def analytics_agent(memory_system):
+    """Create real analytics agent for testing."""
+    agent = AnalyticsAgent(
+        domain="test",
+        store=memory_system.semantic.store,
+        vector_store=memory_system.vector_store
+    )
+    return agent
+
+@pytest.fixture
+async def orchestration_agent(memory_system, world):
+    """Create real orchestration agent for testing."""
+    agent = OrchestrationAgent(
+        name="test_orchestrator",
+        memory_system=memory_system,
+        domain="test"
+    )
+    return agent
+
+@pytest.fixture
+async def parsing_agent(memory_system, world):
+    """Create real parsing agent for testing."""
+    agent = ParsingAgent(
+        name="test_parser",
+        memory_system=memory_system,
+        world=world,
+        domain="test"
+    )
+    return agent
+
+@pytest.mark.integration
+class TestFullSystemIntegration:
+    """Test complete system flow with real components."""
+    
+    @pytest.mark.asyncio
+    async def test_websocket_memory_flow(self, memory_system, analytics_agent):
+        """Test WebSocket with real memory operations."""
+        # Override dependencies with real components
+        app.dependency_overrides[get_memory_system] = lambda: memory_system
+        app.dependency_overrides[get_analytics_agent] = lambda: analytics_agent
+        
+        try:
+            client = TestClient(app)
+            with client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}) as websocket:
+                # Store test data in memory
+                test_data = {
+                    "type": "test_content",
+                    "content": "Test analytics data",
+                    "timestamp": datetime.now().isoformat()
+                }
+                await memory_system.episodic.store(test_data)
+                
+                # Send analytics request
+                websocket.send_json({
+                    **VALID_ANALYTICS_REQUEST,
+                    "content": test_data
+                })
+                
+                # Verify response includes memory context
+                data = websocket.receive_json()
+                assert data["type"] == "analytics_update"
+                assert data["analytics"]["memory_context"] is not None
+                assert len(data["insights"]) > 0
+                
+                # Verify data was stored
+                stored_data = await memory_system.episodic.search(
+                    query=test_data["content"]
+                )
+                assert len(stored_data) > 0
+        finally:
+            app.dependency_overrides.clear()
+    
+    @pytest.mark.asyncio
+    async def test_concurrent_memory_operations(self, memory_system, analytics_agent):
+        """Test concurrent memory operations through WebSocket."""
+        app.dependency_overrides[get_memory_system] = lambda: memory_system
+        app.dependency_overrides[get_analytics_agent] = lambda: analytics_agent
+        
+        try:
+            client = TestClient(app)
+            # Create multiple connections
+            with client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}) as ws1, \
+                 client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}) as ws2:
+                
+                # Store different test data through each connection
+                test_data_1 = {
+                    "type": "test_content",
+                    "content": "Test analytics data 1",
+                    "timestamp": datetime.now().isoformat()
+                }
+                test_data_2 = {
+                    "type": "test_content",
+                    "content": "Test analytics data 2",
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+                # Send concurrent requests
+                ws1.send_json({**VALID_ANALYTICS_REQUEST, "content": test_data_1})
+                ws2.send_json({**VALID_ANALYTICS_REQUEST, "content": test_data_2})
+                
+                # Verify both responses
+                data1 = ws1.receive_json()
+                data2 = ws2.receive_json()
+                
+                assert data1["type"] == "analytics_update"
+                assert data2["type"] == "analytics_update"
+                
+                # Verify both sets of data were stored
+                stored_data = await memory_system.episodic.search(
+                    query="Test analytics data"
+                )
+                assert len(stored_data) >= 2
+        finally:
+            app.dependency_overrides.clear()
+    
+    @pytest.mark.asyncio
+    async def test_memory_consolidation(self, memory_system, analytics_agent):
+        """Test memory consolidation through WebSocket operations."""
+        app.dependency_overrides[get_memory_system] = lambda: memory_system
+        app.dependency_overrides[get_analytics_agent] = lambda: analytics_agent
+        
+        try:
+            client = TestClient(app)
+            with client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}) as websocket:
+                # Store multiple related pieces of data
+                test_data_sequence = [
+                    {
+                        "type": "test_content",
+                        "content": f"Test analytics data sequence {i}",
+                        "timestamp": datetime.now().isoformat()
                     }
+                    for i in range(5)
+                ]
+                
+                # Send sequence of requests
+                for data in test_data_sequence:
+                    websocket.send_json({
+                        **VALID_ANALYTICS_REQUEST,
+                        "content": data
+                    })
+                    response = websocket.receive_json()
+                    assert response["type"] == "analytics_update"
+                
+                # Verify data was consolidated
+                semantic_data = await memory_system.semantic.search(
+                    query="Test analytics data sequence"
+                )
+                assert len(semantic_data) > 0
+                
+                # Verify relationships were created
+                relationships = await memory_system.semantic.get_relationships(
+                    semantic_data[0]["id"]
+                )
+                assert len(relationships) > 0
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_full_task_flow(self, memory_system, orchestration_agent, parsing_agent):
+        """Test complete task flow with real components."""
+        # Override dependencies
+        app.dependency_overrides[get_memory_system] = lambda: memory_system
+        app.dependency_overrides[get_orchestration_agent] = lambda: orchestration_agent
+        app.dependency_overrides[get_parsing_agent] = lambda: parsing_agent
+        
+        try:
+            client = TestClient(app)
+            
+            # Create a task
+            task_response = client.post(
+                "/api/orchestration/tasks",
+                headers={"X-API-Key": TEST_API_KEY},
+                json=VALID_TASK
+            )
+            assert task_response.status_code == 200
+            task_data = task_response.json()
+            task_id = task_data["task_id"]
+            
+            # Verify task was stored in memory
+            stored_task = await memory_system.semantic.get_node(task_id)
+            assert stored_task is not None
+            
+            # Coordinate agents for task
+            coord_response = client.post(
+                "/api/orchestration/agents/coordinate",
+                headers={"X-API-Key": TEST_API_KEY},
+                json={
+                    **VALID_COORDINATION_REQUEST,
+                    "task_id": task_id
                 }
-            },
-            "connections": {
-                "primary": ["conn1"],
-                "secondary": ["conn2"]
-            },
-            "metadata": {
-                "version": "1.0"
-            }
-        },
-        "insights": [
-            {
-                "type": "connection",
-                "description": "Connection analysis",
-                "confidence": 0.8,
-                "domain_relevance": 0.9,
-                "importance": 0.7,
-                "connections": ["conn1"]
-            }
-        ],
-        "issues": [
-            {
-                "type": "missing_connection",
-                "severity": "medium",
-                "description": "Missing connection",
-                "domain_impact": 0.3,
-                "suggested_fix": "Add connection",
-                "related_connections": ["conn3"]
-            }
-        ]
-    })
-    return llm
+            )
+            assert coord_response.status_code == 200
+            coord_data = coord_response.json()
+            
+            # Verify agent assignments were stored
+            agent_assignments = await memory_system.semantic.get_relationships(
+                task_id,
+                relationship_type="ASSIGNED_TO"
+            )
+            assert len(agent_assignments) > 0
+            
+            # Monitor task progress through WebSocket
+            with client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}) as websocket:
+                websocket.send_json({
+                    "type": "task_monitor",
+                    "task_id": task_id
+                })
+                
+                # Should receive initial status
+                status = websocket.receive_json()
+                assert status["type"] == "task_update"
+                assert status["task_id"] == task_id
+                
+                # Update task status
+                update_response = client.put(
+                    f"/api/orchestration/tasks/{task_id}",
+                    headers={"X-API-Key": TEST_API_KEY},
+                    json={
+                        **VALID_TASK,
+                        "status": "in_progress"
+                    }
+                )
+                assert update_response.status_code == 200
+                
+                # Should receive status update
+                status = websocket.receive_json()
+                assert status["type"] == "task_update"
+                assert status["task_id"] == task_id
+                assert status["status"] == "in_progress"
+        finally:
+            app.dependency_overrides.clear()
 
-@pytest.fixture
-def mock_vector_store():
-    """Create a mock vector store."""
-    store = MagicMock()
-    store.search = AsyncMock(return_value=[
-        {
-            "content": {"content": "Similar integration"},
-            "similarity": 0.9,
-            "timestamp": "2024-01-01T00:00:00Z"
-        }
-    ])
-    return store
-
-@pytest.fixture
-def integration_agent(mock_llm, mock_vector_store):
-    """Create an IntegrationAgent instance with mock dependencies."""
-    return IntegrationAgent(
-        llm=mock_llm,
-        store=MagicMock(),
-        vector_store=mock_vector_store,
-        domain="professional"
-    )
-
-@pytest.mark.asyncio
-async def test_integrate_content_with_llm(integration_agent, mock_llm):
-    """Test content integration using LLM."""
-    content = {
-        "content": "Test content",
-        "type": "synthesis",
-        "metadata": {"key": "value"}
-    }
-    
-    result = await integration_agent.integrate_content(content, "synthesis")
-    
-    # Verify LLM was called
-    mock_llm.analyze.assert_called_once()
-    
-    # Verify result structure
-    assert isinstance(result, IntegrationResult)
-    assert result.integration["type"] == "synthesis"
-    assert len(result.integration["components"]) == 2
-    assert len(result.insights) == 1
-    assert len(result.issues) == 1
-    assert result.confidence > 0
-    assert "domain" in result.metadata
-
-@pytest.mark.asyncio
-async def test_integrate_content_without_llm():
-    """Test content integration without LLM (fallback mode)."""
-    agent = IntegrationAgent()  # No LLM provided
-    content = {
-        "conclusions": ["conclusion1"],
-        "themes": ["theme1"],
-        "context": {}
-    }
-    
-    result = await agent.integrate_content(content, "synthesis")
-    
-    # Verify basic integration worked
-    assert isinstance(result, IntegrationResult)
-    assert result.integration["type"] == "synthesis"
-    assert "components" in result.integration
-    assert result.confidence >= 0
-    assert result.is_valid is True  # All basic checks should pass
-
-@pytest.mark.asyncio
-async def test_get_similar_integrations(integration_agent, mock_vector_store):
-    """Test similar integration retrieval."""
-    content = {"content": "test content"}
-    integration_type = "synthesis"
-    
-    integrations = await integration_agent._get_similar_integrations(content, integration_type)
-    
-    # Verify vector store search
-    mock_vector_store.search.assert_called_once_with(
-        "test content",
-        limit=5,
-        metadata_filter={
-            "domain": "professional",
-            "type": "integration",
-            "integration_type": "synthesis"
-        }
-    )
-    assert len(integrations) == 1
-    assert "content" in integrations[0]
-    assert integrations[0]["similarity"] == 0.9
-
-def test_basic_integration_synthesis(integration_agent):
-    """Test basic synthesis integration."""
-    content = {
-        "conclusions": ["conclusion1"],
-        "themes": ["theme1"],
-        "context": {}
-    }
-    
-    result = integration_agent._basic_integration(content, "synthesis", [])
-    
-    assert "integration" in result
-    assert "insights" in result
-    assert "issues" in result
-    assert result["integration"]["type"] == "synthesis"
-    assert len(result["insights"]) > 0
-    assert all(i["type"] in ["has_conclusions", "has_themes", "has_context"] for i in result["insights"])
-
-def test_basic_integration_analysis(integration_agent):
-    """Test basic analysis integration."""
-    content = {
-        "insights": ["insight1"],
-        "patterns": ["pattern1"],
-        "evidence": ["evidence1"]
-    }
-    
-    result = integration_agent._basic_integration(content, "analysis", [])
-    
-    assert "integration" in result
-    assert "insights" in result
-    assert "issues" in result
-    assert result["integration"]["type"] == "analysis"
-    assert len(result["insights"]) > 0
-    assert all(i["type"] in ["has_insights", "has_patterns", "has_evidence"] for i in result["insights"])
-
-def test_check_rule(integration_agent):
-    """Test integration rule checking."""
-    content = {
-        "conclusions": ["conclusion1"],
-        "themes": ["theme1"],
-        "context": {},
-        "insights": ["insight1"],
-        "patterns": ["pattern1"],
-        "evidence": ["evidence1"],
-        "findings": ["finding1"],
-        "sources": ["source1"],
-        "validation": {"type": "complete"}
-    }
-    
-    # Test synthesis rules
-    assert integration_agent._check_rule("has_conclusions", content) is True
-    assert integration_agent._check_rule("has_themes", content) is True
-    assert integration_agent._check_rule("has_context", content) is True
-    
-    # Test analysis rules
-    assert integration_agent._check_rule("has_insights", content) is True
-    assert integration_agent._check_rule("has_patterns", content) is True
-    assert integration_agent._check_rule("has_evidence", content) is True
-    
-    # Test research rules
-    assert integration_agent._check_rule("has_findings", content) is True
-    assert integration_agent._check_rule("has_sources", content) is True
-    assert integration_agent._check_rule("has_validation", content) is True
-
-def test_extract_integration(integration_agent):
-    """Test integration extraction and validation."""
-    integration = {
-        "integration": {
-            "type": "synthesis",
-            "components": {
-                "main": {
-                    "type": "section",
-                    "importance": 0.8,
-                    "description": "Main content"
-                },
-                "sub": {
-                    "type": "subsection",
-                    "importance": 0.6
-                }
-            },
-            "connections": {
-                "primary": ["conn1"]
-            },
-            "metadata": {
-                "version": "1.0"
-            }
-        }
-    }
-    
-    result = integration_agent._extract_integration(integration)
-    
-    assert result["type"] == "synthesis"
-    assert len(result["components"]) == 2
-    assert result["components"]["main"]["importance"] == 0.8
-    assert "description" in result["components"]["main"]
-    assert "connections" in result
-    assert "metadata" in result
-
-def test_extract_insights(integration_agent):
-    """Test insight extraction and validation."""
-    integration = {
-        "insights": [
-            {
-                "type": "connection",
-                "description": "Test insight",
-                "confidence": 0.8,
-                "domain_relevance": 0.9,
-                "importance": 0.7,
-                "connections": ["conn1"]
-            },
-            {
-                "type": "basic",
-                "description": "Basic insight",
-                "confidence": 0.6
-            },
-            "Invalid"  # Should be ignored
-        ]
-    }
-    
-    insights = integration_agent._extract_insights(integration)
-    
-    assert len(insights) == 2  # Invalid one should be filtered out
-    assert all("type" in i for i in insights)
-    assert all("description" in i for i in insights)
-    assert all("confidence" in i for i in insights)
-    assert any("domain_relevance" in i for i in insights)
-
-def test_extract_issues(integration_agent):
-    """Test issue extraction and validation."""
-    integration = {
-        "issues": [
-            {
-                "type": "missing_connection",
-                "severity": "high",
-                "description": "Missing connection",
-                "details": "Details",
-                "domain_impact": 0.8,
-                "suggested_fix": "Add connection",
-                "related_connections": ["conn1"]
-            },
-            {
-                "type": "basic_issue",
-                "description": "Basic"
-            },
-            "Invalid"  # Should be ignored
-        ]
-    }
-    
-    issues = integration_agent._extract_issues(integration)
-    
-    assert len(issues) == 2  # Invalid one should be filtered out
-    assert all("type" in i for i in issues)
-    assert all("severity" in i for i in issues)
-    assert all("description" in i for i in issues)
-    assert any("domain_impact" in i for i in issues)
-
-def test_calculate_confidence(integration_agent):
-    """Test confidence calculation."""
-    integration = {
-        "components": {
-            "main": {"type": "section"},
-            "sub": {"type": "subsection"}
-        },
-        "connections": {
-            "primary": ["conn1"],
-            "secondary": ["conn2"]
-        }
-    }
-    
-    insights = [
-        {
-            "confidence": 0.8,
-            "importance": 0.7
-        },
-        {
-            "confidence": 0.6,
-            "importance": 0.5
-        }
-    ]
-    
-    issues = [
-        {
-            "severity": "low",
-            "type": "minor"
-        },
-        {
-            "severity": "medium",
-            "type": "warning"
-        }
-    ]
-    
-    confidence = integration_agent._calculate_confidence(integration, insights, issues)
-    
-    assert 0 <= confidence <= 1
-    # Should include:
-    # - Integration confidence (0.2 from components + connections)
-    # - Insight confidence (0.7 average)
-    # - Issue impact (0.2 from low + medium severity)
-    assert 0.45 <= confidence <= 0.55
-
-def test_determine_validity(integration_agent):
-    """Test validity determination."""
-    integration = {
-        "components": {
-            "main": {"type": "section"}
-        },
-        "connections": {
-            "primary": ["conn1"]
-        }
-    }
-    
-    insights = [
-        {
-            "confidence": 0.8,
-            "importance": 0.7
-        },
-        {
-            "confidence": 0.7,
-            "importance": 0.6
-        },
-        {
-            "confidence": 0.6,
-            "importance": 0.5
-        }
-    ]
-    
-    # Test with no critical issues
-    issues = [
-        {
-            "severity": "low",
-            "type": "minor"
-        }
-    ]
-    
-    is_valid = integration_agent._determine_validity(integration, insights, issues, 0.7)
-    assert is_valid is True  # High confidence, mostly passed insights
-    
-    # Test with critical issue
-    issues.append({
-        "severity": "high",
-        "type": "critical"
-    })
-    
-    is_valid = integration_agent._determine_validity(integration, insights, issues, 0.7)
-    assert is_valid is False  # Critical issue should fail validation
-
-@pytest.mark.asyncio
-async def test_error_handling(integration_agent):
-    """Test error handling during integration."""
-    # Make LLM raise an error
-    integration_agent.llm.analyze.side_effect = Exception("Test error")
-    
-    result = await integration_agent.integrate_content({"content": "test"}, "synthesis")
-    
-    # Verify we get a valid but error-indicating result
-    assert isinstance(result, IntegrationResult)
-    assert result.is_valid is False
-    assert result.confidence == 0.0
-    assert len(result.insights) == 0
-    assert len(result.issues) == 1
-    assert "error" in result.metadata
-
-@pytest.mark.asyncio
-async def test_domain_awareness(integration_agent):
-    """Test domain awareness in integration."""
-    content = {"content": "test"}
-    result = await integration_agent.integrate_content(content, "synthesis")
-    
-    # Verify domain is included
-    assert result.metadata["domain"] == "professional"
-    
-    # Test with different domain
-    integration_agent.domain = "personal"
-    result = await integration_agent.integrate_content(content, "synthesis")
-    assert result.metadata["domain"] == "personal"
-
-if __name__ == "__main__":
-    pytest.main([__file__])
+    @pytest.mark.asyncio
+    async def test_agent_interaction_flow(self, memory_system, orchestration_agent, parsing_agent, analytics_agent):
+        """Test interactions between multiple agents."""
+        # Override all dependencies
+        app.dependency_overrides.update({
+            get_memory_system: lambda: memory_system,
+            get_orchestration_agent: lambda: orchestration_agent,
+            get_parsing_agent: lambda: parsing_agent,
+            get_analytics_agent: lambda: analytics_agent
+        })
+        
+        try:
+            client = TestClient(app)
+            
+            # Start monitoring agent interactions
+            with client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}) as websocket:
+                # Create a task that requires multiple agents
+                task_response = client.post(
+                    "/api/orchestration/tasks",
+                    headers={"X-API-Key": TEST_API_KEY},
+                    json={
+                        **VALID_TASK,
+                        "requires_parsing": True,
+                        "requires_analytics": True
+                    }
+                )
+                task_id = task_response.json()["task_id"]
+                
+                # Monitor agent interactions
+                websocket.send_json({
+                    "type": "agent_monitor",
+                    "task_id": task_id
+                })
+                
+                # Should see parsing agent activity
+                parsing_update = websocket.receive_json()
+                assert parsing_update["type"] == "agent_update"
+                assert parsing_update["agent_type"] == "parsing"
+                
+                # Should see analytics agent activity
+                analytics_update = websocket.receive_json()
+                assert analytics_update["type"] == "agent_update"
+                assert analytics_update["agent_type"] == "analytics"
+                
+                # Verify agent interactions were recorded
+                interactions = await memory_system.semantic.get_relationships(
+                    task_id,
+                    relationship_type="AGENT_INTERACTION"
+                )
+                assert len(interactions) > 0
+                
+                # Verify memory was shared between agents
+                shared_memory = await memory_system.semantic.get_relationships(
+                    task_id,
+                    relationship_type="SHARED_MEMORY"
+                )
+                assert len(shared_memory) > 0
+        finally:
+            app.dependency_overrides.clear()

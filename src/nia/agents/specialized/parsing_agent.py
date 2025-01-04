@@ -39,7 +39,7 @@ class ParsingAgent(TinyTroupeAgent, NovaParser):
         # Initialize NovaParser first
         NovaParser.__init__(
             self,
-            llm=memory_system.llm if memory_system else None,
+            llm=None,  # Will be set later through LMStudio
             store=memory_system.semantic.store if memory_system else None,
             vector_store=memory_system.episodic.store if memory_system else None,
             domain=self.domain

@@ -176,6 +176,62 @@ class TestScenarios:
         assert task_result["status"] == "completed"
 ```
 
+### Mock Implementations
+```python
+class MockMemorySystem:
+    """Example of proper async mock implementation."""
+    class AsyncIterator:
+        def __init__(self, memory_system):
+            self.memory_system = memory_system
+            self.done = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.done:
+                raise StopAsyncIteration
+            self.done = True
+            return self.memory_system
+
+    class MockStore:
+        def __init__(self):
+            self.store = self
+            self.collection = "test_collection"
+            
+        async def connect(self):
+            return self
+            
+        async def close(self):
+            return None
+            
+        async def ensure_collection(self):
+            return self.collection
+            
+        async def store(self, *args, **kwargs):
+            return {"id": "test-id"}
+            
+        async def search(self, *args, **kwargs):
+            return []
+            
+        async def __aenter__(self):
+            await self.connect()
+            return self
+            
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            await self.close()
+
+    def __init__(self):
+        self.semantic = self.MockStore()
+        self.episodic = self.MockStore()
+        self.vector_store = self.MockStore()
+
+    @classmethod
+    def create_mock(cls):
+        """Create properly wrapped mock system."""
+        return cls.AsyncIterator(cls())
+```
+
 ### Integration Tests
 ```python
 class IntegrationTests:
@@ -201,6 +257,46 @@ class IntegrationTests:
         # Test memory operations
         memory = await nova.memory_store.query_domain("web_app")
         assert len(memory) > 0
+
+class WebSocketTests:
+    """Test WebSocket functionality."""
+    async def test_websocket_analytics(self, mock_memory, mock_analytics_agent):
+        """Test WebSocket analytics processing."""
+        # Override dependencies
+        app.dependency_overrides[get_memory_system] = lambda: mock_memory
+        app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+        
+        try:
+            # Create test client
+            client = TestClient(app)
+            
+            # Connect to WebSocket endpoint
+            async with client.websocket_connect(
+                "/api/analytics/ws",
+                headers={"X-API-Key": TEST_API_KEY}
+            ) as websocket:
+                # Send analytics request
+                await websocket.send_json({
+                    "type": "analytics_request",
+                    "content": "Test content",
+                    "domain": "test"
+                })
+                
+                # Verify response
+                response = await websocket.receive_json()
+                assert response["type"] == "analytics_update"
+                assert "analytics" in response
+                assert "insights" in response
+                assert "confidence" in response
+                
+                # Test error handling
+                await websocket.send_json({"invalid": "request"})
+                error_response = await websocket.receive_json()
+                assert error_response["type"] == "error"
+                assert "error" in error_response
+        finally:
+            # Clean up dependencies
+            app.dependency_overrides.clear()
 ```
 
 ## Task Management Examples

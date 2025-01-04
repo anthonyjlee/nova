@@ -335,9 +335,9 @@ def mock_neo4j_store():
                     source_node = None
                     target_node = None
                     for node in self.store.nodes.values():
-                        if node["properties"]["name"] == params["from"]:
+                        if node["properties"]["name"] == params.get("name"):
                             source_node = node
-                        if node["properties"]["name"] == params["to"]:
+                        if node["properties"]["name"] == params.get("related_name"):
                             target_node = node
                     
                     if not source_node:
@@ -345,7 +345,7 @@ def mock_neo4j_store():
                         source_node = {
                             "label": "Concept",
                             "properties": {
-                                "name": params["from"],
+                                "name": params.get("name"),
                                 "type": params.get("type", "concept"),
                                 "description": "",
                                 "is_consolidation": False
@@ -358,7 +358,7 @@ def mock_neo4j_store():
                         target_node = {
                             "label": "Concept",
                             "properties": {
-                                "name": params["to"],
+                                "name": params.get("related_name"),
                                 "type": params.get("type", "concept"),
                                 "description": "",
                                 "is_consolidation": False
@@ -368,9 +368,9 @@ def mock_neo4j_store():
                     
                     # Create relationship
                     self.store.relationships.append({
-                        "from": params["from"],
-                        "to": params["to"],
-                        "type": params["type"],
+                        "from": params.get("name"),
+                        "to": params.get("related_name"),
+                        "type": "RELATED_TO",
                         "properties": {}
                     })
                     
@@ -382,11 +382,13 @@ def mock_neo4j_store():
 
     class MockNeo4jStore(Neo4jBaseStore):
         def __init__(self):
-            super().__init__("bolt://127.0.0.1:7687", "neo4j", "password")
+            super().__init__("bolt://127.0.0.1:7687", username="neo4j", password="password")
             self.nodes = {}
             self.relationships = []  # List to store relationships
             self.beliefs = []
             self.driver = self
+            self.user = "neo4j"  # Add user attribute
+            self.password = "password"  # Add password attribute
             print(f"\nInitialized MockNeo4jStore with empty relationships list (id: {id(self.relationships)})")
             
         def session(self):

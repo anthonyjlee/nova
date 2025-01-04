@@ -1,6 +1,6 @@
 """FastAPI application for Nova's server."""
 
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import uuid
@@ -14,7 +14,7 @@ from .error_handling import (
     handle_http_error,
     handle_validation_error
 )
-from .auth import reset_rate_limits
+from .auth import reset_rate_limits, check_rate_limit
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -189,7 +189,7 @@ async def startup_event():
     # Reset rate limits on startup
     reset_rate_limits()
 
-@app.get("/health")
+@app.get("/health", dependencies=[Depends(check_rate_limit)])
 async def health_check():
     """Health check endpoint."""
     return {
@@ -198,7 +198,7 @@ async def health_check():
         "version": app.version
     }
 
-@app.get("/")
+@app.get("/", dependencies=[Depends(check_rate_limit)])
 async def root():
     """Root endpoint."""
     return {

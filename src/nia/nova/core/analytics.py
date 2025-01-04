@@ -143,18 +143,30 @@ class AnalyticsAgent:
         analytics_type: str
     ) -> List[Dict]:
         """Get similar analytics from vector store."""
+        # Skip vector search if no vector store or no content
+        if not self.vector_store or "content" not in content:
+            return []
+            
         try:
-            if "content" in content:
-                results = await self.vector_store.search_vectors(
+            # Add timeout to prevent hanging
+            from asyncio import wait_for, TimeoutError
+            
+            async def search():
+                return await self.vector_store.search_vectors(
                     content=content["content"],
                     limit=5,
                     layer="analytics",
                     include_metadata=True
                 )
-                return results
+                
+            results = await wait_for(search(), timeout=5.0)
+            return results
+        except TimeoutError:
+            logger.warning("Vector search timed out")
+            return []
         except Exception as e:
             logger.error(f"Error getting similar analytics: {str(e)}")
-        return []
+            return []
             
     def _basic_analytics(
         self,

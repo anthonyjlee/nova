@@ -1,4 +1,4 @@
-"""FastAPI endpoints for Nova's analytics and orchestration."""
+"""F astAPI endpoints for Nova's analytics and orchestration."""
 
 from fastapi import APIRouter, HTTPException, WebSocket, Depends, Header, Request
 from typing import Dict, List, Optional, Any
@@ -7,6 +7,7 @@ import aiohttp
 
 from nia.nova.core.analytics import AnalyticsAgent, AnalyticsResult
 from nia.nova.core.parsing import NovaParser
+from nia.nova.core.llm import LMStudioLLM
 from nia.agents.specialized.orchestration_agent import OrchestrationAgent
 from nia.agents.specialized.parsing_agent import ParsingAgent
 from nia.memory.types.memory_types import AgentResponse
@@ -65,62 +66,102 @@ ws_router = APIRouter(
     tags=["analytics"]
 )
 
-# Initialize memory system and agents
-from nia.memory.neo4j.base_store import Neo4jBaseStore
-from nia.memory.neo4j.concept_store import ConceptStore
+# Service dependencies
+async def get_memory_system():
+    """Get memory system instance."""
+    memory_system = TwoLayerMemorySystem(
+        neo4j_uri="bolt://localhost:7687"
+    )
+    try:
+        # Initialize Neo4j connection
+        await memory_system.semantic.connect()
+        # Initialize vector store if needed
+        if hasattr(memory_system.episodic.store, 'connect'):
+            await memory_system.episodic.store.connect()
+        yield memory_system
+    finally:
+        # Cleanup connections
+        if hasattr(memory_system.semantic, 'close'):
+            await memory_system.semantic.close()
+        if hasattr(memory_system.episodic.store, 'close'):
+            await memory_system.episodic.store.close()
 
-# Initialize Neo4j store
-neo4j_store = ConceptStore(
-    uri="bolt://localhost:7687",
-    user="neo4j",
-    password="password"
-)
-
-# Initialize memory system
-memory_system = TwoLayerMemorySystem(
-    neo4j_uri="bolt://localhost:7687"
-)
-
-# Initialize world
-world = NIAWorld()
-
-# Initialize parsing agent
-parsing_agent = ParsingAgent(
-    name="nova_parser",
-    memory_system=memory_system,
-    world=world,
-    domain="professional"
-)
-
-# Initialize analytics agent with LM Studio
-from .llm import LMStudioLLM
-analytics_agent = AnalyticsAgent(
-    domain="professional",
-    llm=LMStudioLLM(
+async def get_llm():
+    """Get LLM instance."""
+    llm = LMStudioLLM(
         chat_model=CHAT_MODEL,
         embedding_model=EMBEDDING_MODEL
-    ),
-    store=memory_system.semantic.store if memory_system else None,
-    vector_store=memory_system.episodic.store if memory_system else None
-)
+    )
+    return llm
 
-# Initialize orchestration agent
-orchestration_agent = OrchestrationAgent(
-    name="nova_orchestrator",
-    memory_system=memory_system,
-    domain="professional"
-)
-# Set LLM after initialization
-orchestration_agent.llm = LMStudioLLM(
-    chat_model=CHAT_MODEL,
-    embedding_model=EMBEDDING_MODEL
-)
+async def get_world():
+    """Get world instance."""
+    return NIAWorld()
+
+async def get_parsing_agent(
+    memory_system: TwoLayerMemorySystem = Depends(get_memory_system),
+    world: NIAWorld = Depends(get_world),
+    llm: LMStudioLLM = Depends(get_llm)
+):
+    """Get parsing agent instance."""
+    agent = ParsingAgent(
+        name="nova_parser",
+        memory_system=memory_system,
+        world=world,
+        domain="professional"
+    )
+    agent.llm = llm
+    return agent
+
+async def get_analytics_agent(
+    memory_system: TwoLayerMemorySystem = Depends(get_memory_system),
+    llm: LMStudioLLM = Depends(get_llm)
+):
+    """Get analytics agent instance."""
+    # Get memory system from async generator
+    if hasattr(memory_system, '__aiter__'):
+        try:
+            memory_system = await anext(memory_system.__aiter__())
+        except StopAsyncIteration:
+            memory_system = None
+    
+    return AnalyticsAgent(
+        domain="professional",
+        llm=llm,
+        store=memory_system.semantic.store if memory_system else None,
+        vector_store=memory_system.episodic.store if memory_system else None
+    )
+
+import uuid
+
+async def get_orchestration_agent(
+    memory_system: TwoLayerMemorySystem = Depends(get_memory_system),
+    llm: LMStudioLLM = Depends(get_llm)
+):
+    """Get orchestration agent instance."""
+    # Get memory system from async generator
+    if hasattr(memory_system, '__aiter__'):
+        try:
+            memory_system = await anext(memory_system.__aiter__())
+        except StopAsyncIteration:
+            memory_system = None
+    
+    # Generate unique name for each agent instance
+    agent_name = f"nova_orchestrator_{uuid.uuid4().hex[:8]}"
+    agent = OrchestrationAgent(
+        name=agent_name,
+        memory_system=memory_system,
+        domain="professional"
+    )
+    agent.llm = llm
+    return agent
 
 @analytics_router.post("/parse", dependencies=[Depends(check_rate_limit)])
 @retry_on_error(max_retries=3)
 async def parse_text(
     request: Dict,
-    _: None = Depends(get_permission("write"))
+    _: None = Depends(get_permission("write")),
+    parsing_agent: ParsingAgent = Depends(get_parsing_agent)
 ) -> Dict:
     """Parse text using LM Studio integration."""
     try:
@@ -201,7 +242,10 @@ orchestration_router = APIRouter(
 
 
 @ws_router.websocket("/ws")
-async def analytics_websocket(websocket: WebSocket):
+async def analytics_websocket(
+    websocket: WebSocket,
+    analytics_agent: AnalyticsAgent = Depends(get_analytics_agent)
+):
     """WebSocket endpoint for real-time analytics updates."""
     try:
         # Validate API key using dependency
@@ -229,11 +273,29 @@ async def analytics_websocket(websocket: WebSocket):
                     continue
                 
                 # Process analytics based on data type
-                result = await analytics_agent.process_analytics(
-                    content=data,
-                    analytics_type=request.type,
-                    metadata={"domain": request.domain} if request.domain else None
-                )
+                try:
+                    # Handle both sync and async process_analytics
+                    if hasattr(analytics_agent.process_analytics, '__call__'):
+                        result = analytics_agent.process_analytics(
+                            content=data,
+                            analytics_type=request.type,
+                            metadata={"domain": request.domain} if request.domain else None
+                        )
+                    else:
+                        result = await analytics_agent.process_analytics(
+                            content=data,
+                            analytics_type=request.type,
+                            metadata={"domain": request.domain} if request.domain else None
+                        )
+                except Exception as e:
+                    await websocket.send_json({
+                        "type": "error",
+                        "error": {
+                            "code": "PROCESSING_ERROR",
+                            "message": str(e)
+                        }
+                    })
+                    continue
                 
                 # Ensure we have valid analytics data
                 analytics = result.analytics if hasattr(result, 'analytics') else {}
@@ -274,7 +336,8 @@ async def analytics_websocket(websocket: WebSocket):
 async def get_flow_analytics(
     flow_id: Optional[str] = None,
     domain: Optional[str] = None,
-    _: None = Depends(get_permission("read"))
+    _: None = Depends(get_permission("read")),
+    analytics_agent: AnalyticsAgent = Depends(get_analytics_agent)
 ) -> Dict:
     """Get analytics for active flows."""
     try:
@@ -314,7 +377,8 @@ async def get_flow_analytics(
 async def get_resource_analytics(
     resource_id: Optional[str] = None,
     domain: Optional[str] = None,
-    _: None = Depends(get_permission("read"))
+    _: None = Depends(get_permission("read")),
+    analytics_agent: AnalyticsAgent = Depends(get_analytics_agent)
 ) -> Dict:
     """Get analytics for resource utilization."""
     try:
@@ -344,7 +408,8 @@ async def get_resource_analytics(
 async def get_agent_analytics(
     agent_id: Optional[str] = None,
     domain: Optional[str] = None,
-    _: None = Depends(get_permission("read"))
+    _: None = Depends(get_permission("read")),
+    analytics_agent: AnalyticsAgent = Depends(get_analytics_agent)
 ) -> Dict:
     """Get analytics for agent performance."""
     try:
@@ -373,7 +438,8 @@ async def get_agent_analytics(
 @orchestration_router.get("/tasks")
 async def list_tasks(
     domain: Optional[str] = None,
-    _: None = Depends(get_permission("read"))
+    _: None = Depends(get_permission("read")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
 ) -> Dict:
     """List all tasks."""
     try:
@@ -398,7 +464,8 @@ async def list_tasks(
 async def create_task(
     task: TaskRequest,
     domain: Optional[str] = None,
-    _: None = Depends(get_permission("write"))
+    _: None = Depends(get_permission("write")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
 ) -> Dict:
     """Create a new task for orchestration."""
     try:
@@ -426,7 +493,8 @@ async def create_task(
 async def get_task(
     task_id: str,
     domain: Optional[str] = None,
-    _: None = Depends(get_permission("read"))
+    _: None = Depends(get_permission("read")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
 ) -> Dict:
     """Get task status and details."""
     try:
@@ -460,7 +528,8 @@ async def update_task(
     task_id: str,
     updates: TaskRequest,
     domain: Optional[str] = None,
-    _: None = Depends(get_permission("write"))
+    _: None = Depends(get_permission("write")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
 ) -> Dict:
     """Update task status or configuration."""
     try:
@@ -505,7 +574,8 @@ async def get_coordination_status(
 async def coordinate_agents(
     coordination_request: CoordinationRequest,
     domain: Optional[str] = None,
-    _: None = Depends(get_permission("write"))
+    _: None = Depends(get_permission("write")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
 ) -> Dict:
     """Coordinate multiple agents for a task."""
     try:
@@ -545,7 +615,8 @@ async def assign_agent(
     agent_id: str,
     assignment: AgentAssignmentRequest,
     domain: Optional[str] = None,
-    _: None = Depends(get_permission("write"))
+    _: None = Depends(get_permission("write")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
 ) -> Dict:
     """Assign a task to a specific agent."""
     try:
@@ -576,7 +647,9 @@ async def optimize_flow(
     flow_id: str,
     request: Dict[str, Any],
     domain: Optional[str] = None,
-    _: None = Depends(get_permission("write"))
+    _: None = Depends(get_permission("write")),
+    analytics_agent: AnalyticsAgent = Depends(get_analytics_agent),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
 ) -> Dict:
     """Optimize flow based on analytics insights."""
     try:
@@ -620,7 +693,9 @@ async def optimize_flow(
 async def allocate_resources(
     allocation_request: ResourceAllocationRequest,
     domain: Optional[str] = None,
-    _: None = Depends(get_permission("write"))
+    _: None = Depends(get_permission("write")),
+    analytics_agent: AnalyticsAgent = Depends(get_analytics_agent),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
 ) -> Dict:
     """Allocate resources based on analytics predictions."""
     try:
@@ -661,7 +736,8 @@ async def allocate_resources(
 async def store_memory(
     memory: MemoryRequest,
     domain: Optional[str] = None,
-    _: None = Depends(get_permission("write"))
+    _: None = Depends(get_permission("write")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
 ) -> Dict:
     """Store a new memory."""
     try:
@@ -709,7 +785,8 @@ async def store_memory(
 async def retrieve_memory(
     memory_id: str,
     domain: Optional[str] = None,
-    _: None = Depends(get_permission("read"))
+    _: None = Depends(get_permission("read")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
 ) -> Dict:
     """Retrieve a stored memory."""
     try:
@@ -752,7 +829,8 @@ async def retrieve_memory(
 async def search_memories(
     query: MemoryRequest,
     domain: Optional[str] = None,
-    _: None = Depends(get_permission("read"))
+    _: None = Depends(get_permission("read")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
 ) -> Dict:
     """Search through stored memories."""
     try:

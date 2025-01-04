@@ -390,5 +390,5 @@ class ValidationAgent(TinyTroupeAgent, NovaValidationAgent):
         if self._memory_system and hasattr(self._memory_system, "semantic"):
             await self._memory_system.semantic.store.record_reflection(
                 content=content,
-                domain=domain or self.domain
+                domain or self.domain
             )

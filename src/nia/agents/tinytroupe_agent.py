@@ -39,7 +39,7 @@ class TinyTroupeAgent(TinyPerson, MemoryBaseAgent):
         # Initialize MemoryBaseAgent
         MemoryBaseAgent.__init__(
             self,
-            llm=memory_system.llm if memory_system else None,
+            llm=None,  # Will be set later through LMStudio
             store=memory_system.semantic.driver if memory_system else None,
             vector_store=memory_system.episodic.store if memory_system else None,
             agent_type=agent_type

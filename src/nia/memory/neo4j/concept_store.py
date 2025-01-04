@@ -5,8 +5,8 @@ from typing import Dict, List, Optional, Union
 
 from .base_store import Neo4jBaseStore
 from .validation_handler import ValidationHandler
-from ..types.json_utils import validate_json_structure
-from ..types.concept_utils import validate_concept_structure
+from ..types.json_utils.validation import validate_json_structure
+from ..types.concept_utils.validation import validate_concept_structure
 
 logger = logging.getLogger(__name__)
 

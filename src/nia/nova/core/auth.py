@@ -51,6 +51,8 @@ async def get_api_key(api_key_header: Optional[str] = Security(API_KEY_HEADER)) 
     
     return api_key_header
 
+from typing import Any
+
 async def validate_request_format(request: Any) -> None:
     """Validate request format."""
     if not isinstance(request, dict):

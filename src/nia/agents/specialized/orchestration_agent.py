@@ -25,7 +25,7 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
         domain: Optional[str] = None
     ):
         """Initialize orchestration agent."""
-        # Create memory system if not provided
+        # Create and store memory system reference
         if not memory_system:
             memory_system = TwoLayerMemorySystem()
             
@@ -45,13 +45,16 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
         NovaOrchestrationAgent.__init__(
             self,
             llm=None,  # TinyTroupeAgent handles LLM interactions
-            store=memory_system.semantic.driver if memory_system else None,
-            vector_store=memory_system.episodic.store,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
             domain=domain
         )
 
-        # Initialize TinyTroupe capabilities
-        self.learn_concept = self.memory_system.semantic.store_concept if memory_system else None
+        # Initialize TinyTroupe capabilities after memory system is ready
+        if memory_system and hasattr(memory_system, 'semantic'):
+            self.learn_concept = memory_system.semantic.store_concept
+        else:
+            self.learn_concept = None
         
         # Set domain
         self.domain = domain or "professional"  # Default to professional domain
@@ -218,17 +221,47 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                     
         # Convert AgentResponse to expected format
         # Create response object
-        return AgentResponse(
-            response=str(response),
-            concepts=response.concepts if hasattr(response, "concepts") else [],
-            confidence=1.0,
-            orchestration={
-                "status": "success",
-                "memory_id": response.memory_id if hasattr(response, "memory_id") else None,
-                "memory": response.concepts if hasattr(response, "concepts") else [],
-                "timestamp": datetime.now().isoformat()
-            }
-        )
+        try:
+            if isinstance(response, str):
+                # Try to parse JSON string
+                try:
+                    import json
+                    parsed = json.loads(response)
+                    response_str = parsed.get("response", response)
+                    response_concepts = parsed.get("concepts", [])
+                    response_memory_id = parsed.get("memory_id")
+                except json.JSONDecodeError:
+                    response_str = response
+                    response_concepts = []
+                    response_memory_id = None
+            else:
+                response_str = response.response if hasattr(response, 'response') else str(response)
+                response_concepts = response.concepts if hasattr(response, 'concepts') else []
+                response_memory_id = response.memory_id if hasattr(response, 'memory_id') else None
+
+            return AgentResponse(
+                response=response_str,
+                concepts=response_concepts,
+                confidence=1.0,
+                orchestration={
+                    "status": "success",
+                    "memory_id": response_memory_id,
+                    "memory": response_concepts,
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+        except Exception as e:
+            logger.error(f"Error formatting response: {str(e)}")
+            return AgentResponse(
+                response="Error processing response",
+                concepts=[],
+                confidence=0.0,
+                orchestration={
+                    "status": "error",
+                    "error": str(e),
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
         
     async def _get_flow_analytics(self, flow_id: str) -> Optional[AnalyticsResult]:
         """Get analytics for a specific flow."""
@@ -449,7 +482,19 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                     domain=self.domain
                 )
         
-        return result
+        # Convert OrchestrationResult to AgentResponse
+        return AgentResponse(
+            response="Orchestration completed",
+            concepts=[],
+            confidence=result.confidence,
+            orchestration={
+                "status": "success" if result.is_valid else "error",
+                "orchestration": result.orchestration,
+                "decisions": result.decisions,
+                "issues": result.issues,
+                "timestamp": datetime.now().isoformat()
+            }
+        )
         
     async def _update_flow_state(self, flow_id: str, content: Dict[str, Any]):
         """Update flow state tracking with analytics integration."""
