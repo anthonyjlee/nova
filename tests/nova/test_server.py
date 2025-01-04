@@ -6,6 +6,7 @@ from datetime import datetime
 
 from nia.nova.core.app import app
 from nia.nova.core.auth import API_KEYS, reset_rate_limits
+from nia.nova.core.endpoints import get_analytics_agent, get_memory_system
 from nia.nova.core.test_data import (
     VALID_TASK,
     VALID_COORDINATION_REQUEST,
@@ -16,6 +17,11 @@ from nia.nova.core.test_data import (
     VALID_FLOW_OPTIMIZATION,
     VALID_ANALYTICS_REQUEST
 )
+
+from httpx import AsyncClient
+from fastapi.testclient import TestClient
+import websockets
+import json
 
 # Test client
 client = TestClient(app)
@@ -35,7 +41,7 @@ def reset_test_state():
 
 def test_health_check():
     """Test health check endpoint."""
-    response = client.get("/health")
+    response = client.get("/health", headers=HEADERS)
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "healthy"
@@ -44,7 +50,7 @@ def test_health_check():
 
 def test_root():
     """Test root endpoint."""
-    response = client.get("/")
+    response = client.get("/", headers=HEADERS)
     assert response.status_code == 200
     data = response.json()
     assert data["name"] == "Nova API"
@@ -273,17 +279,20 @@ def test_memory_operations():
 
 def test_rate_limiting():
     """Test rate limiting."""
+    # Use a simpler endpoint that doesn't involve vector store
+    endpoint = "/health"
+    
     # Make requests up to limit
     for _ in range(100):
         response = client.get(
-            "/api/analytics/flows",
+            endpoint,
             headers=HEADERS
         )
         assert response.status_code == 200
     
     # Next request should fail
     response = client.get(
-        "/api/analytics/flows",
+        endpoint,
         headers=HEADERS
     )
     assert response.status_code == 429
@@ -291,28 +300,315 @@ def test_rate_limiting():
     assert "error" in data
     assert data["error"]["code"] == "RATE_LIMIT_EXCEEDED"
 
-def test_websocket():
-    """Test WebSocket connection."""
-    # Set up WebSocket headers
-    headers = {
-        "x-api-key": TEST_API_KEY,
-        "connection": "upgrade",
-        "upgrade": "websocket",
-        "sec-websocket-version": "13",
-        "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ=="  # Required by WebSocket protocol
-    }
+@pytest.fixture
+def mock_memory():
+    class AsyncIterator:
+        def __init__(self, memory_system):
+            self.memory_system = memory_system
+            self.done = False
+
+        def __aiter__(self):
+            return self
+
+        async def __anext__(self):
+            if self.done:
+                raise StopAsyncIteration
+            self.done = True
+            return self.memory_system
+
+    class MockStore:
+        def __init__(self):
+            self.store = self
+            self.collection = "test_collection"
+            self.client = self
+            
+        async def connect(self):
+            return self
+            
+        async def close(self):
+            return None
+            
+        async def ensure_collection(self):
+            return self.collection
+            
+        async def store(self, *args, **kwargs):
+            return {"id": "test-id"}
+            
+        async def search(self, *args, **kwargs):
+            return []
+            
+        async def get_collection(self):
+            return self.collection
+            
+        async def __aenter__(self):
+            await self.connect()
+            return self
+            
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            await self.close()
     
-    with client.websocket_connect(
-        "/api/analytics/ws",
-        headers=headers
-    ) as websocket:
-        # Send analytics request
-        websocket.send_json(VALID_ANALYTICS_REQUEST)
+    class MockMemorySystem:
+        def __init__(self):
+            self.semantic = MockStore()
+            self.episodic = MockStore()
+            self.vector_store = MockStore()
+    
+    memory_system = MockMemorySystem()
+    return AsyncIterator(memory_system)
+
+@pytest.fixture
+def mock_analytics_agent():
+    class MockAnalyticsAgent:
+        async def process_analytics(self, content, analytics_type, metadata=None):
+            from nia.nova.core.analytics import AnalyticsResult
+            return AnalyticsResult(
+                is_valid=True,
+                analytics={
+                    "test_metric": {
+                        "type": "metric",
+                        "value": 0.8,
+                        "confidence": 0.9
+                    }
+                },
+                insights=[
+                    {
+                        "type": "test_insight",
+                        "description": "Test insight",
+                        "confidence": 0.9
+                    }
+                ],
+                confidence=0.9,
+                metadata=metadata
+            )
+    
+    agent = MockAnalyticsAgent()
+    return agent
+
+@pytest.mark.asyncio
+async def test_websocket_success(mock_memory, mock_analytics_agent):
+    """Test successful WebSocket connection and analytics."""
+    # Override dependencies
+    app.dependency_overrides[get_memory_system] = lambda: mock_memory
+    app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    
+    try:
+        # Use FastAPI's test client
+        client = TestClient(app)
+        with client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}) as websocket:
+            # Send analytics request
+            websocket.send_json(VALID_ANALYTICS_REQUEST)
+            
+            # Receive response
+            data = websocket.receive_json()
+            assert data["type"] == "analytics_update"
+            assert "analytics" in data
+            assert "insights" in data
+            assert "confidence" in data
+            assert "timestamp" in data
+    finally:
+        if "get_analytics_agent" in app.dependency_overrides:
+            del app.dependency_overrides["get_analytics_agent"]
+        if "get_memory_system" in app.dependency_overrides:
+            del app.dependency_overrides["get_memory_system"]
+
+def test_websocket_invalid_api_key():
+    """Test WebSocket connection with invalid API key."""
+    with pytest.raises(Exception) as exc_info:  # FastAPI's TestClient raises its own exception
+        client = TestClient(app)
+        with client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": "invalid-key"}):
+            pass
+
+def test_websocket_missing_api_key():
+    """Test WebSocket connection without API key."""
+    with pytest.raises(Exception) as exc_info:  # FastAPI's TestClient raises its own exception
+        client = TestClient(app)
+        with client.websocket_connect("/api/analytics/ws"):
+            pass
+
+@pytest.mark.asyncio
+async def test_websocket_invalid_request(mock_memory, mock_analytics_agent):
+    """Test WebSocket connection with invalid analytics request."""
+    # Override dependencies
+    app.dependency_overrides[get_memory_system] = lambda: mock_memory
+    app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    
+    try:
+        client = TestClient(app)
+        with client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}) as websocket:
+            # Send invalid request
+            websocket.send_json({"invalid": "request"})
+            
+            # Receive error response
+            data = websocket.receive_json()
+            assert data["type"] == "error"
+            assert "error" in data
+            assert data["error"]["code"] == "VALIDATION_ERROR"
+    finally:
+        if "get_analytics_agent" in app.dependency_overrides:
+            del app.dependency_overrides["get_analytics_agent"]
+        if "get_memory_system" in app.dependency_overrides:
+            del app.dependency_overrides["get_memory_system"]
+
+@pytest.mark.asyncio
+async def test_websocket_processing_error(mock_memory, mock_analytics_agent):
+    """Test WebSocket connection with processing error."""
+    # Override dependencies with error-raising mock
+    class ErrorAnalyticsAgent:
+        async def process_analytics(self, content, analytics_type, metadata=None):
+            raise Exception("Processing error")
+    
+    app.dependency_overrides[get_memory_system] = lambda: mock_memory
+    app.dependency_overrides[get_analytics_agent] = lambda: ErrorAnalyticsAgent()
+    
+    try:
+        client = TestClient(app)
+        with client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}) as websocket:
+            # Send valid request that will trigger processing error
+            websocket.send_json(VALID_ANALYTICS_REQUEST)
+            
+            # Receive error response
+            data = websocket.receive_json()
+            assert data["type"] == "error"
+            assert "error" in data
+            assert data["error"]["code"] == "PROCESSING_ERROR"
+    finally:
+        if "get_analytics_agent" in app.dependency_overrides:
+            del app.dependency_overrides["get_analytics_agent"]
+        if "get_memory_system" in app.dependency_overrides:
+            del app.dependency_overrides["get_memory_system"]
+
+@pytest.mark.asyncio
+async def test_websocket_rate_limiting(mock_memory, mock_analytics_agent):
+    """Test WebSocket connection rate limiting."""
+    # Override dependencies
+    app.dependency_overrides[get_memory_system] = lambda: mock_memory
+    app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    
+    try:
+        client = TestClient(app)
+        # Make requests up to limit
+        for _ in range(100):
+            with client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}) as websocket:
+                websocket.send_json(VALID_ANALYTICS_REQUEST)
+                data = websocket.receive_json()
+                assert data["type"] == "analytics_update"
         
-        # Receive response
-        data = websocket.receive_json()
-        assert data["type"] == "analytics_update"
-        assert "analytics" in data
-        assert "insights" in data
-        assert "confidence" in data
-        assert "timestamp" in data
+        # Next request should fail
+        with pytest.raises(Exception) as exc_info:  # FastAPI's TestClient raises its own exception
+            with client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}):
+                pass
+    finally:
+        if "get_analytics_agent" in app.dependency_overrides:
+            del app.dependency_overrides["get_analytics_agent"]
+        if "get_memory_system" in app.dependency_overrides:
+            del app.dependency_overrides["get_memory_system"]
+
+@pytest.mark.asyncio
+async def test_websocket_cleanup_on_disconnect(mock_memory, mock_analytics_agent):
+    """Test WebSocket cleanup when connection is closed unexpectedly."""
+    # Override dependencies
+    app.dependency_overrides[get_memory_system] = lambda: mock_memory
+    app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    
+    try:
+        client = TestClient(app)
+        # Connect and immediately close
+        websocket = client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY})
+        websocket.close()
+        
+        # Should be able to connect again
+        with client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}) as websocket:
+            websocket.send_json(VALID_ANALYTICS_REQUEST)
+            data = websocket.receive_json()
+            assert data["type"] == "analytics_update"
+    finally:
+        if "get_analytics_agent" in app.dependency_overrides:
+            del app.dependency_overrides["get_analytics_agent"]
+        if "get_memory_system" in app.dependency_overrides:
+            del app.dependency_overrides["get_memory_system"]
+
+@pytest.mark.asyncio
+async def test_websocket_concurrent_connections(mock_memory, mock_analytics_agent):
+    """Test multiple concurrent WebSocket connections."""
+    # Override dependencies
+    app.dependency_overrides[get_memory_system] = lambda: mock_memory
+    app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    
+    try:
+        client = TestClient(app)
+        # Create multiple connections
+        with client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}) as ws1, \
+             client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}) as ws2:
+            
+            # Send requests on both connections
+            ws1.send_json(VALID_ANALYTICS_REQUEST)
+            ws2.send_json(VALID_ANALYTICS_REQUEST)
+            
+            # Verify both connections receive responses
+            data1 = ws1.receive_json()
+            data2 = ws2.receive_json()
+            
+            assert data1["type"] == "analytics_update"
+            assert data2["type"] == "analytics_update"
+    finally:
+        if "get_analytics_agent" in app.dependency_overrides:
+            del app.dependency_overrides["get_analytics_agent"]
+        if "get_memory_system" in app.dependency_overrides:
+            del app.dependency_overrides["get_memory_system"]
+
+@pytest.mark.asyncio
+async def test_websocket_timeout(mock_memory, mock_analytics_agent):
+    """Test WebSocket connection timeout handling."""
+    # Override dependencies
+    app.dependency_overrides[get_memory_system] = lambda: mock_memory
+    app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    
+    try:
+        client = TestClient(app)
+        with client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}) as websocket:
+            # Send initial request to verify connection
+            websocket.send_json(VALID_ANALYTICS_REQUEST)
+            data = websocket.receive_json()
+            assert data["type"] == "analytics_update"
+            
+            # Wait for timeout (FastAPI's default is 10 seconds)
+            import time
+            time.sleep(11)
+            
+            # Next request should fail due to timeout
+            with pytest.raises(Exception) as exc_info:  # FastAPI's TestClient raises its own exception
+                websocket.send_json(VALID_ANALYTICS_REQUEST)
+    finally:
+        if "get_analytics_agent" in app.dependency_overrides:
+            del app.dependency_overrides["get_analytics_agent"]
+        if "get_memory_system" in app.dependency_overrides:
+            del app.dependency_overrides["get_memory_system"]
+
+@pytest.mark.asyncio
+async def test_websocket_heartbeat(mock_memory, mock_analytics_agent):
+    """Test WebSocket connection stays alive with ping/pong."""
+    # Override dependencies
+    app.dependency_overrides[get_memory_system] = lambda: mock_memory
+    app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    
+    try:
+        client = TestClient(app)
+        with client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}) as websocket:
+            # Send initial request
+            websocket.send_json(VALID_ANALYTICS_REQUEST)
+            data = websocket.receive_json()
+            assert data["type"] == "analytics_update"
+            
+            # Wait longer than ping interval but less than timeout
+            import time
+            time.sleep(5)  # Default ping interval is 3 seconds
+            
+            # Connection should still be alive
+            websocket.send_json(VALID_ANALYTICS_REQUEST)
+            data = websocket.receive_json()
+            assert data["type"] == "analytics_update"
+    finally:
+        if "get_analytics_agent" in app.dependency_overrides:
+            del app.dependency_overrides["get_analytics_agent"]
+        if "get_memory_system" in app.dependency_overrides:
+            del app.dependency_overrides["get_memory_system"]
