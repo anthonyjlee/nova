@@ -328,40 +328,116 @@ async def demo_core_functionality():
     for insight in analytics.get("insights", []):
         print_agent_message("Nova", f"• {insight}")
 
-    # Note: Full swarm capabilities are under development
-    print_agent_message("Nova", "Note: Advanced swarm architectures are in development...")
-    print_agent_message("Nova", "Currently implemented patterns:")
-    print_agent_message("Nova", "• Basic agent coordination through WebSocket")
-    print_agent_message("Nova", "• Sequential task processing")
-    print_agent_message("Nova", "• Memory consolidation")
+    # Demonstrate swarm architectures
+    print_agent_message("Nova", "Demonstrating swarm architecture patterns...")
     
-    print_agent_message("Nova", "\nPlanned swarm architectures:")
-    print_agent_message("Nova", "• Hierarchical swarms")
-    print_agent_message("Nova", "• Parallel processing")
-    print_agent_message("Nova", "• Round-robin task distribution")
-    print_agent_message("Nova", "• Graph-based workflows")
-    print_agent_message("Nova", "• Majority voting systems")
+    # Request swarm creation through Nova's orchestration
+    print_agent_message("Nova", "Requesting swarm creation through TinyFactory...", True)
+    swarm_request = {
+        "type": "swarm_creation",
+        "domain": "test",
+        "swarm_requirements": {
+            "patterns": [
+                "hierarchical",
+                "parallel",
+                "sequential",
+                "mesh",
+                "round_robin",
+                "majority_voting"
+            ],
+            "capabilities": [
+                "task_execution",
+                "communication",
+                "coordination"
+            ]
+        }
+    }
+    
+    # Create swarms through Nova's orchestration
+    response = requests.post(
+        f"{API_BASE}/orchestration/swarms",
+        json=swarm_request
+    )
+    swarm_data = response.json()
+    
+    # Display swarm creation results
+    print_agent_message("Nova", "\nSwarm patterns created:")
+    for pattern, info in swarm_data["swarms"].items():
+        print_agent_message("Nova", f"• {pattern.title()} Swarm (ID: {info['swarm_id']})")
+    
+    # Demonstrate swarm coordination
+    print_agent_message("Nova", "\nDemonstrating swarm coordination...")
+    
+    async with websockets.connect(f"{WS_BASE}/analytics/ws") as websocket:
+        try:
+            # Monitor swarm activity
+            await websocket.send(json.dumps({
+                "type": "swarm_monitor",
+                "swarm_ids": [
+                    info["swarm_id"] for info in swarm_data["swarms"].values()
+                ]
+            }))
+            
+            while True:
+                try:
+                    response = await websocket.recv()
+                    data = json.loads(response)
+                    
+                    if data["type"] == "swarm_update":
+                        pattern = data.get("pattern")
+                        event = data.get("event_type")
+                        
+                        if pattern and event:
+                            print_agent_message(
+                                "Nova", 
+                                f"[{pattern.title()}] {event}: {data.get('message', '')}"
+                            )
+                    
+                    elif data["type"] == "coordination_complete":
+                        break
+                        
+                except websockets.exceptions.ConnectionClosed:
+                    print_agent_message("Nova", "WebSocket connection closed")
+                    break
+                except Exception as e:
+                    print_agent_message("Nova", f"Error: {str(e)}")
+                    break
+                    
+        except Exception as e:
+            print_agent_message("Nova", f"Swarm coordination error: {str(e)}")
+        finally:
+            # Cleanup swarms
+            cleanup_response = requests.delete(
+                f"{API_BASE}/orchestration/swarms",
+                json={"swarm_ids": [info["swarm_id"] for info in swarm_data["swarms"].values()]}
+            )
+            if cleanup_response.status_code != 200:
+                print_agent_message("Nova", "Warning: Some swarms may not have been cleaned up properly")
 
     # Current coordination capabilities demo
     print_agent_message("Nova", "\nDemonstrating current coordination capabilities...")
     
+    # Request coordination through TinyFactory
     coordination_request = {
+        "type": "coordination_request",
+        "domain": "science",
         "task": {
-            "type": "sequential_processing",
+            "type": "analysis",
             "content": "Analyze the relationship between sky color and light scattering",
-            "agents": ["parser", "belief"]
+            "required_capabilities": ["parsing", "belief_management"]
         },
         "llm_config": llm_config
     }
     
     try:
         response = requests.post(
-            f"{API_BASE}/orchestration/agents/coordinate",
+            f"{API_BASE}/orchestration/coordinate",
             json=coordination_request
         )
         if response.status_code == 200:
             result = response.json()
-            print_agent_message("Nova", "Basic coordination successful")
+            print_agent_message("Nova", "Coordination successful")
+            print_agent_message("Nova", f"Analysis result: {result.get('content', 'No content available')}")
         else:
             print_agent_message("Nova", "Note: Some coordination features are still in development")
     except Exception as e:
@@ -382,6 +458,21 @@ async def demo_core_functionality():
     print("3. Memory consolidation")
     print("4. Swarm architecture")
     print("5. Concept validation")
+
+def configure_logging():
+    """Configure logging for the demo script"""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.StreamHandler(),
+            logging.FileHandler('demo.log')
+        ]
+    )
+    # Suppress websockets debug logging
+    logging.getLogger('websockets').setLevel(logging.INFO)
+    # Set Nova logger to INFO
+    logging.getLogger('nia.nova').setLevel(logging.INFO)
 
 if __name__ == "__main__":
     # Initialize colorama

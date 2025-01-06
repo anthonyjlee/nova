@@ -10,12 +10,14 @@ from nia.nova.core.auth import API_KEYS
 from nia.nova.core.endpoints import (
     get_memory_system,
     get_analytics_agent,
-    get_llm_interface
+    get_llm_interface,
+    get_tiny_factory
 )
 from nia.nova.core.test_data import VALID_TASK
 from nia.memory.two_layer import TwoLayerMemorySystem
 from nia.agents.specialized.analytics_agent import AnalyticsAgent
 from nia.memory.llm_interface import LLMInterface
+from nia.agents.tinytroupe_agent import TinyFactory
 
 # Test API key
 TEST_API_KEY = "test-key"
@@ -59,6 +61,11 @@ async def analytics_agent(memory_system, llm_interface):
         llm_interface=llm_interface
     )
     return agent
+
+@pytest.fixture
+async def tiny_factory(memory_system):
+    """Create TinyFactory instance for testing."""
+    return TinyFactory(memory_system=memory_system)
 
 @pytest.mark.integration
 class TestDemoFunctionality:
@@ -217,39 +224,138 @@ class TestDemoFunctionality:
             app.dependency_overrides.clear()
     
     @pytest.mark.asyncio
-    async def test_coordination_capabilities(self, memory_system, analytics_agent, llm_interface):
-        """Test current coordination capabilities."""
+    async def test_swarm_coordination(self, memory_system, analytics_agent, llm_interface, tiny_factory):
+        """Test swarm coordination capabilities."""
         app.dependency_overrides.update({
             get_memory_system: lambda: memory_system,
             get_analytics_agent: lambda: analytics_agent,
-            get_llm_interface: lambda: llm_interface
+            get_llm_interface: lambda: llm_interface,
+            get_tiny_factory: lambda: tiny_factory
         })
         
         try:
             client = TestClient(app)
             
-            coordination_request = {
-                "task": {
-                    "type": "sequential_processing",
-                    "content": "Analyze the relationship between sky color and light scattering",
-                    "agents": ["parser", "belief"]
-                },
-                "llm_config": {
-                    "chat_model": "test-chat-model",
-                    "embedding_model": "test-embedding-model"
+            # Request swarm creation through Nova's orchestration
+            swarm_request = {
+                "type": "swarm_creation",
+                "domain": "test",
+                "swarm_requirements": {
+                    "patterns": [
+                        "hierarchical",
+                        "parallel",
+                        "sequential",
+                        "mesh",
+                        "round_robin",
+                        "majority_voting"
+                    ],
+                    "capabilities": [
+                        "task_execution",
+                        "communication",
+                        "coordination"
+                    ]
                 }
             }
             
+            # Create swarms through Nova's orchestration
             response = client.post(
-                "/api/orchestration/agents/coordinate",
+                "/api/orchestration/swarms",
                 headers={"X-API-Key": TEST_API_KEY},
-                json=coordination_request
+                json=swarm_request
             )
             assert response.status_code == 200
-            data = response.json()
+            swarm_data = response.json()
             
-            assert "coordination_id" in data
-            assert "status" in data
-            assert data["status"] == "coordinated"
+            # Test swarm coordination through WebSocket
+            with client.websocket_connect(
+                "/api/analytics/ws",
+                headers={"X-API-Key": TEST_API_KEY}
+            ) as websocket:
+                # Monitor swarm activity
+                websocket.send_json({
+                    "type": "swarm_monitor",
+                    "swarm_ids": [
+                        swarm_data["swarms"]["hierarchical"]["swarm_id"],
+                        swarm_data["swarms"]["parallel"]["swarm_id"],
+                        swarm_data["swarms"]["sequential"]["swarm_id"],
+                        swarm_data["swarms"]["mesh"]["swarm_id"],
+                        swarm_data["swarms"]["round_robin"]["swarm_id"],
+                        swarm_data["swarms"]["majority_voting"]["swarm_id"]
+                    ]
+                })
+                
+                # Track swarm events
+                events_received = {pattern: False for pattern in swarm_data["swarms"]}
+                
+                while not all(events_received.values()):
+                    data = websocket.receive_json()
+                    if data["type"] == "swarm_update":
+                        pattern = data.get("pattern")
+                        if pattern in events_received:
+                            events_received[pattern] = True
+                
+                assert all(events_received.values())
+            
+            # Cleanup swarms through Nova's orchestration
+            cleanup_response = client.delete(
+                "/api/orchestration/swarms",
+                headers={"X-API-Key": TEST_API_KEY},
+                json={"swarm_ids": list(swarm_data["swarms"].values())}
+            )
+            assert cleanup_response.status_code == 200
+            
+        finally:
+            app.dependency_overrides.clear()
+    
+    @pytest.mark.asyncio
+    async def test_error_handling(self, memory_system, analytics_agent, llm_interface, tiny_factory):
+        """Test error handling in demo script."""
+        app.dependency_overrides.update({
+            get_memory_system: lambda: memory_system,
+            get_analytics_agent: lambda: analytics_agent,
+            get_llm_interface: lambda: llm_interface,
+            get_tiny_factory: lambda: tiny_factory
+        })
+        
+        try:
+            client = TestClient(app)
+            
+            # Test invalid swarm creation
+            invalid_swarm_response = client.post(
+                "/api/orchestration/swarms",
+                headers={"X-API-Key": TEST_API_KEY},
+                json={
+                    "type": "swarm_creation",
+                    "domain": "test",
+                    "swarm_requirements": {
+                        "patterns": ["invalid_pattern"],
+                        "capabilities": []
+                    }
+                }
+            )
+            assert invalid_swarm_response.status_code == 400
+            
+            # Test WebSocket error handling
+            with client.websocket_connect(
+                "/api/analytics/ws",
+                headers={"X-API-Key": TEST_API_KEY}
+            ) as websocket:
+                # Send invalid message
+                websocket.send_json({
+                    "type": "invalid_type",
+                    "content": "test"
+                })
+                
+                response = websocket.receive_json()
+                assert response["type"] == "error"
+                assert "message" in response
+            
+            # Test cleanup with invalid swarm ID
+            invalid_cleanup_response = client.delete(
+                "/api/orchestration/swarms",
+                headers={"X-API-Key": TEST_API_KEY},
+                json={"swarm_ids": ["invalid_id"]}
+            )
+            assert invalid_cleanup_response.status_code == 404
         finally:
             app.dependency_overrides.clear()

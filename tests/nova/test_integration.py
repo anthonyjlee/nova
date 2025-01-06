@@ -291,6 +291,144 @@ class TestFullSystemIntegration:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
+    async def test_swarm_task_creation(self, memory_system, orchestration_agent):
+        """Test creating tasks with different swarm patterns."""
+        app.dependency_overrides.update({
+            get_memory_system: lambda: memory_system,
+            get_orchestration_agent: lambda: orchestration_agent
+        })
+        
+        try:
+            client = TestClient(app)
+            
+            # Test hierarchical swarm
+            hierarchical_task = {
+                **VALID_TASK,
+                "swarm_pattern": "hierarchical",
+                "swarm_config": {
+                    "name": "test_hierarchical",
+                    "description": "Test hierarchical swarm",
+                    "agents": ["agent1", "agent2", "agent3"],
+                    "supervisor_id": "agent1",
+                    "worker_ids": ["agent2", "agent3"]
+                }
+            }
+            
+            response = client.post(
+                "/api/orchestration/tasks",
+                headers={"X-API-Key": TEST_API_KEY},
+                json=hierarchical_task
+            )
+            assert response.status_code == 200
+            task_data = response.json()
+            assert task_data["orchestration"]["swarm_pattern"] == "hierarchical"
+            
+            # Test parallel swarm
+            parallel_task = {
+                **VALID_TASK,
+                "swarm_pattern": "parallel",
+                "swarm_config": {
+                    "name": "test_parallel",
+                    "description": "Test parallel swarm",
+                    "agents": ["agent1", "agent2", "agent3"],
+                    "batch_size": 2,
+                    "load_balancing": True
+                }
+            }
+            
+            response = client.post(
+                "/api/orchestration/tasks",
+                headers={"X-API-Key": TEST_API_KEY},
+                json=parallel_task
+            )
+            assert response.status_code == 200
+            task_data = response.json()
+            assert task_data["orchestration"]["swarm_pattern"] == "parallel"
+            
+            # Test invalid swarm config
+            invalid_task = {
+                **VALID_TASK,
+                "swarm_pattern": "hierarchical",
+                "swarm_config": {
+                    "name": "test_invalid",
+                    "description": "Test invalid config",
+                    "agents": ["agent1"]
+                    # Missing required supervisor_id and worker_ids
+                }
+            }
+            
+            response = client.post(
+                "/api/orchestration/tasks",
+                headers={"X-API-Key": TEST_API_KEY},
+                json=invalid_task
+            )
+            assert response.status_code == 422  # Validation error
+            
+        finally:
+            app.dependency_overrides.clear()
+            
+    @pytest.mark.asyncio
+    async def test_swarm_pattern_execution(self, memory_system, orchestration_agent):
+        """Test execution of different swarm patterns."""
+        app.dependency_overrides.update({
+            get_memory_system: lambda: memory_system,
+            get_orchestration_agent: lambda: orchestration_agent
+        })
+        
+        try:
+            client = TestClient(app)
+            
+            # Create a sequential swarm task
+            sequential_task = {
+                **VALID_TASK,
+                "swarm_pattern": "sequential",
+                "swarm_config": {
+                    "name": "test_sequential",
+                    "description": "Test sequential swarm",
+                    "agents": ["agent1", "agent2", "agent3"],
+                    "stages": [
+                        {"stage": "parse", "agent": "agent1"},
+                        {"stage": "analyze", "agent": "agent2"},
+                        {"stage": "validate", "agent": "agent3"}
+                    ],
+                    "progress_tracking": True
+                }
+            }
+            
+            response = client.post(
+                "/api/orchestration/tasks",
+                headers={"X-API-Key": TEST_API_KEY},
+                json=sequential_task
+            )
+            assert response.status_code == 200
+            task_id = response.json()["task_id"]
+            
+            # Monitor task execution through WebSocket
+            with client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}) as websocket:
+                websocket.send_json({
+                    "type": "task_monitor",
+                    "task_id": task_id
+                })
+                
+                # Should receive stage updates
+                for _ in range(3):  # 3 stages
+                    status = websocket.receive_json()
+                    assert status["type"] == "task_update"
+                    assert "current_stage" in status
+                    
+                # Verify execution order in memory
+                execution_sequence = await memory_system.semantic.get_relationships(
+                    task_id,
+                    relationship_type="EXECUTED_IN_SEQUENCE"
+                )
+                assert len(execution_sequence) == 3
+                stages = [record["stage_type"] for record in execution_sequence]
+                assert stages == ["parse", "analyze", "validate"]
+                
+        finally:
+            app.dependency_overrides.clear()
+            
+    @pytest.mark.asyncio
     async def test_agent_interaction_flow(self, memory_system, orchestration_agent, parsing_agent, analytics_agent):
         """Test interactions between multiple agents."""
         # Override all dependencies

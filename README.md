@@ -190,30 +190,122 @@ Skill sharing example:
 - Memory system synchronization
 
 ### Swarm Architecture
-The system supports dynamic swarm architectures for agent collaboration:
+The system supports dynamic swarm architectures for agent collaboration through TinyFactory:
 
 #### Swarm Patterns
+Each pattern has its own validated configuration model:
+
 - **Hierarchical**: Tree-structured command flow
+  ```python
+  hierarchical_config = {
+      "name": "test_hierarchical",
+      "description": "Test hierarchical swarm",
+      "agents": ["agent1", "agent2", "agent3"],
+      "supervisor_id": "agent1",
+      "worker_ids": ["agent2", "agent3"]
+  }
+  ```
+
 - **Parallel**: Independent concurrent processing
+  ```python
+  parallel_config = {
+      "name": "test_parallel",
+      "description": "Test parallel swarm",
+      "agents": ["agent1", "agent2", "agent3"],
+      "batch_size": 2,
+      "load_balancing": True
+  }
+  ```
+
 - **Sequential**: Ordered task processing chain
+  ```python
+  sequential_config = {
+      "name": "test_sequential",
+      "description": "Test sequential swarm",
+      "agents": ["agent1", "agent2", "agent3"],
+      "stages": [
+          {"stage": "parse", "agent": "agent1"},
+          {"stage": "analyze", "agent": "agent2"},
+          {"stage": "validate", "agent": "agent3"}
+      ],
+      "progress_tracking": True
+  }
+  ```
+
 - **Mesh**: Free-form agent communication
+  ```python
+  mesh_config = {
+      "name": "test_mesh",
+      "description": "Test mesh swarm",
+      "agents": ["agent1", "agent2", "agent3"],
+      "communication_patterns": ["broadcast", "direct", "group"]
+  }
+  ```
 
-#### Swarm Types
+#### Advanced Swarm Types
+Each type has specific configuration requirements:
+
 - **MajorityVoting**: Consensus-based decisions
-- **RoundRobin**: Cyclic task distribution
-- **GraphWorkflow**: DAG-based task execution
+  ```python
+  voting_config = {
+      "name": "test_voting",
+      "description": "Test voting swarm",
+      "agents": ["agent1", "agent2", "agent3"],
+      "threshold": 0.6,
+      "voting_timeout": 30.0,
+      "allow_revotes": False
+  }
+  ```
 
-#### Communication Patterns
-- **Broadcast**: One-to-many messaging
-- **Direct**: Point-to-point communication
-- **Group**: Targeted multi-agent messaging
+- **RoundRobin**: Cyclic task distribution
+  ```python
+  round_robin_config = {
+      "name": "test_round_robin",
+      "description": "Test round-robin swarm",
+      "agents": ["agent1", "agent2", "agent3"],
+      "rotation_interval": 1.0,
+      "fair_scheduling": True
+  }
+  ```
+
+#### Swarm Creation
+Swarms are created through Nova's orchestration using TinyFactory:
+
+```python
+swarm_request = {
+    "type": "swarm_creation",
+    "domain": "test",
+    "swarm_requirements": {
+        "patterns": [
+            "hierarchical",
+            "parallel",
+            "sequential",
+            "mesh",
+            "round_robin",
+            "majority_voting"
+        ],
+        "capabilities": [
+            "task_execution",
+            "communication",
+            "coordination"
+        ]
+    }
+}
+
+# Create swarms through Nova's orchestration
+response = requests.post(
+    "http://localhost:8000/api/orchestration/swarms",
+    json=swarm_request
+)
+```
 
 #### Resource Management
-- Dynamic resource allocation
-- Load balancing across agents
-- Performance monitoring
-- Bottleneck detection
-- Automatic scaling
+- Dynamic resource allocation through TinyFactory
+- Pattern-specific configuration validation
+- Automatic agent lifecycle management
+- Performance monitoring and metrics
+- Bottleneck detection and resolution
+- Automatic scaling based on workload
 
 ## Core System Agents
 
