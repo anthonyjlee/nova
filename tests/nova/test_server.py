@@ -192,10 +192,145 @@ async def mock_get_ws_api_key(websocket: WebSocket) -> str:
     logger.info(f"API Key from headers: {api_key}")
     return TEST_API_KEY
 
-@pytest.mark.timeout(10)  # Increased timeout
+@pytest.mark.timeout(10)
 @pytest.mark.asyncio
-@pytest.mark.xfail(reason="Known issue: FastAPI TestClient websocket cleanup timeout")
-async def test_websocket_success(mock_memory, mock_analytics_agent, world):
+async def test_websocket_analytics_success(mock_memory, mock_analytics_agent, world):
+    """Test successful analytics request via WebSocket."""
+    logger.info("Starting analytics websocket test")
+    await _test_websocket_request(
+        mock_memory, 
+        mock_analytics_agent, 
+        world,
+        {
+            "type": "analytics",
+            "content": "test",
+            "analytics_type": "test"
+        }
+    )
+
+@pytest.mark.timeout(10)
+@pytest.mark.asyncio
+async def test_websocket_invalid_request(mock_memory, mock_analytics_agent, world):
+    """Test invalid request handling via WebSocket."""
+    logger.info("Starting invalid request websocket test")
+    with pytest.raises(WebSocketDisconnect):
+        await _test_websocket_request(
+            mock_memory,
+            mock_analytics_agent,
+            world,
+            {
+                "type": "invalid",
+                "content": "test"
+            }
+        )
+
+@pytest.mark.timeout(10)
+@pytest.mark.asyncio
+async def test_websocket_auth_failure(mock_memory, mock_analytics_agent, world):
+    """Test authentication failure handling."""
+    logger.info("Starting auth failure websocket test")
+    with pytest.raises(WebSocketDisconnect):
+        client = TestClient(app)
+        with client.websocket_connect("/api/analytics/ws", headers={"x-api-key": "invalid-key"}):
+            pass
+
+@pytest.mark.timeout(10)
+@pytest.mark.asyncio
+async def test_websocket_missing_auth(mock_memory, mock_analytics_agent, world):
+    """Test missing authentication handling."""
+    logger.info("Starting missing auth websocket test")
+    with pytest.raises(WebSocketDisconnect):
+        client = TestClient(app)
+        with client.websocket_connect("/api/analytics/ws"):
+            pass
+
+@pytest.mark.timeout(10)
+@pytest.mark.asyncio
+async def test_websocket_cleanup(mock_memory, mock_analytics_agent, world):
+    """Test proper cleanup after connection close."""
+    logger.info("Starting cleanup websocket test")
+    client = TestClient(app)
+    with client.websocket_connect("/api/analytics/ws", headers={"x-api-key": TEST_API_KEY}) as ws:
+        ws.send_json({
+            "type": "analytics",
+            "content": "test",
+            "analytics_type": "test"
+        })
+        data = ws.receive_json()
+        assert data["type"] == "analytics_update"
+    
+    # Verify cleanup by attempting new connection
+    with client.websocket_connect("/api/analytics/ws", headers={"x-api-key": TEST_API_KEY}) as ws:
+        ws.send_json({
+            "type": "analytics",
+            "content": "test",
+            "analytics_type": "test"
+        })
+        data = ws.receive_json()
+        assert data["type"] == "analytics_update"
+
+@pytest.mark.timeout(10)
+@pytest.mark.asyncio
+async def test_websocket_concurrent_connections(mock_memory, mock_analytics_agent, world):
+    """Test handling of concurrent WebSocket connections."""
+    logger.info("Starting concurrent connections websocket test")
+    client = TestClient(app)
+    connections = []
+    try:
+        # Create multiple connections
+        for _ in range(3):
+            ws = client.websocket_connect("/api/analytics/ws", headers={"x-api-key": TEST_API_KEY})
+            connections.append(ws)
+        
+        # Test each connection
+        for ws in connections:
+            with ws as active_ws:
+                active_ws.send_json({
+                    "type": "analytics",
+                    "content": "test",
+                    "analytics_type": "test"
+                })
+                data = active_ws.receive_json()
+                assert data["type"] == "analytics_update"
+    finally:
+        # Clean up connections
+        for ws in connections:
+            try:
+                ws.close()
+            except:
+                pass
+
+@pytest.mark.timeout(10)
+@pytest.mark.asyncio
+async def test_websocket_rate_limit(mock_memory, mock_analytics_agent, world):
+    """Test rate limiting for WebSocket connections."""
+    logger.info("Starting rate limit websocket test")
+    # Make multiple rapid requests
+    for _ in range(5):
+        await _test_websocket_request(
+            mock_memory,
+            mock_analytics_agent,
+            world,
+            {
+                "type": "analytics",
+                "content": "test",
+                "analytics_type": "test"
+            }
+        )
+    # Next request should fail
+    with pytest.raises(WebSocketDisconnect):
+        await _test_websocket_request(
+            mock_memory,
+            mock_analytics_agent,
+            world,
+            {
+                "type": "analytics",
+                "content": "test",
+                "analytics_type": "test"
+            }
+        )
+
+async def _test_websocket_request(mock_memory, mock_analytics_agent, world, request_data):
     """Test successful WebSocket connection and analytics.
     
     Note: This test may show a timeout error during cleanup, but this is a known issue
