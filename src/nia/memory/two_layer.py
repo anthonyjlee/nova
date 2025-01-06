@@ -5,11 +5,11 @@ import logging
 from typing import Dict, List, Optional
 from datetime import datetime, timezone
 
-from nia.memory.vector.vector_store import VectorStore, serialize_for_vector_store
-from nia.memory.neo4j.neo4j_store import Neo4jMemoryStore
-from nia.memory.neo4j.concept_store import ConceptStore
-from nia.memory.vector.embeddings import EmbeddingService
-from nia.memory.types.memory_types import Memory, MemoryType, EpisodicMemory
+from nia.core.vector.vector_store import VectorStore, serialize_for_vector_store
+from nia.core.neo4j.neo4j_store import Neo4jMemoryStore
+from nia.core.neo4j.concept_store import ConceptStore
+from nia.core.vector.embeddings import EmbeddingService
+from nia.core.types.memory_types import Memory, MemoryType, EpisodicMemory
 
 logger = logging.getLogger(__name__)
 

@@ -12,7 +12,7 @@ from nia.nova.core.parsing import NovaParser
 from nia.nova.core.llm import LMStudioLLM
 from nia.agents.specialized.orchestration_agent import OrchestrationAgent
 from nia.agents.specialized.parsing_agent import ParsingAgent
-from nia.memory.types.memory_types import AgentResponse
+from nia.core.types.memory_types import AgentResponse
 from nia.memory.two_layer import TwoLayerMemorySystem
 from nia.world.environment import NIAWorld
 
