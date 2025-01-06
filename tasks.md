@@ -12,6 +12,58 @@
 
 ## Core System
 
+### Core Components
+- [x] TinyFactory Implementation:
+  * Dynamic agent creation and configuration
+  * Resource allocation management
+  * Agent template system
+  * Lifecycle monitoring
+  * Performance optimization
+  * Pattern-specific configuration validation
+  * Swarm lifecycle management
+  * Capability requirement handling
+  * Cleanup mechanisms
+
+- [x] Specialized Agents:
+  * Core Processing:
+    - ParsingAgent (Text parsing and concept extraction)
+    - AnalysisAgent (Pattern detection and insights)
+    - ValidationAgent (Rule-based validation)
+    - SchemaAgent (Data structure validation)
+    - SynthesisAgent (Theme identification and content synthesis)
+    - ThreadManagementAgent (Thread and sub-thread orchestration)
+    - TaskManagementAgent (Task lifecycle and dependency management)
+    - AggregatorAgent (Output summarization and aggregation)
+    - [ ] OutputParserAgent (Output processing and validation)
+    - [ ] SkillsAgent (API endpoint and skill management)
+    - [ ] KGPruningAgent (Knowledge graph maintenance)
+  * Cognitive:
+    - BeliefAgent (Evidence validation and belief management)
+    - DesireAgent (Motivation tracking and prioritization)
+    - EmotionAgent (Sentiment analysis and emotional state)
+    - ReflectionAgent (Pattern recognition and insights)
+    - MetaAgent (Meta-level orchestration)
+  * Task Management:
+    - TaskAgent (Dependency tracking and state management)
+    - ExecutionAgent (Sequence optimization and monitoring)
+    - OrchestrationAgent (Flow coordination and resource management)
+    - CoordinationAgent (Resource allocation and group management)
+  * Communication:
+    - DialogueAgent (Conversation management)
+    - ResponseAgent (Response quality and validation)
+    - IntegrationAgent (Relationship identification)
+  * Research & Context:
+    - ResearchAgent (Information gathering and verification)
+    - ContextAgent (Environment tracking and state management)
+    - StructureAgent (Pattern analysis and schema validation)
+  * System Operations:
+    - MonitoringAgent (Metric tracking and health checks)
+    - AlertingAgent (Alert routing and escalation)
+    - LoggingAgent (Log management and rotation)
+    - MetricsAgent (Performance metrics and aggregation)
+    - AnalyticsAgent (Analysis and insights)
+    - VisualizationAgent (Data visualization and reporting)
+
 ### Nova Orchestrator
 - [ ] User Initialization System (Not Started):
   * Psychometric Questionnaire Integration:
@@ -174,6 +226,10 @@
 
 ### API Endpoints
 - [x] Analytics endpoints
+  * GET /api/analytics/agents (Agent performance analytics)
+  * GET /api/analytics/flows (Flow analytics)
+  * GET /api/analytics/resources (Resource utilization)
+  * WebSocket /api/analytics/ws (Real-time analytics updates)
 - [ ] User Profile Endpoints (Not Implemented):
   * POST /api/users/profile/questionnaire (Submit psychometric questionnaire)
   * GET /api/users/profile (Get user profile data)
@@ -188,6 +244,8 @@
   * GET /api/tasks/types (List supported output types)
 - [x] Task management endpoints
 - [x] Agent coordination endpoints
+  * POST /api/swarms/decide (Swarm pattern decision)
+  * POST /api/flows/{flow_id}/optimize (Flow optimization)
 - [ ] Memory operation endpoints
 - [ ] Advanced query endpoints
 - [ ] Batch operation support
