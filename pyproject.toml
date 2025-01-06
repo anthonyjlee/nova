@@ -14,11 +14,8 @@ dependencies = [
     "networkx>=3.2.1",         # Network/graph manipulation
     "python-dotenv>=1.0.0",    # Environment variable management
     "pydantic>=2.5.2",         # Data validation
-    "fastapi>=0.105.0",        # API framework (optional)
-    "uvicorn>=0.24.0",         # ASGI server (optional)
     "colorama>=0.4.6",         # Terminal color support
     "qdrant-client>=1.7.0",    # Vector database client
-    "websockets>=12.0",        # WebSocket client/server
     "tinytroupe @ file:///Users/alee5331/Documents/Projects/TinyTroupe",  # Local TinyTroupe package
     "docker>=7.1.0"
 ]
