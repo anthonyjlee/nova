@@ -11,6 +11,24 @@
 ## Core System
 
 ### Nova Orchestrator
+- [ ] User Initialization System (Not Started):
+  * Psychometric Questionnaire Integration:
+    - Big Five personality assessment
+    - Learning style evaluation
+    - Communication preference analysis
+    - Emotional reactivity measurement
+    - Task management style assessment
+  * Profile Data Management:
+    - Neo4j user profile storage
+    - Profile versioning and updates
+    - Domain-specific preferences
+    - Auto-approval settings
+  * Profile-Based Adaptation:
+    - Task granularity adjustment
+    - Communication style matching
+    - UI preference application
+    - Emotional framing calibration
+    - Learning style accommodation
 - [x] Base Nova implementation
   * Self-model building and maintenance
   * Multi-modal user context intake
@@ -262,6 +280,12 @@
 
 ### API Endpoints
 - [x] Analytics endpoints
+- [ ] User Profile Endpoints (Not Implemented):
+  * POST /api/users/profile/questionnaire (Submit psychometric questionnaire)
+  * GET /api/users/profile (Get user profile data)
+  * PUT /api/users/profile/preferences (Update user preferences)
+  * GET /api/users/profile/learning-style (Get learning style settings)
+  * PUT /api/users/profile/auto-approval (Update auto-approval settings)
 - [x] Task management endpoints
 - [x] Agent coordination endpoints
 - [ ] Memory operation endpoints
@@ -278,7 +302,7 @@
   * POST /api/batch/tasks (Bulk task creation)
   * POST /api/batch/memory (Bulk memory operations)
   * POST /api/batch/analytics (Bulk analytics)
-- [ ] Thread Management Endpoints:
+- [x] Thread Management Endpoints:
   * POST /api/tasks/propose (Proposed sub-task)
     - Task metadata and requirements
     - Domain labeling
