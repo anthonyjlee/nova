@@ -14,118 +14,41 @@ NIA is a sophisticated multi-agent system built on TinyTroupe that combines meta
 
 The emergence of NIA is driven by several critical factors:
 
-### Industry Evolution
-- **Beyond Health & Wellness**: Lydia AI's expansion from healthcare into broader domains requires sophisticated orchestration capabilities that can handle diverse industry requirements and regulations
-- **Vertical AI Challenges**: Complex industries like telecom and finance need specialized AI solutions that can:
-  * Handle industry-specific compliance requirements
-  * Process domain-specific data formats
-  * Integrate with legacy systems
-  * Manage complex workflows
-  * Scale across enterprise operations
+### Research Foundations & Motivation
+Building on Well-E's empirical success in health modeling, NIA addresses fundamental challenges in multi-agent systems (and in turn orchestration):
 
-### Technical Advances
-- **Multi-Modal Evolution**: Building on Well-E's success in multi-modal health modeling, NIA extends these capabilities to orchestrate:
-  * Multiple specialized models
-  * Cross-domain integrations
-  * Industry-specific pipelines
-  * Real-time data processing
-  * Regulatory compliance checks
+1. **Theoretical Framework**:
+   * Information-theoretic bounds on agent communication (O(n²) complexity)
+   * Formal verification of emergent collective behaviors
+   * Convergence guarantees in distributed learning systems
+   * Game-theoretic equilibria in heterogeneous agent networks
 
-### Scale Requirements
-- **Massive Agent Orchestration**: Unique ability to manage hundreds of specialized agents, necessary because:
-  * Complex domains require multiple specialized agents working in parallel
-  * Each agent focuses on a specific aspect of the problem
-  * Large-scale systems need continuous monitoring at multiple points
-  * Real-time processing requires distributed agent networks
-  * Cross-domain operations need specialized agent teams
+### Applications
 
-### Vertical AI Solutions
-NIA enables specialized solutions requiring large-scale agent deployment:
+1. **Market Research**:
+   * Synthetic data generation with causal validation
+   * Game-theoretic market equilibrium analysis
+   * Multi-agent strategic interaction modeling
+   * Bayesian consumer behavior simulation
 
-1. **Telecom**:
-   - Network optimization agents (50+ agents):
-     * Each monitoring different network segments
-     * Load balancing across regions
-     * Protocol-specific optimization
-     * Traffic pattern analysis
-     * QoS management per service type
-   - Customer service orchestration (100+ agents):
-     * Intent classification
-     * Service routing
-     * Multi-channel support
-     * Response generation
-     * Satisfaction monitoring
-   - Infrastructure monitoring swarms (200+ agents):
-     * Hardware health tracking
-     * Software performance monitoring
-     * Security threat detection
-     * Capacity planning
-     * Fault prediction
-   - Predictive maintenance coordination (75+ agents):
-     * Equipment health monitoring
-     * Failure pattern detection
-     * Maintenance scheduling
-     * Resource allocation
-     * Impact assessment
+2. **Healthcare Analytics**:
+   * Evidence-based clinical decision support
+   * Patient trajectory optimization
+   * Treatment outcome prediction
+   * Protocol efficacy validation
 
-2. **Finance**:
-   - Risk assessment swarms (150+ agents):
-     * Market risk analysis
-     * Credit risk evaluation
-     * Operational risk monitoring
-     * Compliance risk tracking
-     * Model risk validation
-   - Fraud detection networks (300+ agents):
-     * Transaction monitoring
-     * Pattern recognition
-     * Anomaly detection
-     * Cross-validation
-     * Alert management
-   - Trading strategy orchestration (250+ agents):
-     * Market analysis
-     * Strategy execution
-     * Risk management
-     * Portfolio balancing
-     * Performance tracking
+3. **Financial Systems**:
+   * Stochastic risk modeling
+   * Portfolio optimization under constraints
+   * Market inefficiency detection
+   * Behavioral economics validation
 
-3. **Enterprise Operations**:
-   - Resource allocation optimization (100+ agents):
-     * Demand forecasting
-     * Capacity planning
-     * Cost optimization
-     * Performance monitoring
-     * Efficiency analysis
-   - Supply chain coordination (200+ agents):
-     * Inventory management
-     * Logistics optimization
-     * Supplier coordination
-     * Demand prediction
-     * Risk mitigation
-   - Process automation orchestration (150+ agents):
-     * Workflow monitoring
-     * Exception handling
-     * Integration management
-     * Performance optimization
-     * Quality assurance
-
-Each vertical solution requires large numbers of agents because:
-1. **Complexity Management**: Breaking down complex problems into manageable units
-2. **Specialization**: Each agent handles specific aspects requiring deep expertise
-3. **Real-Time Processing**: Parallel processing for immediate response
-4. **Redundancy**: Multiple agents for critical functions ensuring reliability
-5. **Scale**: Enterprise-level operations requiring distributed processing
-6. **Integration**: Cross-system coordination requiring specialized handlers
-7. **Compliance**: Industry-specific regulatory requirements needing dedicated monitoring
-8. **Security**: Multi-layer security measures with specialized agents
-9. **Quality Assurance**: Multiple validation and verification steps
-10. **Performance**: Load distribution across agent networks for optimal performance
-
-### Market Timing
-- Growing demand for enterprise-scale AI orchestration
-- Increasing complexity of multi-model solutions
-- Rising need for domain-specific AI adaptation
-- Expanding requirements for real-time processing
-- Emerging opportunities in vertical markets
+### Open Challenges
+1. **Scalability**: Communication complexity and resource utilization in large-scale deployments
+2. **Validation**: Standardized metrics for multi-agent system performance
+3. **Reproducibility**: Experimental protocols for emergent behavior analysis
+4. **Transfer Learning**: Cross-domain knowledge adaptation effectiveness
+5. **Safety**: Formal verification of collective decision-making
 
 ## Why NIA?
 
@@ -138,8 +61,6 @@ NIA takes a fundamentally different approach to multi-agent orchestration compar
 - **ChatDev**: ChatDev focuses on software development through predefined agent roles. NIA, in contrast, enables dynamic agent creation through TinyFactory based on emergent task requirements, allowing for more flexible and adaptable solutions across domains.
 
 - **AutoGen/Ignite**: These frameworks provide agent templates and conversation patterns. NIA goes further by implementing domain-aware processing, strict personal/professional boundaries, and sophisticated memory consolidation that enables long-term learning.
-
-- **Streamlit**: While Streamlit excels at rapid UI development, NIA provides a comprehensive architecture with real-time WebSocket communication, thread management, and domain-specific UI adaptations through SvelteKit.
 
 - **LangChain/LangGraph**: These tools focus on chaining LLM operations. NIA implements a true multi-agent system with emergent task detection, swarm-based collaboration patterns, and sophisticated memory architecture that enables both ephemeral and semantic storage.
 
@@ -180,16 +101,6 @@ NIA takes a fundamentally different approach to multi-agent orchestration compar
    - Task-specific swarm configuration
    - Resource-aware scaling
    - Pattern-based optimization
-
-### Real-World Applications
-
-NIA's architecture is particularly suited for:
-- Complex system design and architecture
-- Cross-domain knowledge integration
-- Long-term project evolution
-- Collaborative solution refinement
-- Domain-sensitive processing
-- Real-time multi-agent coordination
 
 ## System Overview
 
@@ -855,82 +766,70 @@ response = requests.post(
    npm run dev
    ```
 
-## Architecture
+## System Architecture
 
 ```
                                 Nova Intelligence Architecture
                                 ===========================
 
-+------------------------+    WebSocket    +-------------------------+
-|      Svelte UI         |<--------------->|     FastAPI Backend     |
-|  +-----------------+   |     Events     |  +------------------+    |
-|  |  Thread View    |   |                |  |   API Endpoints  |    |
-|  |  - Main Channel |   |                |  |   - Analytics    |    |
-|  |  - Sub-threads  |   |                |  |   - Thread Mgmt  |    |
-|  |  - Task Status  |   |                |  |   - Memory Ops   |    |
-|  +-----------------+   |                |  +------------------+    |
-+------------------------+                +-------------------------+
-           ^                                          |
-           |                                          v
-           |                              +-------------------------+
-           |                              |    Nova Orchestrator    |
-           |                              |  +------------------+   |
-           |                              |  |   TinyFactory    |   |
-           |                              |  |   - Agent Creation|   |
-           |                              |  |   - Swarm Patterns|   |
-           |                              |  +------------------+   |
-           |                              +-------------------------+
-           |                                          |
-           |                                          v
-           |                              +-------------------------+
-           |                              |    Agent Ecosystem     |
-           |                              | +-------------------+  |
-           |                              | |  Core Processing  |  |
-           |                              | |  - ParsingAgent   |  |
-           |                              | |  - AnalysisAgent  |  |
-           |                              | |  - ValidationAgent|  |
-           |                              | +-------------------+  |
-           |                              |                       |
-           |                              | +-------------------+ |
-           |                              | |  Task Management  | |
-           |                              | |  - TaskAgent      | |
-           |                              | |  - ExecutionAgent | |
-           |                              | |  - Coordination   | |
-           |                              | +-------------------+ |
-           |                              +-------------------------+
-           |                                          |
-           |                                          v
-           |                              +-------------------------+
-           |                              |    Memory System       |
-           |                              | +-------------------+  |
-           |                              | |   Vector Store    |  |
-           |                              | | (Ephemeral Data)  |  |
-           |                              | | - Chat History    |  |
-           |                              | | - Thread States   |  |
-           |                              | +-------------------+  |
-           |                              |                       |
-           |                              | +-------------------+ |
-           |                              | |      Neo4j       | |
-           |                              | | (Semantic Data)  | |
-           |                              | | - Knowledge Graph| |
-           |                              | | - Task Relations | |
-           |                              | | - Agent States   | |
-           |                              | +-------------------+ |
-           |                              +-------------------------+
-           |                                          |
-           +------------------------------------------+
++------------------------+    WebSocket    +----------------------------------------+
+|      Svelte UI         |<--------------->|              FastAPI Backend           |
+|  +-----------------+   |     Events     |  +------------------+                  |
+|  |  Thread View    |   |                |  |   API Endpoints  |                  |
+|  |  - Main Channel |   |                |  |   - Analytics    |                  |
+|  |  - Sub-threads  |   |                |  |   - Thread Mgmt  |                  |
+|  |  - Task Status  |   |                |  |   - Memory Ops   |                  |
+|  +-----------------+   |                |  +------------------+                  |
++------------------------+                |                                        |
+                                        |  +----------------------------------+   |
+                                        |  |        Nova Orchestrator         |   |
+                                        |  |  +---------------------------+   |   |
+                                        |  |  |       TinyFactory        |   |   |
+                                        |  |  | - Dynamic Agent Creation  |   |   |
+                                        |  |  | - Resource Management    |   |   |
+                                        |  |  | - Swarm Configuration   |   |   |
+                                        |  |  +---------------------------+   |   |
+                                        |  |              |                  |   |
+                                        |  |              v                  |   |
+                                        |  |  +---------------------------+   |   |
+                                        |  |  |     Agent Ecosystem      |   |   |
+                                        |  |  | +-------------------+    |   |   |
+                                        |  |  | |  Core Processing  |    |   |   |
+                                        |  |  | | - ParsingAgent    |    |   |   |
+                                        |  |  | | - AnalysisAgent   |    |   |   |
+                                        |  |  | | - ValidationAgent |    |   |   |
+                                        |  |  | +-------------------+    |   |   |
+                                        |  |  |                         |   |   |
+                                        |  |  | +-------------------+   |   |   |
+                                        |  |  | |  Task Management  |   |   |   |
+                                        |  |  | | - TaskAgent       |   |   |   |
+                                        |  |  | | - ExecutionAgent  |   |   |   |
+                                        |  |  | +-------------------+   |   |   |
+                                        |  |  +---------------------------+   |   |
+                                        |  +----------------------------------+   |
+                                        |                 |                      |
+                                        |                 v                      |
+                                        |  +----------------------------------+   |
+                                        |  |         Memory System           |   |
+                                        |  | +-------------+ +------------+  |   |
+                                        |  | |Vector Store | |   Neo4j    |  |   |
+                                        |  | |(Ephemeral)  | |(Semantic)  |  |   |
+                                        |  | |             | |            |  |   |
+                                        |  | +-------------+ +------------+  |   |
+                                        |  +----------------------------------+   |
+                                        +----------------------------------------+
 
 Swarm Patterns:
-===============
-[H] = Hierarchical   [P] = Parallel   [S] = Sequential   [M] = Mesh
+==============
+Each pattern represents a dynamic agent collaboration strategy:
 
-  [H]                [P]              [S]               [M]
-   |                  |                |                 |
-   v                  v                v                 v
-[Super]          [Worker1]--+     [Stage1]--+      [Agent1]<-->[Agent2]
-   |                [Worker2]--+-->   |     |           ^          ^
-[Work1]--[Work2]    [Worker3]--+    [Stage2] |      [Agent3]<----+
-                                            [Stage3]
+Hierarchical (H)    Parallel (P)      Sequential (S)     Mesh (M)
+     [S]         [W1]--[W2]--[W3]    [1]->[2]->[3]    [A]<-->[B]
+      |                   |                              ^      ^
+   [W1]-[W2]          [Output]                          |      |
+                                                       [C]<----+
+
+S = Supervisor, W = Worker, Numbers = Stages, Letters = Peer Agents
 ```
 
 ## Contributing
