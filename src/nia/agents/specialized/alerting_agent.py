@@ -24,6 +24,18 @@ class AlertingAgent(TinyTroupeAgent, NovaAlertingAgent):
         domain: Optional[str] = None
     ):
         """Initialize alerting agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaAlertingAgent first
+        NovaAlertingAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -33,18 +45,6 @@ class AlertingAgent(TinyTroupeAgent, NovaAlertingAgent):
             attributes=attributes,
             agent_type="alerting"
         )
-        
-        # Initialize NovaAlertingAgent
-        NovaAlertingAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
         
         # Initialize alerting-specific attributes
         self._initialize_alerting_attributes()
@@ -59,9 +59,9 @@ class AlertingAgent(TinyTroupeAgent, NovaAlertingAgent):
         
     def _initialize_alerting_attributes(self):
         """Initialize alerting-specific attributes."""
-        self.define(
-            occupation="Advanced Alert Manager",
-            desires=[
+        attributes = {
+            "occupation": "Advanced Alert Manager",
+            "desires": [
                 "Process alerts effectively",
                 "Manage notification channels",
                 "Handle incidents promptly",
@@ -73,7 +73,7 @@ class AlertingAgent(TinyTroupeAgent, NovaAlertingAgent):
                 "Manage escalations",
                 "Adapt to patterns"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "analytical",
                 "towards_alerts": "focused",
                 "towards_domain": "mindful",
@@ -84,8 +84,7 @@ class AlertingAgent(TinyTroupeAgent, NovaAlertingAgent):
                 "towards_escalations": "responsive",
                 "towards_adaptation": "adaptive"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "alert_processing",
                 "notification_management",
                 "incident_handling",
@@ -97,7 +96,8 @@ class AlertingAgent(TinyTroupeAgent, NovaAlertingAgent):
                 "escalation_management",
                 "pattern_adaptation"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems with enhanced alerting awareness."""

@@ -24,6 +24,18 @@ class IntegrationAgent(TinyTroupeAgent, NovaIntegrationAgent):
         domain: Optional[str] = None
     ):
         """Initialize integration agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaIntegrationAgent first
+        NovaIntegrationAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -34,44 +46,32 @@ class IntegrationAgent(TinyTroupeAgent, NovaIntegrationAgent):
             agent_type="integration"
         )
         
-        # Initialize NovaIntegrationAgent
-        NovaIntegrationAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
-        
         # Initialize integration-specific attributes
         self._initialize_integration_attributes()
         
     def _initialize_integration_attributes(self):
         """Initialize integration-specific attributes."""
-        self.define(
-            occupation="Content Integrator",
-            desires=[
+        attributes = {
+            "occupation": "Content Integrator",
+            "desires": [
                 "Connect insights meaningfully",
                 "Identify relationships",
                 "Build coherent understanding",
                 "Maintain integration quality"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "analytical",
                 "towards_content": "focused",
                 "towards_domain": "mindful"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "content_integration",
                 "relationship_identification",
                 "insight_connection",
                 "pattern_integration"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems."""

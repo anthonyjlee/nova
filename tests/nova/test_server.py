@@ -524,9 +524,79 @@ async def mock_analytics_agent():
                 confidence=0.9,
                 metadata=metadata
             )
+            
+        async def process_and_store(self, content, analytics_type, target_domain=None):
+            from nia.nova.core.analytics import AnalyticsResult
+            return AnalyticsResult(
+                is_valid=True,
+                analytics={},
+                insights=[],
+                confidence=0.9,
+                metadata={"domain": target_domain}
+            )
+            
+        async def get_domain_access(self, domain):
+            return domain == "test" or domain == "professional"
+            
+        async def validate_domain_access(self, domain):
+            if not await self.get_domain_access(domain):
+                raise PermissionError(f"No access to domain: {domain}")
     
     agent = MockAnalyticsAgent()
     return agent
+
+@pytest.fixture
+async def mock_llm():
+    class MockLLM:
+        async def analyze(self, content, template=None, max_tokens=None):
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps({
+                                "analytics": {"test": "data"},
+                                "insights": [{"type": "test"}]
+                            })
+                        }
+                    }
+                ]
+            }
+    return MockLLM()
+
+@pytest.fixture
+async def mock_tiny_factory(mock_memory, mock_llm):
+    class MockTinyFactory:
+        def __init__(self, memory_system=None):
+            self.memory_system = memory_system
+            self.agents = {}
+            
+        def create_agent(self, agent_type, domain, capabilities, supervisor_id=None, attributes=None):
+            agent_id = f"test_{agent_type}_{len(self.agents)}"
+            self.agents[agent_id] = {
+                "type": agent_type,
+                "domain": domain,
+                "capabilities": capabilities,
+                "supervisor_id": supervisor_id,
+                "attributes": attributes or {}
+            }
+            return agent_id
+            
+        def get_agent(self, agent_id):
+            return self.agents.get(agent_id)
+            
+        def get_agents_by_type(self, agent_type):
+            return [
+                agent_id for agent_id, agent in self.agents.items()
+                if agent["type"] == agent_type
+            ]
+            
+        def get_agents_by_domain(self, domain):
+            return [
+                agent_id for agent_id, agent in self.agents.items()
+                if agent["domain"] == domain
+            ]
+    
+    return MockTinyFactory(memory_system=mock_memory)
 
 @pytest.mark.asyncio
 async def test_websocket_success(mock_memory, mock_analytics_agent, world):

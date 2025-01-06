@@ -273,12 +273,14 @@ class TwoLayerMemorySystem:
     """Implements episodic and semantic memory layers."""
     
     def __init__(self, neo4j_uri: str = "bolt://0.0.0.0:7687", 
-                 vector_store: Optional[VectorStore] = None):
+                 vector_store: Optional[VectorStore] = None,
+                 llm = None):
         self.episodic = EpisodicLayer(vector_store)
         self.semantic = SemanticLayer()
         self.semantic.store = self.semantic
         self.consolidation_manager = None  # Will be set by ConsolidationManager
         self._initialized = False
+        self.llm = llm  # Store LLM interface
         
     async def initialize(self):
         """Initialize connections to Neo4j and vector store."""

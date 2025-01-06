@@ -12,7 +12,7 @@ from ...memory.memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
-class ResearchAgent(TinyTroupeAgent, NovaResearchAgent):
+class ResearchAgent(NovaResearchAgent, TinyTroupeAgent):
     """Research agent with TinyTroupe and memory capabilities."""
     
     def __init__(
@@ -24,6 +24,18 @@ class ResearchAgent(TinyTroupeAgent, NovaResearchAgent):
         domain: Optional[str] = None
     ):
         """Initialize research agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaResearchAgent first
+        NovaResearchAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -34,44 +46,32 @@ class ResearchAgent(TinyTroupeAgent, NovaResearchAgent):
             agent_type="research"
         )
         
-        # Initialize NovaResearchAgent
-        NovaResearchAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
-        
         # Initialize research-specific attributes
         self._initialize_research_attributes()
         
     def _initialize_research_attributes(self):
         """Initialize research-specific attributes."""
-        self.define(
-            occupation="Research Analyst",
-            desires=[
+        attributes = {
+            "occupation": "Research Analyst",
+            "desires": [
                 "Understand research findings",
                 "Track research sources",
                 "Ensure research quality",
                 "Maintain domain boundaries"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "analytical",
                 "towards_analysis": "thorough",
                 "towards_domain": "mindful"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "research_analysis",
                 "source_validation",
                 "domain_validation",
                 "quality_assessment"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems."""

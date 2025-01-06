@@ -13,7 +13,7 @@ from ...memory.memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
-class SchemaAgent(TinyTroupeAgent, NovaSchemaAgent):
+class SchemaAgent(NovaSchemaAgent, TinyTroupeAgent):
     """Schema agent with TinyTroupe and memory capabilities."""
     
     def __init__(
@@ -25,6 +25,18 @@ class SchemaAgent(TinyTroupeAgent, NovaSchemaAgent):
         domain: Optional[str] = None
     ):
         """Initialize schema agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaSchemaAgent first
+        NovaSchemaAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -35,44 +47,32 @@ class SchemaAgent(TinyTroupeAgent, NovaSchemaAgent):
             agent_type="schema"
         )
         
-        # Initialize NovaSchemaAgent
-        NovaSchemaAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
-        
         # Initialize schema-specific attributes
         self._initialize_schema_attributes()
         
     def _initialize_schema_attributes(self):
         """Initialize schema-specific attributes."""
-        self.define(
-            occupation="Schema Manager",
-            desires=[
+        attributes = {
+            "occupation": "Schema Manager",
+            "desires": [
                 "Maintain schema integrity",
                 "Ensure domain compliance",
                 "Detect schema issues",
                 "Evolve schemas appropriately"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "analytical",
                 "towards_schema": "focused",
                 "towards_domain": "mindful"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "schema_analysis",
                 "domain_validation",
                 "issue_detection",
                 "schema_evolution"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems."""

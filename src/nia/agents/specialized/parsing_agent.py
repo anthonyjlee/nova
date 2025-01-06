@@ -14,7 +14,7 @@ from ...memory.memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
-class ParsingAgent(TinyTroupeAgent, NovaParser):
+class ParsingAgent(NovaParser, TinyTroupeAgent):
     """Parsing agent with TinyTroupe and memory capabilities,
     flexible enough to handle different LLM JSON or partial JSON outputs."""
     
@@ -47,8 +47,30 @@ class ParsingAgent(TinyTroupeAgent, NovaParser):
             domain=self.domain
         )
         
-        # Prepare initial attributes
-        base_attributes = {
+        # Initialize parsing-specific attributes
+        base_attributes = self._initialize_parsing_attributes()
+        
+        # Merge with provided attributes if any
+        if attributes:
+            for key, value in attributes.items():
+                if isinstance(value, dict) and key in base_attributes and isinstance(base_attributes[key], dict):
+                    base_attributes[key].update(value)
+                else:
+                    base_attributes[key] = value
+        
+        # Initialize TinyTroupeAgent with merged attributes
+        TinyTroupeAgent.__init__(
+            self,
+            name=name,
+            memory_system=memory_system,
+            world=world,
+            attributes=base_attributes,
+            agent_type="parsing"
+        )
+        
+    def _initialize_parsing_attributes(self) -> Dict[str, Any]:
+        """Initialize parsing-specific attributes."""
+        return {
             "type": "parsing",
             "occupation": "Content Parser",
             "domain": self.domain,
@@ -71,24 +93,6 @@ class ParsingAgent(TinyTroupeAgent, NovaParser):
                 "schema_validation"
             ]
         }
-        
-        # Merge with provided attributes
-        if attributes:
-            for key, value in attributes.items():
-                if isinstance(value, dict) and key in base_attributes and isinstance(base_attributes[key], dict):
-                    base_attributes[key].update(value)
-                else:
-                    base_attributes[key] = value
-        
-        # Initialize TinyTroupeAgent
-        TinyTroupeAgent.__init__(
-            self,
-            name=name,
-            memory_system=memory_system,
-            world=world,
-            attributes=base_attributes,
-            agent_type="parsing"
-        )
         
         # Store memory system reference
         self._memory_system = memory_system

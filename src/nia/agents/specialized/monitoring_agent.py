@@ -12,7 +12,7 @@ from ...memory.memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
-class MonitoringAgent(TinyTroupeAgent, NovaMonitoringAgent):
+class MonitoringAgent(NovaMonitoringAgent, TinyTroupeAgent):
     """Monitoring agent with TinyTroupe and memory capabilities."""
     
     def __init__(
@@ -24,6 +24,18 @@ class MonitoringAgent(TinyTroupeAgent, NovaMonitoringAgent):
         domain: Optional[str] = None
     ):
         """Initialize monitoring agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaMonitoringAgent first
+        NovaMonitoringAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -33,18 +45,6 @@ class MonitoringAgent(TinyTroupeAgent, NovaMonitoringAgent):
             attributes=attributes,
             agent_type="monitoring"
         )
-        
-        # Initialize NovaMonitoringAgent
-        NovaMonitoringAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
         
         # Initialize monitoring-specific attributes
         self._initialize_monitoring_attributes()
@@ -59,9 +59,9 @@ class MonitoringAgent(TinyTroupeAgent, NovaMonitoringAgent):
         
     def _initialize_monitoring_attributes(self):
         """Initialize monitoring-specific attributes."""
-        self.define(
-            occupation="Advanced System Monitor",
-            desires=[
+        attributes = {
+            "occupation": "Advanced System Monitor",
+            "desires": [
                 "Monitor agents effectively",
                 "Track performance metrics",
                 "Ensure system health",
@@ -73,7 +73,7 @@ class MonitoringAgent(TinyTroupeAgent, NovaMonitoringAgent):
                 "Optimize system health",
                 "Adapt to changing conditions"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "analytical",
                 "towards_agents": "focused",
                 "towards_domain": "mindful",
@@ -84,8 +84,7 @@ class MonitoringAgent(TinyTroupeAgent, NovaMonitoringAgent):
                 "towards_trends": "observant",
                 "towards_adaptation": "adaptive"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "agent_monitoring",
                 "metric_tracking",
                 "health_checking",
@@ -97,7 +96,8 @@ class MonitoringAgent(TinyTroupeAgent, NovaMonitoringAgent):
                 "performance_optimization",
                 "system_adaptation"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems with enhanced monitoring awareness."""

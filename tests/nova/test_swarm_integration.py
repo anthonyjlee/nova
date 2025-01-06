@@ -3,6 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 from datetime import datetime
+from unittest.mock import AsyncMock
 
 from nia.nova.core.app import app
 from nia.nova.core.auth import API_KEYS
@@ -26,22 +27,42 @@ assert TEST_API_KEY in API_KEYS, "Test API key not found in API_KEYS"
 @pytest.fixture
 async def memory_system():
     """Create real memory system for testing."""
+    from nia.memory.vector.vector_store import VectorStore
+    from nia.memory.vector.embeddings import EmbeddingService
+    
+    # Create vector store with connection details
+    embedding_service = EmbeddingService()
+    vector_store = VectorStore(
+        embedding_service=embedding_service,
+        host="localhost",
+        port=6333
+    )
+    
+    # Create mock LLM for testing
+    mock_llm = AsyncMock()
+    mock_llm.analyze = AsyncMock(return_value={
+        "status": "success",
+        "confidence": 0.95,
+        "analysis": {}
+    })
+    
     memory = TwoLayerMemorySystem(
         neo4j_uri="bolt://localhost:7687",
-        vector_store_host="localhost",
-        vector_store_port=6333
+        vector_store=vector_store,
+        llm=mock_llm
     )
     try:
-        await memory.semantic.connect()
-        await memory.episodic.connect()
-        await memory.vector_store.connect()
-        await memory.episodic.ensure_collection()
-        await memory.vector_store.ensure_collection()
+        # Initialize connections
+        await memory.initialize()
+        
+        # Initialize collections if needed
+        if hasattr(memory.episodic.store, 'ensure_collection'):
+            await memory.episodic.store.ensure_collection()
+            
         yield memory
     finally:
-        await memory.semantic.close()
-        await memory.episodic.close()
-        await memory.vector_store.close()
+        # Cleanup connections
+        await memory.cleanup()
 
 @pytest.fixture
 async def world():
@@ -49,10 +70,14 @@ async def world():
     return NIAWorld()
 
 @pytest.fixture
-async def coordination_agent(memory_system, world):
+async def coordination_agent(memory_system, world, request):
     """Create real coordination agent for testing."""
+    # Use test name to create unique agent name
+    test_name = request.node.name.replace('[', '_').replace(']', '_')
+    # Create unique agent name using test name and timestamp
+    unique_name = f"test_coordinator_{test_name}_{int(datetime.now().timestamp())}"
     agent = CoordinationAgent(
-        name="test_coordinator",
+        name=unique_name,
         memory_system=memory_system,
         world=world,
         domain="test"
@@ -534,7 +559,7 @@ class TestSwarmArchitecture:
             get_coordination_agent: lambda: coordination_agent,
             get_tiny_factory: lambda: tiny_factory,
             get_orchestration_agent: lambda: OrchestrationAgent(
-                name="test_orchestrator",
+                name=f"test_orchestrator_{int(datetime.now().timestamp())}",
                 memory_system=memory_system,
                 domain="test"
             )

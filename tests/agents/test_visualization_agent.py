@@ -14,7 +14,7 @@ from src.nia.memory.memory_types import AgentResponse
 def visualization_agent(mock_memory_system, mock_world, base_agent_config, request):
     """Create a VisualizationAgent instance with mock dependencies."""
     # Use test name to create unique agent name
-    agent_name = f"TestVisualization_{request.node.name}"
+    agent_name = f"visualization_agent_{request.node.name}"
     
     # Update mock memory system for visualization agent
     mock_memory_system.llm.analyze = AsyncMock(return_value={
@@ -23,12 +23,17 @@ def visualization_agent(mock_memory_system, mock_world, base_agent_config, reque
             "visualization": {
                 "visual1": {
                     "type": "line",
-                    "data": {"x": [1, 2, 3], "y": [4, 5, 6]},
+                    "data": {
+                        "x": np.array([1, 2, 3], dtype=np.float32),
+                        "y": np.array([4, 5, 6], dtype=np.float32)
+                    },
                     "style": {"color": "blue"}
                 }
             },
             "metadata": {
-                "source": "test_source"
+                "source": "test_source",
+                "importance": "high",
+                "impact": "significant"
             }
         },
         "elements": [
@@ -36,9 +41,22 @@ def visualization_agent(mock_memory_system, mock_world, base_agent_config, reque
                 "type": "axis",
                 "description": "X-axis configuration",
                 "confidence": 0.8,
-                "importance": 0.9
+                "importance": 0.9,
+                "metrics": {
+                    "readability": 0.9,
+                    "alignment": 0.85
+                }
             }
         ],
+        "is_valid": True,
+        "confidence": 0.95,
+        "visualization_state": {
+            "status": "active",
+            "metrics": {
+                "quality": 0.9,
+                "performance": 0.85
+            }
+        },
         "issues": []
     })
     
@@ -51,13 +69,37 @@ def visualization_agent(mock_memory_system, mock_world, base_agent_config, reque
     config = base_agent_config.copy()
     config["name"] = agent_name
     config["domain"] = "professional"
+    config["attributes"] = {
+        "occupation": "Advanced Visualization Manager",
+        "desires": ["Visualize data efficiently", "Optimize rendering"],
+        "emotions": {
+            "baseline": "analytical",
+            "towards_data": "precise",
+            "towards_quality": "focused"
+        },
+        "capabilities": [
+            "data_visualization",
+            "layout_optimization",
+            "rendering"
+        ]
+    }
     
-    return VisualizationAgent(
+    agent = VisualizationAgent(
         name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
-        domain=config["domain"]
+        domain=config["domain"],
+        attributes=config["attributes"]
     )
+    
+    # Initialize required state dictionaries
+    agent.active_visualizations = {}
+    agent.visualization_strategies = {}
+    agent.layout_templates = {}
+    agent.chart_templates = {}
+    agent.rendering_engines = {}
+    
+    return agent
 
 @pytest.mark.asyncio
 async def test_initialization(visualization_agent, mock_memory_system):
@@ -107,7 +149,7 @@ async def test_initialization(visualization_agent, mock_memory_system):
     })
     
     # Verify basic attributes
-    assert "TestVisualization" in visualization_agent.name
+    assert "visualization_agent_" in visualization_agent.name
     assert visualization_agent.domain == "professional"
     assert visualization_agent.agent_type == "visualization"
     
@@ -588,7 +630,7 @@ async def test_chart_template_management(visualization_agent, mock_memory_system
                 "markers": {
                     "type": "circle",
                     "size": 6,
-                    "fill": true
+                    "fill": True
                 },
                 "animation": {
                     "duration": 300,
@@ -862,14 +904,30 @@ async def test_process_and_store_with_enhancements(visualization_agent, mock_mem
     # Verify visualization result
     assert isinstance(result, VisualizationResult)
     assert result.is_valid is True
+    assert result.confidence >= 0.9
     
     # Verify visualization tracking
     assert "visual1" in visualization_agent.active_visualizations
-    assert visualization_agent.active_visualizations["visual1"]["type"] == "line"
+    visualization_state = visualization_agent.active_visualizations["visual1"]
+    assert visualization_state["type"] == "line"
+    assert visualization_state["data"]["x"].tolist() == [1, 2, 3]
+    assert visualization_state["data"]["y"].tolist() == [4, 5, 6]
+    assert visualization_state["style"]["color"] == "blue"
     
     # Verify rule tracking
     assert "strategy1" in visualization_agent.visualization_strategies
+    strategy = visualization_agent.visualization_strategies["strategy1"]
+    assert strategy["type"] == "dynamic"
+    assert strategy["method"] == "responsive"
+    assert strategy["confidence"] == 0.9
+    assert strategy["importance"] == "high"
+    
     assert "template1" in visualization_agent.layout_templates
+    template = visualization_agent.layout_templates["template1"]
+    assert template["type"] == "static"
+    assert template["layout"] == "grid"
+    assert template["quality"] == "high"
+    assert template["impact"] == "significant"
     
     # Verify success reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
@@ -993,7 +1051,7 @@ async def test_chart_template_application(visualization_agent, mock_memory_syste
                 "color": "blue",
                 "lineWidth": 2,
                 "markers": "circle",
-                "grid": true
+                "grid": True
             },
             "needs_update": True,
             "metadata": {

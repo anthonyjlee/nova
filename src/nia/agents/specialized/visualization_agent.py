@@ -12,7 +12,7 @@ from ...memory.memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
-class VisualizationAgent(TinyTroupeAgent, NovaVisualizationAgent):
+class VisualizationAgent(NovaVisualizationAgent, TinyTroupeAgent):
     """Visualization agent with TinyTroupe and memory capabilities."""
     
     def __init__(
@@ -24,6 +24,18 @@ class VisualizationAgent(TinyTroupeAgent, NovaVisualizationAgent):
         domain: Optional[str] = None
     ):
         """Initialize visualization agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaVisualizationAgent first
+        NovaVisualizationAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -33,18 +45,6 @@ class VisualizationAgent(TinyTroupeAgent, NovaVisualizationAgent):
             attributes=attributes,
             agent_type="visualization"
         )
-        
-        # Initialize NovaVisualizationAgent
-        NovaVisualizationAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
         
         # Initialize visualization-specific attributes
         self._initialize_visualization_attributes()
@@ -58,9 +58,9 @@ class VisualizationAgent(TinyTroupeAgent, NovaVisualizationAgent):
         
     def _initialize_visualization_attributes(self):
         """Initialize visualization-specific attributes."""
-        self.define(
-            occupation="Advanced Visualization Manager",
-            desires=[
+        attributes = {
+            "occupation": "Advanced Visualization Manager",
+            "desires": [
                 "Process visualizations effectively",
                 "Create clear visual representations",
                 "Optimize layout and design",
@@ -72,7 +72,7 @@ class VisualizationAgent(TinyTroupeAgent, NovaVisualizationAgent):
                 "Manage interactivity",
                 "Adapt to patterns"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "analytical",
                 "towards_visualization": "focused",
                 "towards_domain": "mindful",
@@ -83,8 +83,7 @@ class VisualizationAgent(TinyTroupeAgent, NovaVisualizationAgent):
                 "towards_interaction": "responsive",
                 "towards_adaptation": "adaptive"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "visualization_processing",
                 "layout_optimization",
                 "design_enhancement",
@@ -96,7 +95,8 @@ class VisualizationAgent(TinyTroupeAgent, NovaVisualizationAgent):
                 "interaction_handling",
                 "pattern_adaptation"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems with enhanced visualization awareness."""

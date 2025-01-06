@@ -24,6 +24,18 @@ class AnalysisAgent(TinyTroupeAgent, NovaAnalysisAgent):
         domain: Optional[str] = None
     ):
         """Initialize analysis agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaAnalysisAgent first
+        NovaAnalysisAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -34,44 +46,32 @@ class AnalysisAgent(TinyTroupeAgent, NovaAnalysisAgent):
             agent_type="analysis"
         )
         
-        # Initialize NovaAnalysisAgent
-        NovaAnalysisAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
-        
         # Initialize analysis-specific attributes
         self._initialize_analysis_attributes()
         
     def _initialize_analysis_attributes(self):
         """Initialize analysis-specific attributes."""
-        self.define(
-            occupation="Content Analyst",
-            desires=[
+        attributes = {
+            "occupation": "Content Analyst",
+            "desires": [
                 "Extract meaningful insights",
                 "Identify patterns",
                 "Detect anomalies",
                 "Maintain analysis quality"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "analytical",
                 "towards_content": "focused",
                 "towards_domain": "mindful"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "content_analysis",
                 "pattern_detection",
                 "insight_generation",
                 "anomaly_detection"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems."""

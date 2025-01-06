@@ -4,6 +4,8 @@ import pytest
 from fastapi.testclient import TestClient
 import json
 from datetime import datetime
+import websockets
+from contextlib import asynccontextmanager
 
 from nia.nova.core.app import app
 from nia.nova.core.auth import API_KEYS
@@ -52,10 +54,20 @@ async def check_infrastructure():
 @pytest.fixture
 async def memory_system(request):
     """Create real memory system for testing."""
+    from nia.memory.vector.vector_store import VectorStore
+    from nia.memory.vector.embeddings import EmbeddingService
+    
+    # Create vector store with connection details
+    embedding_service = EmbeddingService()
+    vector_store = VectorStore(
+        embedding_service=embedding_service,
+        host="localhost",
+        port=6333
+    )
+    
     memory = TwoLayerMemorySystem(
         neo4j_uri="bolt://localhost:7687",
-        vector_store_host="localhost",
-        vector_store_port=6333
+        vector_store=vector_store
     )
     
     async def cleanup():
@@ -67,24 +79,21 @@ async def memory_system(request):
             )
             
             # Clean up vector store test data
-            await memory.vector_store.delete_collection()
+            if hasattr(memory.episodic.store, 'delete_collection'):
+                await memory.episodic.store.delete_collection()
             
             # Close connections
-            await memory.semantic.close()
-            await memory.episodic.close()
-            await memory.vector_store.close()
+            await memory.cleanup()
         except Exception as e:
             print(f"Cleanup error: {str(e)}")
     
     try:
         # Initialize connections
-        await memory.semantic.connect()
-        await memory.episodic.connect()
-        await memory.vector_store.connect()
+        await memory.initialize()
         
         # Create test collections with unique names for isolation
-        await memory.episodic.ensure_collection("test_demo_episodic")
-        await memory.vector_store.ensure_collection("test_demo_vector")
+        if hasattr(memory.episodic.store, 'ensure_collection'):
+            await memory.episodic.store.ensure_collection("test_demo_episodic")
         
         yield memory
     finally:
@@ -217,8 +226,12 @@ class TestDemoFunctionality:
         try:
             client = TestClient(app)
             
-            async with client.websocket_connect(
-                "/api/analytics/ws",
+            # Create WebSocket URL
+            ws_url = f"ws://testserver/api/analytics/ws"
+            
+            # Use TestClient's websocket_connect as context manager
+            with client.websocket_connect(
+                ws_url,
                 headers={"X-API-Key": TEST_API_KEY}
             ) as websocket:
                 try:
@@ -333,8 +346,12 @@ class TestDemoFunctionality:
             swarm_data = response.json()
             
             # Test swarm coordination through WebSocket
-            async with client.websocket_connect(
-                "/api/analytics/ws",
+            # Create WebSocket URL
+            ws_url = f"ws://testserver/api/analytics/ws"
+            
+            # Use TestClient's websocket_connect as context manager
+            with client.websocket_connect(
+                ws_url,
                 headers={"X-API-Key": TEST_API_KEY}
             ) as websocket:
                 try:
@@ -410,8 +427,12 @@ class TestDemoFunctionality:
             assert invalid_swarm_response.status_code == 400
             
             # Test WebSocket error handling
-            async with client.websocket_connect(
-                "/api/analytics/ws",
+            # Create WebSocket URL
+            ws_url = f"ws://testserver/api/analytics/ws"
+            
+            # Use TestClient's websocket_connect as context manager
+            with client.websocket_connect(
+                ws_url,
                 headers={"X-API-Key": TEST_API_KEY}
             ) as websocket:
                 try:

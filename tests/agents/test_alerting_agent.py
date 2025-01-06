@@ -11,9 +11,9 @@ from src.nia.memory.memory_types import AgentResponse
 @pytest.fixture
 def mock_memory_system():
     """Create a mock memory system."""
-    memory = MagicMock()
+    memory = AsyncMock()
     # Mock LLM
-    memory.llm = MagicMock()
+    memory.llm = AsyncMock()
     memory.llm.analyze = AsyncMock(return_value={
         "alerting": {
             "type": "notification",
@@ -43,14 +43,14 @@ def mock_memory_system():
     })
     
     # Mock semantic store
-    memory.semantic = MagicMock()
-    memory.semantic.store = MagicMock()
+    memory.semantic = AsyncMock()
+    memory.semantic.store = AsyncMock()
     memory.semantic.store.record_reflection = AsyncMock()
     memory.semantic.store.get_domain_access = AsyncMock(return_value=True)
     
     # Mock episodic store
-    memory.episodic = MagicMock()
-    memory.episodic.store = MagicMock()
+    memory.episodic = AsyncMock()
+    memory.episodic.store = AsyncMock()
     memory.episodic.store.search = AsyncMock(return_value=[
         {
             "content": {"content": "Previous alert"},
@@ -64,7 +64,7 @@ def mock_memory_system():
 @pytest.fixture
 def mock_world():
     """Create a mock world environment."""
-    world = MagicMock()
+    world = AsyncMock()
     world.notify_agent = AsyncMock()
     return world
 
@@ -94,6 +94,11 @@ async def test_initialization(alerting_agent):
     assert "towards_routing" in attributes["emotions"]
     assert "route_optimization" in attributes["capabilities"]
     
+    # Verify memory system setup
+    assert alerting_agent.memory_system is not None
+    assert alerting_agent.memory_system.semantic.store is not None
+    assert alerting_agent.memory_system.episodic.store is not None
+    
     # Verify state tracking initialization
     assert isinstance(alerting_agent.active_alerts, dict)
     assert isinstance(alerting_agent.routing_rules, dict)
@@ -106,7 +111,7 @@ async def test_initialization(alerting_agent):
 async def test_process_with_alert_tracking(alerting_agent, mock_memory_system):
     """Test content processing with alert state tracking."""
     # Mock memory system response
-    mock_memory_system.llm.analyze.return_value = {
+    mock_memory_system.llm.analyze = AsyncMock(return_value={
         "concepts": [
             {
                 "type": "alerting_result",
@@ -125,7 +130,7 @@ async def test_process_with_alert_tracking(alerting_agent, mock_memory_system):
                 "state": "active"
             }
         ]
-    }
+    })
     
     content = {
         "alert_id": "alert1",
@@ -138,7 +143,7 @@ async def test_process_with_alert_tracking(alerting_agent, mock_memory_system):
         }
     }
     
-    response = await alerting_agent.process(content)
+    response = await alerting_agent.process(content, {"domain": "professional"})
     
     # Verify alert state tracking
     assert "alert1" in alerting_agent.active_alerts

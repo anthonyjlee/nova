@@ -37,7 +37,21 @@ async def world():
 @pytest.fixture
 async def memory_system():
     """Create memory system for testing."""
-    system = TwoLayerMemorySystem()
+    from nia.memory.vector.vector_store import VectorStore
+    from nia.memory.vector.embeddings import EmbeddingService
+    
+    # Create vector store with connection details
+    embedding_service = EmbeddingService()
+    vector_store = VectorStore(
+        embedding_service=embedding_service,
+        host="localhost",
+        port=6333
+    )
+    
+    system = TwoLayerMemorySystem(
+        neo4j_uri="bolt://localhost:7687",
+        vector_store=vector_store
+    )
     try:
         await system.initialize()
         yield system

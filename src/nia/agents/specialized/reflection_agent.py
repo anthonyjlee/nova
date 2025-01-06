@@ -12,7 +12,7 @@ from ...memory.memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
-class ReflectionAgent(TinyTroupeAgent, NovaReflectionAgent):
+class ReflectionAgent(NovaReflectionAgent, TinyTroupeAgent):
     """Reflection agent with TinyTroupe and memory capabilities."""
     
     def __init__(
@@ -24,6 +24,18 @@ class ReflectionAgent(TinyTroupeAgent, NovaReflectionAgent):
         domain: Optional[str] = None
     ):
         """Initialize reflection agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaReflectionAgent first
+        NovaReflectionAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -34,44 +46,32 @@ class ReflectionAgent(TinyTroupeAgent, NovaReflectionAgent):
             agent_type="reflection"
         )
         
-        # Initialize NovaReflectionAgent
-        NovaReflectionAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
-        
         # Initialize reflection-specific attributes
         self._initialize_reflection_attributes()
         
     def _initialize_reflection_attributes(self):
         """Initialize reflection-specific attributes."""
-        self.define(
-            occupation="Reflection Analyst",
-            desires=[
+        attributes = {
+            "occupation": "Reflection Analyst",
+            "desires": [
                 "Understand patterns",
                 "Track learning progress",
                 "Ensure insight quality",
                 "Maintain domain boundaries"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "contemplative",
                 "towards_analysis": "introspective",
                 "towards_domain": "mindful"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "reflection_analysis",
                 "pattern_recognition",
                 "domain_validation",
                 "learning_assessment"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems."""

@@ -12,7 +12,7 @@ from ...memory.memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
-class TaskAgent(TinyTroupeAgent, NovaTaskAgent):
+class TaskAgent(NovaTaskAgent, TinyTroupeAgent):
     """Task agent with TinyTroupe and memory capabilities."""
     
     def __init__(
@@ -24,6 +24,18 @@ class TaskAgent(TinyTroupeAgent, NovaTaskAgent):
         domain: Optional[str] = None
     ):
         """Initialize task agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaTaskAgent first
+        NovaTaskAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -34,44 +46,32 @@ class TaskAgent(TinyTroupeAgent, NovaTaskAgent):
             agent_type="task"
         )
         
-        # Initialize NovaTaskAgent
-        NovaTaskAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
-        
         # Initialize task-specific attributes
         self._initialize_task_attributes()
         
     def _initialize_task_attributes(self):
         """Initialize task-specific attributes."""
-        self.define(
-            occupation="Task Analyst",
-            desires=[
+        attributes = {
+            "occupation": "Task Analyst",
+            "desires": [
                 "Understand task requirements",
                 "Track task dependencies",
                 "Ensure task completion",
                 "Maintain domain boundaries"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "focused",
                 "towards_analysis": "systematic",
                 "towards_domain": "mindful"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "task_analysis",
                 "dependency_tracking",
                 "domain_validation",
                 "priority_assessment"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems."""

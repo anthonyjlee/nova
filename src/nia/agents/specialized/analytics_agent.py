@@ -24,6 +24,18 @@ class AnalyticsAgent(TinyTroupeAgent, NovaAnalyticsAgent):
         domain: Optional[str] = None
     ):
         """Initialize analytics agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaAnalyticsAgent first
+        NovaAnalyticsAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -33,18 +45,6 @@ class AnalyticsAgent(TinyTroupeAgent, NovaAnalyticsAgent):
             attributes=attributes,
             agent_type="analytics"
         )
-        
-        # Initialize NovaAnalyticsAgent
-        NovaAnalyticsAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
         
         # Initialize analytics-specific attributes
         self._initialize_analytics_attributes()
@@ -58,9 +58,9 @@ class AnalyticsAgent(TinyTroupeAgent, NovaAnalyticsAgent):
         
     def _initialize_analytics_attributes(self):
         """Initialize analytics-specific attributes."""
-        self.define(
-            occupation="Advanced Analytics Manager",
-            desires=[
+        attributes = {
+            "occupation": "Advanced Analytics Manager",
+            "desires": [
                 "Process analytics effectively",
                 "Identify patterns and trends",
                 "Generate insights",
@@ -72,7 +72,7 @@ class AnalyticsAgent(TinyTroupeAgent, NovaAnalyticsAgent):
                 "Manage forecasting",
                 "Adapt to patterns"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "analytical",
                 "towards_analytics": "focused",
                 "towards_domain": "mindful",
@@ -83,8 +83,7 @@ class AnalyticsAgent(TinyTroupeAgent, NovaAnalyticsAgent):
                 "towards_forecasting": "predictive",
                 "towards_adaptation": "adaptive"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "analytics_processing",
                 "pattern_recognition",
                 "insight_generation",
@@ -96,7 +95,8 @@ class AnalyticsAgent(TinyTroupeAgent, NovaAnalyticsAgent):
                 "forecast_handling",
                 "pattern_adaptation"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems with enhanced analytics awareness."""
@@ -454,9 +454,31 @@ class AnalyticsAgent(TinyTroupeAgent, NovaAnalyticsAgent):
             
         try:
             import pandas as pd
-            data = pd.DataFrame(content["data"])
-            return "timestamp" in data.columns
-        except Exception:
+            import numpy as np
+
+            data = content.get("data")
+            if data is None:
+                return False
+
+            # Handle numpy array
+            if isinstance(data, np.ndarray):
+                # Convert numpy array to DataFrame if it has the right shape
+                if len(data.shape) == 2:
+                    data = pd.DataFrame(data)
+                else:
+                    return False
+
+            # Handle dictionary
+            elif isinstance(data, dict):
+                data = pd.DataFrame(data)
+
+            # Handle pandas DataFrame
+            if isinstance(data, pd.DataFrame):
+                return "timestamp" in data.columns
+
+            return False
+        except Exception as e:
+            logger.error(f"Error in _matches_trend_detector: {str(e)}")
             return False
             
     async def _apply_pattern_template(

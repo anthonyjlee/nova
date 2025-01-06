@@ -12,7 +12,7 @@ from ...memory.memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
-class MetricsAgent(TinyTroupeAgent, NovaMetricsAgent):
+class MetricsAgent(NovaMetricsAgent, TinyTroupeAgent):
     """Metrics agent with TinyTroupe and memory capabilities."""
     
     def __init__(
@@ -24,6 +24,18 @@ class MetricsAgent(TinyTroupeAgent, NovaMetricsAgent):
         domain: Optional[str] = None
     ):
         """Initialize metrics agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaMetricsAgent first
+        NovaMetricsAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -33,18 +45,6 @@ class MetricsAgent(TinyTroupeAgent, NovaMetricsAgent):
             attributes=attributes,
             agent_type="metrics"
         )
-        
-        # Initialize NovaMetricsAgent
-        NovaMetricsAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
         
         # Initialize metrics-specific attributes
         self._initialize_metrics_attributes()
@@ -58,9 +58,9 @@ class MetricsAgent(TinyTroupeAgent, NovaMetricsAgent):
         
     def _initialize_metrics_attributes(self):
         """Initialize metrics-specific attributes."""
-        self.define(
-            occupation="Advanced Metrics Manager",
-            desires=[
+        attributes = {
+            "occupation": "Advanced Metrics Manager",
+            "desires": [
                 "Process metrics effectively",
                 "Track performance metrics",
                 "Monitor resource usage",
@@ -72,7 +72,7 @@ class MetricsAgent(TinyTroupeAgent, NovaMetricsAgent):
                 "Manage retention",
                 "Adapt to patterns"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "analytical",
                 "towards_metrics": "focused",
                 "towards_domain": "mindful",
@@ -83,8 +83,7 @@ class MetricsAgent(TinyTroupeAgent, NovaMetricsAgent):
                 "towards_retention": "proactive",
                 "towards_adaptation": "adaptive"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "metrics_processing",
                 "performance_tracking",
                 "resource_monitoring",
@@ -96,7 +95,8 @@ class MetricsAgent(TinyTroupeAgent, NovaMetricsAgent):
                 "retention_handling",
                 "pattern_adaptation"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems with enhanced metrics awareness."""

@@ -24,6 +24,18 @@ class DialogueAgent(TinyTroupeAgent, NovaDialogueAgent):
         domain: Optional[str] = None
     ):
         """Initialize dialogue agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaDialogueAgent first
+        NovaDialogueAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -33,18 +45,6 @@ class DialogueAgent(TinyTroupeAgent, NovaDialogueAgent):
             attributes=attributes,
             agent_type="dialogue"
         )
-        
-        # Initialize NovaDialogueAgent
-        NovaDialogueAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
         
         # Initialize dialogue-specific attributes
         self._initialize_dialogue_attributes()
@@ -57,9 +57,9 @@ class DialogueAgent(TinyTroupeAgent, NovaDialogueAgent):
         
     def _initialize_dialogue_attributes(self):
         """Initialize dialogue-specific attributes."""
-        self.define(
-            occupation="Dialogue Coordinator",
-            desires=[
+        attributes = {
+            "occupation": "Dialogue Coordinator",
+            "desires": [
                 "Understand conversation flow",
                 "Track dialogue context",
                 "Ensure coherent exchanges",
@@ -68,15 +68,14 @@ class DialogueAgent(TinyTroupeAgent, NovaDialogueAgent):
                 "Optimize conversation flow",
                 "Manage interaction states"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "attentive",
                 "towards_analysis": "engaged",
                 "towards_domain": "mindful",
                 "towards_coordination": "focused",
                 "towards_interaction": "responsive"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "dialogue_analysis",
                 "context_tracking",
                 "domain_validation",
@@ -85,7 +84,8 @@ class DialogueAgent(TinyTroupeAgent, NovaDialogueAgent):
                 "state_management",
                 "flow_optimization"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems with enhanced interaction awareness."""

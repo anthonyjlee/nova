@@ -12,7 +12,7 @@ from ...memory.memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
-class ResponseAgent(TinyTroupeAgent, NovaResponseAgent):
+class ResponseAgent(NovaResponseAgent, TinyTroupeAgent):
     """Response agent with TinyTroupe and memory capabilities."""
     
     def __init__(
@@ -24,6 +24,18 @@ class ResponseAgent(TinyTroupeAgent, NovaResponseAgent):
         domain: Optional[str] = None
     ):
         """Initialize response agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaResponseAgent first
+        NovaResponseAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -34,44 +46,32 @@ class ResponseAgent(TinyTroupeAgent, NovaResponseAgent):
             agent_type="response"
         )
         
-        # Initialize NovaResponseAgent
-        NovaResponseAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
-        
         # Initialize response-specific attributes
         self._initialize_response_attributes()
         
     def _initialize_response_attributes(self):
         """Initialize response-specific attributes."""
-        self.define(
-            occupation="Response Analyst",
-            desires=[
+        attributes = {
+            "occupation": "Response Analyst",
+            "desires": [
                 "Understand components",
                 "Track response structure",
                 "Ensure response quality",
                 "Maintain domain boundaries"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "analytical",
                 "towards_analysis": "focused",
                 "towards_domain": "mindful"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "response_analysis",
                 "component_validation",
                 "domain_validation",
                 "quality_assessment"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems."""

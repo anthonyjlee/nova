@@ -12,7 +12,7 @@ from ...memory.memory_types import AgentResponse, DialogueContext
 
 logger = logging.getLogger(__name__)
 
-class MetaAgent(TinyTroupeAgent, NovaMetaAgent):
+class MetaAgent(NovaMetaAgent, TinyTroupeAgent):
     """Meta agent with TinyTroupe and memory capabilities."""
     
     def __init__(
@@ -25,6 +25,19 @@ class MetaAgent(TinyTroupeAgent, NovaMetaAgent):
         domain: Optional[str] = None
     ):
         """Initialize meta agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaMetaAgent first
+        NovaMetaAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            agents=agents or {},
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -35,45 +48,32 @@ class MetaAgent(TinyTroupeAgent, NovaMetaAgent):
             agent_type="meta"
         )
         
-        # Initialize NovaMetaAgent
-        NovaMetaAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            agents=agents or {},
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
-        
         # Initialize meta-specific attributes
         self._initialize_meta_attributes()
         
     def _initialize_meta_attributes(self):
         """Initialize meta-specific attributes."""
-        self.define(
-            occupation="Meta Orchestrator",
-            desires=[
+        attributes = {
+            "occupation": "Meta Orchestrator",
+            "desires": [
                 "Synthesize agent perspectives",
                 "Maintain dialogue coherence",
                 "Ensure knowledge integration",
                 "Respect domain boundaries"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "balanced",
                 "towards_synthesis": "focused",
                 "towards_domains": "respectful"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "meta_synthesis",
                 "agent_orchestration",
                 "domain_management",
                 "knowledge_integration"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems."""

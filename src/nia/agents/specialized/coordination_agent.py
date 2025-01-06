@@ -29,6 +29,18 @@ class CoordinationAgent(TinyTroupeAgent, NovaCoordinationAgent):
         domain: Optional[str] = None
     ):
         """Initialize coordination agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaCoordinationAgent first
+        NovaCoordinationAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -38,18 +50,6 @@ class CoordinationAgent(TinyTroupeAgent, NovaCoordinationAgent):
             attributes=attributes,
             agent_type="coordination"
         )
-        
-        # Initialize NovaCoordinationAgent
-        NovaCoordinationAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
         
         # Initialize coordination-specific attributes
         self._initialize_coordination_attributes()
@@ -62,9 +62,9 @@ class CoordinationAgent(TinyTroupeAgent, NovaCoordinationAgent):
         
     def _initialize_coordination_attributes(self):
         """Initialize coordination-specific attributes."""
-        self.define(
-            occupation="Coordination Manager",
-            desires=[
+        attributes = {
+            "occupation": "Coordination Manager",
+            "desires": [
                 "Manage agent groups effectively",
                 "Optimize resource allocation",
                 "Ensure task dependencies",
@@ -73,15 +73,14 @@ class CoordinationAgent(TinyTroupeAgent, NovaCoordinationAgent):
                 "Resolve resource conflicts",
                 "Monitor group performance"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "organized",
                 "towards_coordination": "focused",
                 "towards_domain": "mindful",
                 "towards_resources": "efficient",
                 "towards_groups": "collaborative"
             },
-            domain=self.domain,
-            capabilities={
+            "capabilities": {
                 "group_management": True,
                 "resource_allocation": True,
                 "dependency_tracking": True,
@@ -95,7 +94,8 @@ class CoordinationAgent(TinyTroupeAgent, NovaCoordinationAgent):
                     "roles": ["coordinator", "worker", "specialist"]
                 }
             }
-        )
+        }
+        self.define(**attributes)
         
     async def validate_swarm_architecture(self, architecture: str) -> None:
         """Validate and update swarm architecture."""

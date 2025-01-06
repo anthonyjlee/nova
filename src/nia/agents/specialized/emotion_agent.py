@@ -24,6 +24,18 @@ class EmotionAgent(TinyTroupeAgent, NovaEmotionAgent):
         domain: Optional[str] = None
     ):
         """Initialize emotion agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaEmotionAgent first
+        NovaEmotionAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -34,44 +46,32 @@ class EmotionAgent(TinyTroupeAgent, NovaEmotionAgent):
             agent_type="emotion"
         )
         
-        # Initialize NovaEmotionAgent
-        NovaEmotionAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
-        
         # Initialize emotion-specific attributes
         self._initialize_emotion_attributes()
         
     def _initialize_emotion_attributes(self):
         """Initialize emotion-specific attributes."""
-        self.define(
-            occupation="Emotion Analyst",
-            desires=[
+        attributes = {
+            "occupation": "Emotion Analyst",
+            "desires": [
                 "Understand emotional states",
                 "Track emotional changes",
                 "Ensure emotional appropriateness",
                 "Maintain domain boundaries"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "empathetic",
                 "towards_analysis": "perceptive",
                 "towards_domain": "mindful"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "emotion_analysis",
                 "intensity_tracking",
                 "domain_validation",
                 "context_awareness"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems."""

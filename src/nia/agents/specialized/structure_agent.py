@@ -12,7 +12,7 @@ from ...memory.memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
-class StructureAgent(TinyTroupeAgent, NovaStructureAgent):
+class StructureAgent(NovaStructureAgent, TinyTroupeAgent):
     """Structure agent with TinyTroupe and memory capabilities."""
     
     def __init__(
@@ -24,6 +24,18 @@ class StructureAgent(TinyTroupeAgent, NovaStructureAgent):
         domain: Optional[str] = None
     ):
         """Initialize structure agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaStructureAgent first
+        NovaStructureAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -34,44 +46,32 @@ class StructureAgent(TinyTroupeAgent, NovaStructureAgent):
             agent_type="structure"
         )
         
-        # Initialize NovaStructureAgent
-        NovaStructureAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
-        
         # Initialize structure-specific attributes
         self._initialize_structure_attributes()
         
     def _initialize_structure_attributes(self):
         """Initialize structure-specific attributes."""
-        self.define(
-            occupation="Structure Analyst",
-            desires=[
+        attributes = {
+            "occupation": "Structure Analyst",
+            "desires": [
                 "Analyze data structures",
                 "Validate schemas",
                 "Ensure structural integrity",
                 "Maintain domain boundaries"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "methodical",
                 "towards_analysis": "precise",
                 "towards_validation": "thorough"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "structure_analysis",
                 "schema_validation",
                 "domain_validation",
                 "integrity_checking"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems."""

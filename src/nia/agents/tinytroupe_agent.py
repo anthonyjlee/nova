@@ -1,14 +1,15 @@
 """TinyTroupe agent base implementation."""
 
 import logging
-from typing import Dict, List, Optional, Any
+import uuid
+from typing import Dict, List, Optional, Any, TYPE_CHECKING
 from datetime import datetime
 
 from tinytroupe import TinyPerson
 from .base import BaseAgent as MemoryBaseAgent
 from ..world.environment import NIAWorld
 from ..memory.two_layer import TwoLayerMemorySystem
-from ..memory.types.memory_types import Memory, EpisodicMemory, Concept, AgentResponse
+from ..memory.memory_types import MemoryEntry, EpisodicMemory, SemanticMemory, AgentResponse
 from ..config import validate_agent_config
 
 logger = logging.getLogger(__name__)
@@ -183,3 +184,106 @@ class TinyTroupeAgent(TinyPerson, MemoryBaseAgent):
             importance=0.7,
             context={"type": "reflection"}
         )
+
+class TinyFactory:
+    """Factory class for creating and managing TinyTroupe agents."""
+    
+    def __init__(
+        self,
+        memory_system: Optional[TwoLayerMemorySystem] = None,
+        world: Optional[NIAWorld] = None
+    ):
+        """Initialize the factory with shared dependencies."""
+        self.memory_system = memory_system
+        self.world = world
+        self.agents = {}  # agent_id -> agent instance
+        
+    def create_agent(
+        self,
+        agent_type: str,
+        domain: str,
+        capabilities: List[str],
+        supervisor_id: Optional[str] = None,
+        attributes: Optional[Dict] = None
+    ) -> str:
+        """Create a new agent with specified type and capabilities.
+        
+        Args:
+            agent_type: Type of agent to create (e.g., "worker", "supervisor")
+            domain: Operating domain for the agent
+            capabilities: List of agent capabilities
+            supervisor_id: Optional ID of supervising agent
+            attributes: Optional additional attributes
+            
+        Returns:
+            str: Unique ID of created agent
+        """
+        # Generate unique ID
+        agent_id = str(uuid.uuid4())
+        
+        # Create base attributes
+        base_attributes = {
+            "occupation": f"{agent_type.title()} Agent",
+            "desires": ["Complete assigned tasks", "Collaborate effectively"],
+            "emotions": {"baseline": "focused"},
+            "capabilities": capabilities,
+            "domain": domain
+        }
+        
+        # Merge with provided attributes
+        if attributes:
+            base_attributes.update(attributes)
+            
+        # Create agent instance
+        agent = TinyTroupeAgent(
+            name=f"{agent_type}_{agent_id[:8]}",
+            memory_system=self.memory_system,
+            world=self.world,
+            attributes=base_attributes,
+            agent_type=agent_type
+        )
+        
+        # Store agent
+        self.agents[agent_id] = agent
+        
+        # If supervisor specified, establish relationship
+        if supervisor_id and supervisor_id in self.agents:
+            supervisor = self.agents[supervisor_id]
+            # Record supervision relationship in memory
+            if self.memory_system and hasattr(self.memory_system, "semantic"):
+                self.memory_system.semantic.store.create_relationship(
+                    supervisor_id,
+                    agent_id,
+                    "SUPERVISES",
+                    {
+                        "established": datetime.now().isoformat(),
+                        "domain": domain
+                    }
+                )
+        
+        return agent_id
+        
+    def get_agent(self, agent_id: str) -> Optional[TinyTroupeAgent]:
+        """Retrieve an agent by ID."""
+        return self.agents.get(agent_id)
+        
+    def get_agents_by_type(self, agent_type: str) -> List[TinyTroupeAgent]:
+        """Get all agents of a specific type."""
+        return [
+            agent for agent in self.agents.values()
+            if agent.agent_type == agent_type
+        ]
+        
+    def get_agents_by_domain(self, domain: str) -> List[TinyTroupeAgent]:
+        """Get all agents operating in a specific domain."""
+        return [
+            agent for agent in self.agents.values()
+            if agent._configuration.get("domain") == domain
+        ]
+        
+    def get_agents_by_capability(self, capability: str) -> List[TinyTroupeAgent]:
+        """Get all agents with a specific capability."""
+        return [
+            agent for agent in self.agents.values()
+            if capability in agent._configuration.get("capabilities", [])
+        ]

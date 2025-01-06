@@ -24,6 +24,18 @@ class DesireAgent(TinyTroupeAgent, NovaDesireAgent):
         domain: Optional[str] = None
     ):
         """Initialize desire agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaDesireAgent first
+        NovaDesireAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -34,44 +46,32 @@ class DesireAgent(TinyTroupeAgent, NovaDesireAgent):
             agent_type="desire"
         )
         
-        # Initialize NovaDesireAgent
-        NovaDesireAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
-        
         # Initialize desire-specific attributes
         self._initialize_desire_attributes()
         
     def _initialize_desire_attributes(self):
         """Initialize desire-specific attributes."""
-        self.define(
-            occupation="Desire Analyst",
-            desires=[
+        attributes = {
+            "occupation": "Desire Analyst",
+            "desires": [
                 "Understand motivations",
                 "Track goal progress",
                 "Ensure desire alignment",
                 "Maintain domain boundaries"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "motivated",
                 "towards_analysis": "focused",
                 "towards_domain": "mindful"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "desire_analysis",
                 "motivation_tracking",
                 "domain_validation",
                 "priority_assessment"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems."""

@@ -12,7 +12,7 @@ from ...memory.memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
-class BeliefAgent(TinyTroupeAgent, NovaBeliefAgent):
+class BeliefAgent(NovaBeliefAgent, TinyTroupeAgent):
     """Belief agent with TinyTroupe and memory capabilities."""
     
     def __init__(
@@ -27,8 +27,38 @@ class BeliefAgent(TinyTroupeAgent, NovaBeliefAgent):
         # Set domain before initialization
         self.domain = domain or "professional"
         
-        # Prepare initial attributes
-        base_attributes = {
+        # Initialize NovaBeliefAgent first
+        NovaBeliefAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
+        # Initialize TinyTroupeAgent
+        TinyTroupeAgent.__init__(
+            self,
+            name=name,
+            memory_system=memory_system,
+            world=world,
+            attributes=attributes,
+            agent_type="belief"
+        )
+        
+        # Initialize belief-specific attributes
+        self._initialize_belief_attributes()
+        
+        # Initialize memory references
+        if memory_system:
+            self._configuration["memory_references"] = []
+            
+        # Store memory system reference
+        self._memory_system = memory_system
+        
+    def _initialize_belief_attributes(self):
+        """Initialize belief-specific attributes."""
+        attributes = {
             "occupation": "Belief Analyst",
             "emotions": {
                 "baseline": "analytical",
@@ -48,36 +78,7 @@ class BeliefAgent(TinyTroupeAgent, NovaBeliefAgent):
                 "coherence_checking"
             ]
         }
-        
-        # Merge with provided attributes
-        if attributes:
-            base_attributes.update(attributes)
-            
-        # Initialize NovaBeliefAgent first
-        NovaBeliefAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=self.domain
-        )
-        
-        # Initialize TinyTroupeAgent
-        TinyTroupeAgent.__init__(
-            self,
-            name=name,
-            memory_system=memory_system,
-            world=world,
-            attributes=base_attributes,
-            agent_type="belief"
-        )
-        
-        # Initialize memory references
-        if memory_system:
-            self._configuration["memory_references"] = []
-            
-        # Store memory system reference
-        self._memory_system = memory_system
+        self.define(**attributes)
         
     @property
     def emotions(self):

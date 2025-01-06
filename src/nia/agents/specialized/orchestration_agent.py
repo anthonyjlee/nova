@@ -13,7 +13,7 @@ from ...memory.types.memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
-class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
+class OrchestrationAgent(NovaOrchestrationAgent, TinyTroupeAgent):
     """Orchestration agent with TinyTroupe and memory capabilities."""
     
     def __init__(
@@ -25,11 +25,23 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
         domain: Optional[str] = None
     ):
         """Initialize orchestration agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
         # Create and store memory system reference
         if not memory_system:
             memory_system = TwoLayerMemorySystem()
             
         self.memory_system = memory_system
+        
+        # Initialize NovaOrchestrationAgent first
+        NovaOrchestrationAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
         
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
@@ -41,23 +53,11 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
             agent_type="orchestration"
         )
         
-        # Initialize NovaOrchestrationAgent with None for llm since it's handled by TinyTroupeAgent
-        NovaOrchestrationAgent.__init__(
-            self,
-            llm=None,  # TinyTroupeAgent handles LLM interactions
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-
         # Initialize TinyTroupe capabilities after memory system is ready
         if memory_system and hasattr(memory_system, 'semantic'):
             self.learn_concept = memory_system.semantic.store_concept
         else:
             self.learn_concept = None
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
         
         # Initialize analytics agent
         self.analytics = AnalyticsAgent(domain=self.domain)
@@ -74,9 +74,9 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
         
     def _initialize_orchestration_attributes(self):
         """Initialize orchestration-specific attributes."""
-        self.define(
-            occupation="Advanced Agent Orchestrator",
-            desires=[
+        attributes = {
+            "occupation": "Advanced Agent Orchestrator",
+            "desires": [
                 "Coordinate agents effectively",
                 "Optimize agent interactions",
                 "Ensure task completion",
@@ -88,7 +88,7 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                 "Adapt to changing conditions",
                 "Ensure system resilience"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "analytical",
                 "towards_agents": "focused",
                 "towards_domain": "mindful",
@@ -97,8 +97,7 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                 "towards_execution": "vigilant",
                 "towards_adaptation": "responsive"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "agent_orchestration",
                 "flow_coordination",
                 "decision_making",
@@ -110,7 +109,8 @@ class OrchestrationAgent(TinyTroupeAgent, NovaOrchestrationAgent):
                 "adaptive_planning",
                 "resilience_management"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems with enhanced flow awareness."""

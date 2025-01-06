@@ -24,6 +24,18 @@ class ContextAgent(TinyTroupeAgent, NovaContextAgent):
         domain: Optional[str] = None
     ):
         """Initialize context agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaContextAgent first
+        NovaContextAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -34,44 +46,32 @@ class ContextAgent(TinyTroupeAgent, NovaContextAgent):
             agent_type="context"
         )
         
-        # Initialize NovaContextAgent
-        NovaContextAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
-        
         # Initialize context-specific attributes
         self._initialize_context_attributes()
         
     def _initialize_context_attributes(self):
         """Initialize context-specific attributes."""
-        self.define(
-            occupation="Context Analyst",
-            desires=[
+        attributes = {
+            "occupation": "Context Analyst",
+            "desires": [
                 "Understand environmental factors",
                 "Track contextual changes",
                 "Identify relevant background information",
                 "Maintain domain awareness"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "observant",
                 "towards_environment": "aware",
                 "towards_domain": "mindful"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "context_analysis",
                 "environment_tracking",
                 "domain_awareness",
                 "background_analysis"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems."""

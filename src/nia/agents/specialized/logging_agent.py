@@ -12,7 +12,7 @@ from ...memory.memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
-class LoggingAgent(TinyTroupeAgent, NovaLoggingAgent):
+class LoggingAgent(NovaLoggingAgent, TinyTroupeAgent):
     """Logging agent with TinyTroupe and memory capabilities."""
     
     def __init__(
@@ -24,6 +24,18 @@ class LoggingAgent(TinyTroupeAgent, NovaLoggingAgent):
         domain: Optional[str] = None
     ):
         """Initialize logging agent."""
+        # Set domain before initialization
+        self.domain = domain or "professional"  # Default to professional domain
+        
+        # Initialize NovaLoggingAgent first
+        NovaLoggingAgent.__init__(
+            self,
+            llm=memory_system.llm if memory_system else None,
+            store=memory_system.semantic.store if memory_system else None,
+            vector_store=memory_system.episodic.store if memory_system else None,
+            domain=self.domain
+        )
+        
         # Initialize TinyTroupeAgent
         TinyTroupeAgent.__init__(
             self,
@@ -33,18 +45,6 @@ class LoggingAgent(TinyTroupeAgent, NovaLoggingAgent):
             attributes=attributes,
             agent_type="logging"
         )
-        
-        # Initialize NovaLoggingAgent
-        NovaLoggingAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=domain
-        )
-        
-        # Set domain
-        self.domain = domain or "professional"  # Default to professional domain
         
         # Initialize logging-specific attributes
         self._initialize_logging_attributes()
@@ -59,9 +59,9 @@ class LoggingAgent(TinyTroupeAgent, NovaLoggingAgent):
         
     def _initialize_logging_attributes(self):
         """Initialize logging-specific attributes."""
-        self.define(
-            occupation="Advanced Log Manager",
-            desires=[
+        attributes = {
+            "occupation": "Advanced Log Manager",
+            "desires": [
                 "Process logs effectively",
                 "Manage log levels",
                 "Handle log contexts",
@@ -73,7 +73,7 @@ class LoggingAgent(TinyTroupeAgent, NovaLoggingAgent):
                 "Manage rotations",
                 "Adapt to patterns"
             ],
-            emotions={
+            "emotions": {
                 "baseline": "analytical",
                 "towards_logs": "focused",
                 "towards_domain": "mindful",
@@ -84,8 +84,7 @@ class LoggingAgent(TinyTroupeAgent, NovaLoggingAgent):
                 "towards_rotation": "proactive",
                 "towards_adaptation": "adaptive"
             },
-            domain=self.domain,
-            capabilities=[
+            "capabilities": [
                 "log_processing",
                 "level_management",
                 "context_handling",
@@ -97,7 +96,8 @@ class LoggingAgent(TinyTroupeAgent, NovaLoggingAgent):
                 "rotation_handling",
                 "pattern_adaptation"
             ]
-        )
+        }
+        self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems with enhanced logging awareness."""
