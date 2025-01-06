@@ -21,10 +21,26 @@
 
 ### Memory System
 - [x] Two-layer memory architecture
-- [x] Vector store integration
-- [x] Neo4j integration
+- [x] Vector store integration (Qdrant for ephemeral storage)
+  * Ephemeral conversation logs
+  * Partial text storage
+  * Advanced chunk-based retrieval
+  * Message labeling by agent/thread
+  * Configurable chunk size (512-1000 tokens)
+- [x] Neo4j integration (for stable, domain-labeled data)
+  * Sub-task DAG relationships
+  * Domain constraints
+  * Numeric facts
+  * Final code/skill references
+  * Project node management
 - [x] Domain-labeled storage
+  * Strict personal/professional separation
+  * Cross-domain operation approval
+  * Domain inheritance for tasks
 - [x] Memory consolidation
+  * Ephemeral to semantic transition
+  * Knowledge graph pruning
+  * Automatic data organization
 - [ ] Advanced node embeddings
 - [ ] Memory sharding for scale
 - [ ] Optimized chunk rotation
@@ -60,31 +76,120 @@
 
 ### Task Management
 - [x] TaskAgent implementation
+  * Emergent task detection
+  * Task state management (proposed → review → approve → execute)
+  * Sub-task DAG relationships
+  * Domain-labeled task tracking
 - [x] ExecutionAgent implementation
+  * Task execution monitoring
+  * Resource utilization tracking
+  * Error recovery and retry mechanisms
+  * Progress reporting
 - [x] OrchestrationAgent implementation
+  * Multi-agent task coordination
+  * Resource allocation optimization
+  * Task dependency management
+  * Cross-domain operation handling
 - [x] CoordinationAgent implementation
+  * Agent group management
+  * Communication pattern orchestration
+  * State tracking with emotional context
+  * Memory integration with reflections
 - [ ] Advanced task scheduling
+  * Large-scale task distribution (100+ agents)
+  * Automatic task prioritization
+  * Load balancing and optimization
 - [ ] Resource balancing
+  * Dynamic resource allocation
+  * Performance bottleneck detection
+  * Automatic scaling based on load
 - [ ] Priority management
+  * Task urgency assessment
+  * Resource contention resolution
+  * Cross-domain priority handling
 
 ### Communication
 - [x] DialogueAgent implementation
+  * Real-time conversation state tracking
+  * Multi-agent conversation coordination
+  * Thread-based message organization
+  * Large-scale message handling (100+ messages)
+  * Aggregator summaries and drill-down
 - [x] ResponseAgent implementation
+  * Quality assessment with domain context
+  * Response validation and refinement
+  * Aggregator message summarization
+  * Thread-specific response formatting
 - [x] IntegrationAgent implementation
+  * Cross-thread knowledge integration
+  * Domain-aware content synthesis
+  * Relationship identification and tracking
+  * Multi-swarm knowledge fusion
 - [ ] Enhanced conversation flows
+  * Optional user-to-sub-agent interactions
+  * Main channel vs sub-thread management
+  * Aggregator update frequency control
 - [ ] Multi-agent dialogues
+  * Large-scale agent coordination (100+ agents)
+  * Thread-based conversation isolation
+  * Cross-thread knowledge sharing
 - [ ] Context preservation
+  * Thread-specific context tracking
+  * Domain boundary enforcement
+  * Cross-thread context inheritance
 
 ### System Operations
 - [x] MonitoringAgent implementation
+  * Real-time metric state tracking
+  * Health check automation
+  * Alert generation and management
+  * Incident lifecycle tracking
+  * Multi-swarm performance monitoring
 - [x] AlertingAgent implementation
+  * Real-time alert state tracking
+  * Rule-based routing system
+  * Delivery status monitoring
+  * Retry mechanism with escalation
+  * Filter-based noise reduction
 - [x] LoggingAgent implementation
+  * Real-time log state tracking
+  * Format template system
+  * Context enrichment rules
+  * Storage policy management
+  * Rotation policy handling
 - [x] MetricsAgent implementation
+  * Collection strategy system
+  * Aggregation rule management
+  * Calculation template handling
+  * Retention policy management
+  * Multi-swarm performance metrics
 - [x] AnalyticsAgent implementation
+  * Real-time analysis state tracking
+  * Pattern template management
+  * Insight model handling
+  * Trend detector management
+  * Collective insight generation
 - [x] VisualizationAgent implementation
+  * Real-time visualization state tracking
+  * Layout template management
+  * Chart template handling
+  * Rendering engine management
+  * Multi-swarm state visualization
 - [ ] Advanced monitoring patterns
+  * Large-scale agent monitoring (100+ agents)
+  * Cross-thread performance tracking
+  * Resource utilization analysis
+  * Bottleneck detection
 - [ ] Enhanced analytics
+  * Thread-based performance metrics
+  * Cross-domain operation analysis
+  * Resource optimization insights
+  * Pattern detection and alerts
 - [ ] Real-time visualization
+  * Thread activity visualization
+  * Resource utilization graphs
+  * Performance metric dashboards
+  * Cross-domain relationship graphs
 
 ## FastAPI Backend
 
@@ -104,6 +209,12 @@
 - [ ] Memory operation endpoints
 - [ ] Advanced query endpoints
 - [ ] Batch operation support
+- [ ] Thread Management Endpoints:
+  * POST /api/tasks/propose (Proposed sub-task)
+  * POST /api/tasks/{task_id}/approve (Task approval)
+  * GET /api/threads/{thread_id} (Thread messages)
+  * POST /api/threads/{thread_id}/message (Thread posting)
+  * GET /api/graph/projects/{project_id} (Graph visualization)
 - [x] Core Swarm Pattern Endpoints
   * Hierarchical swarm (supervisor-worker pattern)
   * Parallel swarm (concurrent task processing)
@@ -141,6 +252,24 @@
 - [ ] WebSocket integration
 - [ ] State management
 - [ ] Error handling
+- [ ] Slack-like Interface:
+  * Main "Nova Channel" for primary user interaction
+  * Sub-thread/channel creation for specialized tasks (100+ messages)
+  * Optional direct user-to-sub-agent interactions
+  * Aggregator summaries in main channel with drill-down
+  * Thread management and navigation
+  * Thread-based message organization
+  * Direct sub-agent interaction support
+  * Ephemeral message storage in Qdrant
+  * Stable references in Neo4j
+  * Task approval workflow (proposed → review → approve → execute)
+  * Emergent task detection and management
+- [ ] Graph View Integration:
+  * Project node visualization
+  * Node click-to-navigate
+  * Domain relationship display
+  * Sub-task DAG visualization
+  * Real-time graph updates
 
 ### Components
 - [ ] Sidebar implementation
