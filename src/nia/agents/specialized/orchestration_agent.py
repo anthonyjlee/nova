@@ -13,8 +13,10 @@ from ...memory.types.memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
-class OrchestrationAgent(NovaOrchestrationAgent, TinyTroupeAgent):
-    """Orchestration agent with TinyTroupe and memory capabilities."""
+from .task_management import TaskManagement
+
+class OrchestrationAgent(NovaOrchestrationAgent, TinyTroupeAgent, TaskManagement):
+    """Orchestration agent with TinyTroupe, memory, and task management capabilities."""
     
     def __init__(
         self,

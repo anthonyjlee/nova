@@ -12,8 +12,10 @@ from ...memory.memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
-class CoordinationAgent(TinyTroupeAgent, NovaCoordinationAgent):
-    """Coordination agent with TinyTroupe and memory capabilities."""
+from .thread_management import ThreadManagement
+
+class CoordinationAgent(TinyTroupeAgent, NovaCoordinationAgent, ThreadManagement):
+    """Coordination agent with TinyTroupe, memory, and thread management capabilities."""
     
     # Valid swarm architectures
     VALID_ARCHITECTURES = ["hierarchical", "parallel", "sequential", "mesh"]

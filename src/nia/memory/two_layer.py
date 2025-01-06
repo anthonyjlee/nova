@@ -307,6 +307,79 @@ class TwoLayerMemorySystem:
                 await self.episodic.store.close()
                 
             self._initialized = False
+            
+    async def prune(
+        self,
+        domain: Optional[str] = None,
+        metadata: Optional[Dict] = None
+    ) -> Dict[str, int]:
+        """Prune old memories and unused nodes."""
+        pruned_nodes = 0
+        pruned_relationships = 0
+        pruned_memories = 0
+        
+        try:
+            # Prune episodic memories
+            if hasattr(self.episodic.store, 'delete_vectors'):
+                # Get old consolidated memories
+                old_memories = await self.episodic.store.search_vectors(
+                    filter={
+                        "consolidated": True,
+                        "domain": domain
+                    } if domain else {"consolidated": True}
+                )
+                
+                # Delete old memories
+                if old_memories:
+                    memory_ids = [m.id for m in old_memories if hasattr(m, 'id')]
+                    await self.episodic.store.delete_vectors(memory_ids)
+                    pruned_memories = len(memory_ids)
+            
+            # Prune semantic nodes
+            if hasattr(self.semantic, 'run_query'):
+                # Find unused nodes (no relationships)
+                unused_query = """
+                MATCH (n)
+                WHERE NOT (n)--()
+                AND (n.domain = $domain OR $domain IS NULL)
+                WITH n
+                LIMIT 1000
+                DETACH DELETE n
+                RETURN count(n) as deleted
+                """
+                
+                result = await self.semantic.run_query(
+                    unused_query,
+                    {"domain": domain}
+                )
+                pruned_nodes = result[0]["deleted"] if result else 0
+                
+                # Find and remove dangling relationships
+                dangling_query = """
+                MATCH ()-[r]->()
+                WHERE (r.domain = $domain OR $domain IS NULL)
+                AND r.last_accessed < datetime() - duration('P30D')
+                WITH r
+                LIMIT 1000
+                DELETE r
+                RETURN count(r) as deleted
+                """
+                
+                result = await self.semantic.run_query(
+                    dangling_query,
+                    {"domain": domain}
+                )
+                pruned_relationships = result[0]["deleted"] if result else 0
+                
+            return {
+                "pruned_nodes": pruned_nodes,
+                "pruned_relationships": pruned_relationships,
+                "pruned_memories": pruned_memories,
+                "timestamp": datetime.now(timezone.utc).isoformat()
+            }
+        except Exception as e:
+            logger.error(f"Failed to prune memory system: {str(e)}")
+            raise
         
     async def store_experience(self, experience: Memory):
         """Store new experience in episodic memory."""
