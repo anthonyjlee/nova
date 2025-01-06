@@ -331,27 +331,62 @@ async def demo_core_functionality():
     # Demonstrate swarm architectures
     print_agent_message("Nova", "Demonstrating swarm architecture patterns...")
     
-    # Request swarm creation through Nova's orchestration
-    print_agent_message("Nova", "Requesting swarm creation through TinyFactory...", True)
-    swarm_request = {
-        "type": "swarm_creation",
-        "domain": "test",
-        "swarm_requirements": {
-            "patterns": [
-                "hierarchical",
-                "parallel",
-                "sequential",
-                "mesh",
-                "round_robin",
-                "majority_voting"
-            ],
+    # Let Nova decide swarm pattern based on task requirements
+    print_agent_message("Nova", "Analyzing task requirements to determine optimal swarm pattern...", True)
+    
+    test_tasks = [
+        {
+            "type": "data_processing",
+            "subtasks": [{"id": f"subtask_{i}"} for i in range(10)],
+            "requirements": {
+                "parallel_execution": True,
+                "independent_tasks": True
+            }
+        },
+        {
+            "type": "workflow",
+            "stages": ["parse", "analyze", "validate"],
+            "requirements": {
+                "ordered_execution": True,
+                "stage_dependencies": True
+            }
+        },
+        {
+            "type": "decision_making",
+            "options": ["A", "B", "C"],
+            "requirements": {
+                "consensus_needed": True,
+                "multiple_perspectives": True
+            }
+        }
+    ]
+
+    swarm_patterns = {}
+    for task in test_tasks:
+        # Let Nova decide the swarm pattern
+        decision_response = requests.post(
+            f"{API_BASE}/orchestration/swarms/decide",
+            json={
+                "task": task,
+                "domain": "test"
+            }
+        )
+        decision_data = decision_response.json()
+        print_agent_message("Nova", f"For {task['type']}: Selected {decision_data['selected_pattern']} pattern")
+        print_agent_message("Nova", f"Reasoning: {decision_data['reasoning']}")
+        
+        # Create swarm with the selected pattern
+        swarm_request = {
+            "type": "swarm_creation",
+            "domain": "test",
+            "pattern": decision_data['selected_pattern'],
+            "task": task,
             "capabilities": [
                 "task_execution",
                 "communication",
                 "coordination"
             ]
         }
-    }
     
     # Create swarms through Nova's orchestration
     response = requests.post(

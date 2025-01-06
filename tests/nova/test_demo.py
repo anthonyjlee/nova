@@ -11,7 +11,8 @@ from nia.nova.core.endpoints import (
     get_memory_system,
     get_analytics_agent,
     get_llm_interface,
-    get_tiny_factory
+    get_tiny_factory,
+    get_world
 )
 from nia.nova.core.test_data import VALID_TASK
 from nia.memory.two_layer import TwoLayerMemorySystem
@@ -67,15 +68,22 @@ async def tiny_factory(memory_system):
     """Create TinyFactory instance for testing."""
     return TinyFactory(memory_system=memory_system)
 
+@pytest.fixture
+async def world():
+    """Create world instance for testing."""
+    from nia.world.environment import NIAWorld
+    return NIAWorld()
+
 @pytest.mark.integration
 class TestDemoFunctionality:
     """Test demo script functionality."""
     
     @pytest.mark.asyncio
-    async def test_memory_storage(self, memory_system, llm_interface):
+    async def test_memory_storage(self, memory_system, llm_interface, world):
         """Test storing initial knowledge in memory system."""
         app.dependency_overrides[get_memory_system] = lambda: memory_system
         app.dependency_overrides[get_llm_interface] = lambda: llm_interface
+        app.dependency_overrides[get_world] = lambda: world
         
         try:
             client = TestClient(app)
@@ -115,12 +123,13 @@ class TestDemoFunctionality:
             app.dependency_overrides.clear()
     
     @pytest.mark.asyncio
-    async def test_query_parsing(self, memory_system, analytics_agent, llm_interface):
+    async def test_query_parsing(self, memory_system, analytics_agent, llm_interface, world):
         """Test parsing user queries."""
         app.dependency_overrides.update({
             get_memory_system: lambda: memory_system,
             get_analytics_agent: lambda: analytics_agent,
-            get_llm_interface: lambda: llm_interface
+            get_llm_interface: lambda: llm_interface,
+            get_world: lambda: world
         })
         
         try:
@@ -149,12 +158,13 @@ class TestDemoFunctionality:
             app.dependency_overrides.clear()
     
     @pytest.mark.asyncio
-    async def test_agent_coordination(self, memory_system, analytics_agent, llm_interface):
+    async def test_agent_coordination(self, memory_system, analytics_agent, llm_interface, world):
         """Test agent coordination through WebSocket."""
         app.dependency_overrides.update({
             get_memory_system: lambda: memory_system,
             get_analytics_agent: lambda: analytics_agent,
-            get_llm_interface: lambda: llm_interface
+            get_llm_interface: lambda: llm_interface,
+            get_world: lambda: world
         })
         
         try:
@@ -199,11 +209,12 @@ class TestDemoFunctionality:
             app.dependency_overrides.clear()
     
     @pytest.mark.asyncio
-    async def test_memory_analytics(self, memory_system, analytics_agent):
+    async def test_memory_analytics(self, memory_system, analytics_agent, world):
         """Test memory pattern analysis."""
         app.dependency_overrides.update({
             get_memory_system: lambda: memory_system,
-            get_analytics_agent: lambda: analytics_agent
+            get_analytics_agent: lambda: analytics_agent,
+            get_world: lambda: world
         })
         
         try:
@@ -224,13 +235,14 @@ class TestDemoFunctionality:
             app.dependency_overrides.clear()
     
     @pytest.mark.asyncio
-    async def test_swarm_coordination(self, memory_system, analytics_agent, llm_interface, tiny_factory):
+    async def test_swarm_coordination(self, memory_system, analytics_agent, llm_interface, tiny_factory, world):
         """Test swarm coordination capabilities."""
         app.dependency_overrides.update({
             get_memory_system: lambda: memory_system,
             get_analytics_agent: lambda: analytics_agent,
             get_llm_interface: lambda: llm_interface,
-            get_tiny_factory: lambda: tiny_factory
+            get_tiny_factory: lambda: tiny_factory,
+            get_world: lambda: world
         })
         
         try:
@@ -308,13 +320,14 @@ class TestDemoFunctionality:
             app.dependency_overrides.clear()
     
     @pytest.mark.asyncio
-    async def test_error_handling(self, memory_system, analytics_agent, llm_interface, tiny_factory):
+    async def test_error_handling(self, memory_system, analytics_agent, llm_interface, tiny_factory, world):
         """Test error handling in demo script."""
         app.dependency_overrides.update({
             get_memory_system: lambda: memory_system,
             get_analytics_agent: lambda: analytics_agent,
             get_llm_interface: lambda: llm_interface,
-            get_tiny_factory: lambda: tiny_factory
+            get_tiny_factory: lambda: tiny_factory,
+            get_world: lambda: world
         })
         
         try:

@@ -8,7 +8,10 @@ echo "Running Agent Tests..."
 pytest tests/agents/ -v --tb=short
 
 echo "Running Nova Core Tests..."
-pytest tests/nova/ -v --tb=short
+# Run swarm integration tests first to ensure core functionality
+pytest tests/nova/test_swarm_integration.py -v --tb=short
+# Then run remaining Nova tests
+pytest tests/nova/ -v --tb=short --ignore=tests/nova/test_swarm_integration.py
 
 echo "Running Integration Tests..."
 pytest tests/memory/ tests/test_consolidation.py -v --tb=short

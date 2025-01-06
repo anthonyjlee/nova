@@ -527,6 +527,87 @@ class TestSwarmArchitecture:
             app.dependency_overrides.clear()
     
     @pytest.mark.asyncio
+    async def test_nova_swarm_decisions(self, memory_system, coordination_agent, tiny_factory):
+        """Test Nova's decision-making about swarm patterns."""
+        app.dependency_overrides.update({
+            get_memory_system: lambda: memory_system,
+            get_coordination_agent: lambda: coordination_agent,
+            get_tiny_factory: lambda: tiny_factory,
+            get_orchestration_agent: lambda: OrchestrationAgent(
+                name="test_orchestrator",
+                memory_system=memory_system,
+                domain="test"
+            )
+        })
+        
+        try:
+            client = TestClient(app)
+            
+            # Test Nova's pattern selection for different task types
+            test_cases = [
+                {
+                    "task": {
+                        "type": "data_processing",
+                        "subtasks": [{"id": f"subtask_{i}"} for i in range(10)],
+                        "requirements": {
+                            "parallel_execution": True,
+                            "independent_tasks": True
+                        }
+                    },
+                    "expected_pattern": "parallel"
+                },
+                {
+                    "task": {
+                        "type": "workflow",
+                        "stages": ["parse", "analyze", "validate"],
+                        "requirements": {
+                            "ordered_execution": True,
+                            "stage_dependencies": True
+                        }
+                    },
+                    "expected_pattern": "sequential"
+                },
+                {
+                    "task": {
+                        "type": "decision_making",
+                        "options": ["A", "B", "C"],
+                        "requirements": {
+                            "consensus_needed": True,
+                            "multiple_perspectives": True
+                        }
+                    },
+                    "expected_pattern": "majority_voting"
+                }
+            ]
+            
+            for test_case in test_cases:
+                # Request Nova to decide swarm pattern
+                decision_response = client.post(
+                    "/api/orchestration/swarms/decide",
+                    headers={"X-API-Key": TEST_API_KEY},
+                    json={
+                        "task": test_case["task"],
+                        "domain": "test"
+                    }
+                )
+                assert decision_response.status_code == 200
+                decision_data = decision_response.json()
+                
+                # Verify Nova chose the expected pattern
+                assert decision_data["selected_pattern"] == test_case["expected_pattern"]
+                assert "reasoning" in decision_data
+                assert "confidence" in decision_data
+                
+                # Verify decision was stored in memory
+                decision_record = await memory_system.semantic.search(
+                    query=f"type:swarm_decision AND task_id:{decision_data['task_id']}"
+                )
+                assert len(decision_record) > 0
+                assert decision_record[0]["selected_pattern"] == test_case["expected_pattern"]
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
     async def test_round_robin_swarm(self, memory_system, coordination_agent, tiny_factory):
         """Test round-robin swarm type with cyclic task distribution."""
         app.dependency_overrides.update({

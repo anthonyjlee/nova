@@ -6,7 +6,7 @@ from datetime import datetime
 
 from nia.nova.core.app import app
 from nia.nova.core.auth import API_KEYS, reset_rate_limits
-from nia.nova.core.endpoints import get_analytics_agent, get_memory_system
+from nia.nova.core.endpoints import get_analytics_agent, get_memory_system, get_world
 from nia.nova.core.test_data import (
     VALID_TASK,
     VALID_COORDINATION_REQUEST,
@@ -32,6 +32,12 @@ assert TEST_API_KEY in API_KEYS, "Test API key not found in API_KEYS"
 
 # Test headers
 HEADERS = {"X-API-Key": TEST_API_KEY}
+
+@pytest.fixture
+async def world():
+    """Create world instance for testing."""
+    from nia.world.environment import NIAWorld
+    return NIAWorld()
 
 @pytest.fixture(autouse=True)
 def reset_test_state():
@@ -385,11 +391,12 @@ def mock_analytics_agent():
     return agent
 
 @pytest.mark.asyncio
-async def test_websocket_success(mock_memory, mock_analytics_agent):
+async def test_websocket_success(mock_memory, mock_analytics_agent, world):
     """Test successful WebSocket connection and analytics."""
     # Override dependencies
     app.dependency_overrides[get_memory_system] = lambda: mock_memory
     app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    app.dependency_overrides[get_world] = lambda: world
     
     try:
         # Use FastAPI's test client
@@ -426,11 +433,12 @@ def test_websocket_missing_api_key():
             pass
 
 @pytest.mark.asyncio
-async def test_websocket_invalid_request(mock_memory, mock_analytics_agent):
+async def test_websocket_invalid_request(mock_memory, mock_analytics_agent, world):
     """Test WebSocket connection with invalid analytics request."""
     # Override dependencies
     app.dependency_overrides[get_memory_system] = lambda: mock_memory
     app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    app.dependency_overrides[get_world] = lambda: world
     
     try:
         client = TestClient(app)
@@ -450,7 +458,7 @@ async def test_websocket_invalid_request(mock_memory, mock_analytics_agent):
             del app.dependency_overrides["get_memory_system"]
 
 @pytest.mark.asyncio
-async def test_websocket_processing_error(mock_memory, mock_analytics_agent):
+async def test_websocket_processing_error(mock_memory, mock_analytics_agent, world):
     """Test WebSocket connection with processing error."""
     # Override dependencies with error-raising mock
     class ErrorAnalyticsAgent:
@@ -459,6 +467,7 @@ async def test_websocket_processing_error(mock_memory, mock_analytics_agent):
     
     app.dependency_overrides[get_memory_system] = lambda: mock_memory
     app.dependency_overrides[get_analytics_agent] = lambda: ErrorAnalyticsAgent()
+    app.dependency_overrides[get_world] = lambda: world
     
     try:
         client = TestClient(app)
@@ -478,11 +487,12 @@ async def test_websocket_processing_error(mock_memory, mock_analytics_agent):
             del app.dependency_overrides["get_memory_system"]
 
 @pytest.mark.asyncio
-async def test_websocket_rate_limiting(mock_memory, mock_analytics_agent):
+async def test_websocket_rate_limiting(mock_memory, mock_analytics_agent, world):
     """Test WebSocket connection rate limiting."""
     # Override dependencies
     app.dependency_overrides[get_memory_system] = lambda: mock_memory
     app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    app.dependency_overrides[get_world] = lambda: world
     
     try:
         client = TestClient(app)
@@ -504,11 +514,12 @@ async def test_websocket_rate_limiting(mock_memory, mock_analytics_agent):
             del app.dependency_overrides["get_memory_system"]
 
 @pytest.mark.asyncio
-async def test_websocket_cleanup_on_disconnect(mock_memory, mock_analytics_agent):
+async def test_websocket_cleanup_on_disconnect(mock_memory, mock_analytics_agent, world):
     """Test WebSocket cleanup when connection is closed unexpectedly."""
     # Override dependencies
     app.dependency_overrides[get_memory_system] = lambda: mock_memory
     app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    app.dependency_overrides[get_world] = lambda: world
     
     try:
         client = TestClient(app)
@@ -528,11 +539,12 @@ async def test_websocket_cleanup_on_disconnect(mock_memory, mock_analytics_agent
             del app.dependency_overrides["get_memory_system"]
 
 @pytest.mark.asyncio
-async def test_websocket_concurrent_connections(mock_memory, mock_analytics_agent):
+async def test_websocket_concurrent_connections(mock_memory, mock_analytics_agent, world):
     """Test multiple concurrent WebSocket connections."""
     # Override dependencies
     app.dependency_overrides[get_memory_system] = lambda: mock_memory
     app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    app.dependency_overrides[get_world] = lambda: world
     
     try:
         client = TestClient(app)
@@ -557,11 +569,12 @@ async def test_websocket_concurrent_connections(mock_memory, mock_analytics_agen
             del app.dependency_overrides["get_memory_system"]
 
 @pytest.mark.asyncio
-async def test_websocket_timeout(mock_memory, mock_analytics_agent):
+async def test_websocket_timeout(mock_memory, mock_analytics_agent, world):
     """Test WebSocket connection timeout handling."""
     # Override dependencies
     app.dependency_overrides[get_memory_system] = lambda: mock_memory
     app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    app.dependency_overrides[get_world] = lambda: world
     
     try:
         client = TestClient(app)
@@ -585,11 +598,12 @@ async def test_websocket_timeout(mock_memory, mock_analytics_agent):
             del app.dependency_overrides["get_memory_system"]
 
 @pytest.mark.asyncio
-async def test_websocket_heartbeat(mock_memory, mock_analytics_agent):
+async def test_websocket_heartbeat(mock_memory, mock_analytics_agent, world):
     """Test WebSocket connection stays alive with ping/pong."""
     # Override dependencies
     app.dependency_overrides[get_memory_system] = lambda: mock_memory
     app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    app.dependency_overrides[get_world] = lambda: world
     
     try:
         client = TestClient(app)

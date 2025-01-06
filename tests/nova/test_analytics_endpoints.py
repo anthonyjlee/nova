@@ -7,11 +7,18 @@ from datetime import datetime
 from src.nia.nova.core.app import app
 from src.nia.nova.core.analytics import AnalyticsAgent, AnalyticsResult
 from src.nia.agents.specialized.orchestration_agent import OrchestrationAgent
+from src.nia.nova.core.endpoints import get_world
+from src.nia.world.environment import NIAWorld
 
 client = TestClient(app)
 
 @pytest.fixture
-def mock_analytics_agent(mocker):
+async def world():
+    """Create world instance for testing."""
+    return NIAWorld()
+
+@pytest.fixture
+def mock_analytics_agent(mocker, world):
     """Create a mock analytics agent."""
     agent = mocker.Mock()
     agent.process_analytics = mocker.AsyncMock(return_value=AnalyticsResult(
@@ -38,7 +45,7 @@ def mock_analytics_agent(mocker):
     return agent
 
 @pytest.fixture
-def mock_orchestration_agent(mocker, mock_analytics_agent):
+def mock_orchestration_agent(mocker, mock_analytics_agent, world):
     """Create a mock orchestration agent."""
     agent = mocker.Mock()
     agent.analytics = mock_analytics_agent
@@ -63,8 +70,9 @@ def test_root():
     assert "endpoints" in response.json()
 
 @pytest.mark.asyncio
-async def test_get_flow_analytics():
+async def test_get_flow_analytics(world):
     """Test flow analytics endpoint."""
+    app.dependency_overrides[get_world] = lambda: world
     response = client.get("/api/analytics/flows?flow_id=flow1")
     assert response.status_code == 200
     data = response.json()
@@ -74,8 +82,9 @@ async def test_get_flow_analytics():
     assert "timestamp" in data
 
 @pytest.mark.asyncio
-async def test_get_resource_analytics():
+async def test_get_resource_analytics(world):
     """Test resource analytics endpoint."""
+    app.dependency_overrides[get_world] = lambda: world
     response = client.get("/api/analytics/resources?resource_id=resource1")
     assert response.status_code == 200
     data = response.json()
@@ -85,8 +94,9 @@ async def test_get_resource_analytics():
     assert "timestamp" in data
 
 @pytest.mark.asyncio
-async def test_get_agent_analytics():
+async def test_get_agent_analytics(world):
     """Test agent analytics endpoint."""
+    app.dependency_overrides[get_world] = lambda: world
     response = client.get("/api/analytics/agents?agent_id=agent1")
     assert response.status_code == 200
     data = response.json()
@@ -96,8 +106,9 @@ async def test_get_agent_analytics():
     assert "timestamp" in data
 
 @pytest.mark.asyncio
-async def test_optimize_flow(mock_orchestration_agent):
+async def test_optimize_flow(mock_orchestration_agent, world):
     """Test flow optimization endpoint."""
+    app.dependency_overrides[get_world] = lambda: world
     response = client.post("/api/orchestration/flows/flow1/optimize")
     assert response.status_code == 200
     data = response.json()
@@ -108,7 +119,7 @@ async def test_optimize_flow(mock_orchestration_agent):
     assert "timestamp" in data
 
 @pytest.mark.asyncio
-async def test_allocate_resources(mock_orchestration_agent):
+async def test_allocate_resources(mock_orchestration_agent, world):
     """Test resource allocation endpoint."""
     allocation_request = {
         "resources": {
@@ -116,6 +127,7 @@ async def test_allocate_resources(mock_orchestration_agent):
             "memory": {"requested": "4G"}
         }
     }
+    app.dependency_overrides[get_world] = lambda: world
     response = client.post(
         "/api/orchestration/resources/allocate",
         json=allocation_request
@@ -128,8 +140,9 @@ async def test_allocate_resources(mock_orchestration_agent):
     assert "timestamp" in data
 
 @pytest.mark.asyncio
-async def test_analytics_websocket():
+async def test_analytics_websocket(world):
     """Test analytics WebSocket endpoint."""
+    app.dependency_overrides[get_world] = lambda: world
     with client.websocket_connect("/api/analytics/ws") as websocket:
         # Send analytics request
         websocket.send_json({
@@ -147,8 +160,9 @@ async def test_analytics_websocket():
         assert "timestamp" in data
 
 @pytest.mark.asyncio
-async def test_domain_specific_analytics():
+async def test_domain_specific_analytics(world):
     """Test domain-specific analytics."""
+    app.dependency_overrides[get_world] = lambda: world
     response = client.get(
         "/api/analytics/flows",
         params={"flow_id": "flow1", "domain": "personal"}
@@ -158,8 +172,9 @@ async def test_domain_specific_analytics():
     assert data["analytics"].get("domain") == "personal"
 
 @pytest.mark.asyncio
-async def test_analytics_error_handling():
+async def test_analytics_error_handling(world):
     """Test analytics error handling."""
+    app.dependency_overrides[get_world] = lambda: world
     # Test invalid flow ID
     response = client.get("/api/analytics/flows?flow_id=invalid")
     assert response.status_code == 500
@@ -176,8 +191,9 @@ async def test_analytics_error_handling():
     assert "error" in response.json()
 
 @pytest.mark.asyncio
-async def test_analytics_integration(mock_orchestration_agent):
+async def test_analytics_integration(mock_orchestration_agent, world):
     """Test analytics integration with orchestration."""
+    app.dependency_overrides[get_world] = lambda: world
     # Test flow optimization with analytics
     response = client.post(
         "/api/orchestration/flows/flow1/optimize",

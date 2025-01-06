@@ -8,6 +8,7 @@ from datetime import datetime
 
 from nia.nova.core.app import app
 from nia.nova.core.auth import API_KEYS
+from nia.nova.core.endpoints import get_world
 from nia.agents.specialized.parsing_agent import ParsingAgent
 from nia.memory.two_layer import TwoLayerMemorySystem
 from nia.world.environment import NIAWorld
@@ -27,10 +28,14 @@ CHAT_MODEL = "llama-3.2-3b-instruct"
 EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v1.5@q8_0"
 
 @pytest.fixture
-def parsing_agent():
+async def world():
+    """Create world instance for testing."""
+    return NIAWorld()
+
+@pytest.fixture
+def parsing_agent(world):
     """Create a parsing agent for testing."""
     memory_system = TwoLayerMemorySystem()
-    world = NIAWorld()
     return ParsingAgent(
         name="test_parser",
         memory_system=memory_system,
@@ -65,7 +70,7 @@ def setup_lmstudio():
     except Exception as e:
         pytest.skip(f"LM Studio setup failed: {str(e)}. Please check LM Studio configuration.")
 
-def test_parsing_with_lmstudio(parsing_agent):
+def test_parsing_with_lmstudio(parsing_agent, world):
     """Test parsing capabilities with LM Studio."""
     # Test text for parsing
     test_text = """
@@ -84,6 +89,9 @@ def test_parsing_with_lmstudio(parsing_agent):
         "domain": "professional"
     }
     
+    # Override dependencies
+    app.dependency_overrides[get_world] = lambda: world
+    
     # Get parsing results
     response = client.post(
         "/api/analytics/parse",
@@ -97,8 +105,9 @@ def test_parsing_with_lmstudio(parsing_agent):
     assert "key_points" in data
     assert data["confidence"] > 0
 
-def test_analytics_with_lmstudio():
+def test_analytics_with_lmstudio(world):
     """Test analytics generation with LM Studio."""
+    app.dependency_overrides[get_world] = lambda: world
     # Test analytics request
     response = client.get(
         "/api/analytics/flows",
@@ -118,8 +127,9 @@ def test_analytics_with_lmstudio():
     assert "insights" in data
     assert data["insights"]
 
-def test_memory_operations_with_lmstudio():
+def test_memory_operations_with_lmstudio(world):
     """Test memory operations with LM Studio."""
+    app.dependency_overrides[get_world] = lambda: world
     # Store memory with semantic analysis
     store_response = client.post(
         "/api/orchestration/memory/store",
@@ -170,8 +180,9 @@ def test_memory_operations_with_lmstudio():
     results = search_response.json()["matches"]
     assert len(results) > 0
 
-def test_websocket_with_lmstudio():
+def test_websocket_with_lmstudio(world):
     """Test WebSocket connection with LM Studio integration."""
+    app.dependency_overrides[get_world] = lambda: world
     with client.websocket_connect(
         "/api/analytics/ws",
         headers={
@@ -194,8 +205,9 @@ def test_websocket_with_lmstudio():
         assert "insights" in data
         assert data["insights"]
 
-def test_error_handling():
+def test_error_handling(world):
     """Test error handling with invalid requests."""
+    app.dependency_overrides[get_world] = lambda: world
     # Test invalid model
     response = client.post(
         "/api/analytics/parse",

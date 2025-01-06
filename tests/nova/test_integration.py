@@ -93,11 +93,12 @@ class TestFullSystemIntegration:
     """Test complete system flow with real components."""
     
     @pytest.mark.asyncio
-    async def test_websocket_memory_flow(self, memory_system, analytics_agent):
+    async def test_websocket_memory_flow(self, memory_system, analytics_agent, world):
         """Test WebSocket with real memory operations."""
         # Override dependencies with real components
         app.dependency_overrides[get_memory_system] = lambda: memory_system
         app.dependency_overrides[get_analytics_agent] = lambda: analytics_agent
+        app.dependency_overrides[get_world] = lambda: world
         
         try:
             client = TestClient(app)
@@ -131,10 +132,11 @@ class TestFullSystemIntegration:
             app.dependency_overrides.clear()
     
     @pytest.mark.asyncio
-    async def test_concurrent_memory_operations(self, memory_system, analytics_agent):
+    async def test_concurrent_memory_operations(self, memory_system, analytics_agent, world):
         """Test concurrent memory operations through WebSocket."""
         app.dependency_overrides[get_memory_system] = lambda: memory_system
         app.dependency_overrides[get_analytics_agent] = lambda: analytics_agent
+        app.dependency_overrides[get_world] = lambda: world
         
         try:
             client = TestClient(app)
@@ -174,10 +176,11 @@ class TestFullSystemIntegration:
             app.dependency_overrides.clear()
     
     @pytest.mark.asyncio
-    async def test_memory_consolidation(self, memory_system, analytics_agent):
+    async def test_memory_consolidation(self, memory_system, analytics_agent, world):
         """Test memory consolidation through WebSocket operations."""
         app.dependency_overrides[get_memory_system] = lambda: memory_system
         app.dependency_overrides[get_analytics_agent] = lambda: analytics_agent
+        app.dependency_overrides[get_world] = lambda: world
         
         try:
             client = TestClient(app)
@@ -216,12 +219,13 @@ class TestFullSystemIntegration:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_full_task_flow(self, memory_system, orchestration_agent, parsing_agent):
+    async def test_full_task_flow(self, memory_system, orchestration_agent, parsing_agent, world):
         """Test complete task flow with real components."""
         # Override dependencies
         app.dependency_overrides[get_memory_system] = lambda: memory_system
         app.dependency_overrides[get_orchestration_agent] = lambda: orchestration_agent
         app.dependency_overrides[get_parsing_agent] = lambda: parsing_agent
+        app.dependency_overrides[get_world] = lambda: world
         
         try:
             client = TestClient(app)
@@ -291,11 +295,12 @@ class TestFullSystemIntegration:
             app.dependency_overrides.clear()
 
     @pytest.mark.asyncio
-    async def test_swarm_task_creation(self, memory_system, orchestration_agent):
+    async def test_swarm_task_creation(self, memory_system, orchestration_agent, world):
         """Test creating tasks with different swarm patterns."""
         app.dependency_overrides.update({
             get_memory_system: lambda: memory_system,
-            get_orchestration_agent: lambda: orchestration_agent
+            get_orchestration_agent: lambda: orchestration_agent,
+            get_world: lambda: world
         })
         
         try:
@@ -368,11 +373,12 @@ class TestFullSystemIntegration:
             app.dependency_overrides.clear()
             
     @pytest.mark.asyncio
-    async def test_swarm_pattern_execution(self, memory_system, orchestration_agent):
+    async def test_swarm_pattern_execution(self, memory_system, orchestration_agent, world):
         """Test execution of different swarm patterns."""
         app.dependency_overrides.update({
             get_memory_system: lambda: memory_system,
-            get_orchestration_agent: lambda: orchestration_agent
+            get_orchestration_agent: lambda: orchestration_agent,
+            get_world: lambda: world
         })
         
         try:
@@ -429,14 +435,15 @@ class TestFullSystemIntegration:
             app.dependency_overrides.clear()
             
     @pytest.mark.asyncio
-    async def test_agent_interaction_flow(self, memory_system, orchestration_agent, parsing_agent, analytics_agent):
+    async def test_agent_interaction_flow(self, memory_system, orchestration_agent, parsing_agent, analytics_agent, world):
         """Test interactions between multiple agents."""
         # Override all dependencies
         app.dependency_overrides.update({
             get_memory_system: lambda: memory_system,
             get_orchestration_agent: lambda: orchestration_agent,
             get_parsing_agent: lambda: parsing_agent,
-            get_analytics_agent: lambda: analytics_agent
+            get_analytics_agent: lambda: analytics_agent,
+            get_world: lambda: world
         })
         
         try:

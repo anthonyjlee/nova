@@ -94,6 +94,30 @@ async def get_llm():
     )
     return llm
 
+async def get_llm_interface():
+    """Get LLM interface instance."""
+    return LMStudioLLM(
+        chat_model=CHAT_MODEL,
+        embedding_model=EMBEDDING_MODEL
+    )
+
+async def get_coordination_agent(
+    memory_system: TwoLayerMemorySystem = Depends(get_memory_system),
+    world: NIAWorld = Depends(get_world),
+    llm: LMStudioLLM = Depends(get_llm)
+):
+    """Get coordination agent instance."""
+    from nia.agents.specialized.coordination_agent import CoordinationAgent
+    
+    agent = CoordinationAgent(
+        name="nova_coordinator",
+        memory_system=memory_system,
+        world=world,
+        domain="professional"
+    )
+    agent.llm = llm
+    return agent
+
 async def get_world():
     """Get world instance."""
     return NIAWorld()
