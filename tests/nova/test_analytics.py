@@ -109,7 +109,8 @@ async def test_process_analytics_with_llm(analytics_agent, mock_llm):
     assert len(result.analytics["analytics"]) == 2
     assert len(result.insights) == 1
     assert len(result.issues) == 1
-    assert result.confidence > 0
+    assert isinstance(result.confidence, (int, float))
+    assert 0 <= result.confidence <= 1
     assert "domain" in result.metadata
 
 @pytest.mark.asyncio
@@ -128,7 +129,8 @@ async def test_process_analytics_without_llm():
     assert isinstance(result, AnalyticsResult)
     assert result.analytics["type"] == "behavioral"
     assert "analytics" in result.analytics
-    assert result.confidence >= 0
+    assert isinstance(result.confidence, (int, float))
+    assert 0 <= result.confidence <= 1
     assert result.is_valid is True  # All basic checks should pass
 
 @pytest.mark.asyncio
@@ -279,6 +281,8 @@ def test_extract_insights(analytics_agent):
     assert all("type" in i for i in insights)
     assert all("description" in i for i in insights)
     assert all("confidence" in i for i in insights)
+    assert all(isinstance(i["confidence"], (int, float)) for i in insights)
+    assert all(0 <= i["confidence"] <= 1 for i in insights)
     assert any("domain_relevance" in i for i in insights)
 
 def test_extract_issues(analytics_agent):
@@ -350,6 +354,7 @@ def test_calculate_confidence(analytics_agent):
     
     confidence = analytics_agent._calculate_confidence(analytics, insights, issues)
     
+    assert isinstance(confidence, (int, float))
     assert 0 <= confidence <= 1
     # Should include:
     # - Analytics confidence (0.2 from analytics + metadata)

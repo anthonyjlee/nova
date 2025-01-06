@@ -29,20 +29,23 @@ assert TEST_API_KEY in API_KEYS, "Test API key not found in API_KEYS"
 @pytest.fixture(autouse=True)
 async def check_infrastructure():
     """Verify required infrastructure is running."""
+    import neo4j
+    from neo4j import AsyncGraphDatabase
+    import aiohttp
+    
+    # Initialize resources outside try block
+    driver = None
+    session = aiohttp.ClientSession()
+    
     try:
         # Check Neo4j
-        import neo4j
-        from neo4j import AsyncGraphDatabase
         driver = AsyncGraphDatabase.driver("bolt://localhost:7687")
         await driver.verify_connectivity()
-        await driver.close()
         
         # Check vector store
-        import aiohttp
-        async with aiohttp.ClientSession() as session:
-            async with session.get("http://localhost:6333/collections") as response:
-                if response.status != 200:
-                    pytest.skip("Vector store not available. Please ensure Qdrant is running on port 6333.")
+        async with session.get("http://localhost:6333/collections") as response:
+            if response.status != 200:
+                pytest.skip("Vector store not available. Please ensure Qdrant is running on port 6333.")
             
     except neo4j.exceptions.ServiceUnavailable:
         pytest.skip("Neo4j not available. Please ensure Neo4j is running on port 7687.")
@@ -50,6 +53,12 @@ async def check_infrastructure():
         pytest.skip("Vector store not available. Please ensure Qdrant is running on port 6333.")
     except Exception as e:
         pytest.skip(f"Infrastructure check failed: {str(e)}")
+    finally:
+        # Clean up resources
+        if driver:
+            await driver.close()
+        if session:
+            await session.close()
 
 @pytest.fixture
 async def memory_system(request):

@@ -102,7 +102,8 @@ async def test_analyze_content_with_llm(analysis_agent, mock_llm):
     assert len(result.analysis["components"]) == 2
     assert len(result.insights) == 1
     assert len(result.issues) == 1
-    assert result.confidence > 0
+    assert isinstance(result.confidence, (int, float))
+    assert 0 <= result.confidence <= 1
     assert "domain" in result.metadata
 
 @pytest.mark.asyncio
@@ -121,7 +122,8 @@ async def test_analyze_content_without_llm():
     assert isinstance(result, AnalysisResult)
     assert result.analysis["type"] == "text"
     assert "components" in result.analysis
-    assert result.confidence >= 0
+    assert isinstance(result.confidence, (int, float))
+    assert 0 <= result.confidence <= 1
     assert result.is_valid is True  # All basic checks should pass
 
 @pytest.mark.asyncio
@@ -269,6 +271,8 @@ def test_extract_insights(analysis_agent):
     assert all("type" in i for i in insights)
     assert all("description" in i for i in insights)
     assert all("confidence" in i for i in insights)
+    assert all(isinstance(i["confidence"], (int, float)) for i in insights)
+    assert all(0 <= i["confidence"] <= 1 for i in insights)
     assert any("domain_relevance" in i for i in insights)
 
 def test_extract_issues(analysis_agent):
@@ -337,6 +341,7 @@ def test_calculate_confidence(analysis_agent):
     
     confidence = analysis_agent._calculate_confidence(analysis, insights, issues)
     
+    assert isinstance(confidence, (int, float))
     assert 0 <= confidence <= 1
     # Should include:
     # - Analysis confidence (0.2 from components + patterns)

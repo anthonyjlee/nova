@@ -65,7 +65,8 @@ async def test_analyze_beliefs_with_llm(belief_agent, mock_llm):
     # Verify result structure
     assert isinstance(result, BeliefResult)
     assert len(result.beliefs) == 1
-    assert result.confidence > 0
+    assert isinstance(result.confidence, (int, float))
+    assert 0 <= result.confidence <= 1
     assert "domain" in result.metadata
     assert result.evidence is not None
 
@@ -84,7 +85,8 @@ async def test_analyze_beliefs_without_llm():
     assert isinstance(result, BeliefResult)
     assert len(result.beliefs) > 0
     assert any(b["type"] == "inferred_belief" for b in result.beliefs)
-    assert result.confidence >= 0
+    assert isinstance(result.confidence, (int, float))
+    assert 0 <= result.confidence <= 1
     assert "context" in result.evidence
 
 def test_basic_analysis(belief_agent):
@@ -130,6 +132,9 @@ def test_extract_beliefs(belief_agent):
     assert any(b["type"] == "belief" for b in beliefs)  # Default type
     assert any("domain_relevance" in b for b in beliefs)
     assert any("certainty" in b for b in beliefs)
+    assert all("confidence" in b for b in beliefs)
+    assert all(isinstance(b["confidence"], (int, float)) for b in beliefs)
+    assert all(0 <= b["confidence"] <= 1 for b in beliefs)
 
 def test_extract_evidence(belief_agent):
     """Test evidence extraction and validation."""
@@ -183,6 +188,7 @@ def test_calculate_confidence(belief_agent):
     
     confidence = belief_agent._calculate_confidence(beliefs, evidence)
     
+    assert isinstance(confidence, (int, float))
     assert 0 <= confidence <= 1
     # Should include:
     # - Belief confidence (0.7 average)

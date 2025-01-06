@@ -480,6 +480,103 @@ async def create_agent(
             raise
         raise ServiceError(str(e))
 
+# Task retrieval and update endpoints for hierarchical pattern
+@orchestration_router.get("/swarms/hierarchical/{task_id}")
+@retry_on_error(max_retries=3)
+async def get_hierarchical_task(
+    task_id: str,
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("read")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
+) -> Dict:
+    """Get hierarchical swarm task details."""
+    try:
+        task_result = await orchestration_agent.get_task(
+            task_id=task_id,
+            domain=domain,
+            metadata={"domain": domain} if domain else None
+        )
+        
+        if task_result.swarm_pattern != "hierarchical":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "INVALID_PATTERN",
+                    "message": f"Task {task_id} is not a hierarchical swarm task"
+                }
+            )
+        
+        return {
+            "task_id": task_result.task_id,
+            "status": task_result.status,
+            "assigned_agents": task_result.assigned_agents,
+            "swarm_pattern": "hierarchical",
+            "orchestration": task_result.orchestration,
+            "confidence": task_result.confidence,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@orchestration_router.put("/swarms/hierarchical/{task_id}")
+@retry_on_error(max_retries=3)
+@validate_request(TaskRequest)
+async def update_hierarchical_task(
+    task_id: str,
+    request: Dict[str, Any],
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("write")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
+) -> Dict:
+    """Update hierarchical swarm task."""
+    try:
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        supervisor_id = request.get("supervisor_id")
+        if not supervisor_id:
+            raise ValidationError("hierarchical pattern requires supervisor_id")
+            
+        worker_ids = request.get("worker_ids", [])
+        if not worker_ids:
+            raise ValidationError("hierarchical pattern requires worker_ids")
+        
+        # Update task
+        task_result = await orchestration_agent.update_task(
+            task_id=task_id,
+            task_data={
+                **request,
+                "swarm_pattern": "hierarchical",
+                "assigned_agents": [supervisor_id] + worker_ids,
+                "supervisor_id": supervisor_id,
+                "worker_ids": worker_ids
+            },
+            domain=domain or request.get("domain", "professional"),
+            metadata={
+                "domain": domain,
+                "swarm_pattern": "hierarchical",
+                "supervisor_id": supervisor_id,
+                "worker_ids": worker_ids
+            } if domain else None
+        )
+        
+        return {
+            "task_id": task_result.task_id,
+            "status": "updated",
+            "assigned_agents": task_result.assigned_agents,
+            "swarm_pattern": "hierarchical",
+            "orchestration": task_result.orchestration,
+            "confidence": task_result.confidence,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
 @orchestration_router.post("/swarms/hierarchical")
 @retry_on_error(max_retries=3)
 @validate_request(TaskRequest)
@@ -560,6 +657,99 @@ async def create_hierarchical_task(
             raise
         raise ServiceError(str(e))
 
+# Task retrieval and update endpoints for voting pattern
+@orchestration_router.get("/swarms/voting/{task_id}")
+@retry_on_error(max_retries=3)
+async def get_voting_task(
+    task_id: str,
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("read")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
+) -> Dict:
+    """Get voting swarm task details."""
+    try:
+        task_result = await orchestration_agent.get_task(
+            task_id=task_id,
+            domain=domain,
+            metadata={"domain": domain} if domain else None
+        )
+        
+        if task_result.swarm_pattern != "MajorityVoting":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "INVALID_PATTERN",
+                    "message": f"Task {task_id} is not a voting swarm task"
+                }
+            )
+        
+        return {
+            "task_id": task_result.task_id,
+            "status": task_result.status,
+            "assigned_agents": task_result.assigned_agents,
+            "swarm_pattern": "MajorityVoting",
+            "orchestration": task_result.orchestration,
+            "confidence": task_result.confidence,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@orchestration_router.put("/swarms/voting/{task_id}")
+@retry_on_error(max_retries=3)
+@validate_request(TaskRequest)
+async def update_voting_task(
+    task_id: str,
+    request: Dict[str, Any],
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("write")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
+) -> Dict:
+    """Update voting swarm task."""
+    try:
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        voter_ids = request.get("voter_ids", [])
+        if not voter_ids:
+            raise ValidationError("voting pattern requires voter_ids")
+        
+        # Update task
+        task_result = await orchestration_agent.update_task(
+            task_id=task_id,
+            task_data={
+                **request,
+                "swarm_pattern": "MajorityVoting",
+                "assigned_agents": voter_ids,
+                "voter_ids": voter_ids,
+                "decision_threshold": request.get("decision_threshold", 0.5)
+            },
+            domain=domain or request.get("domain", "professional"),
+            metadata={
+                "domain": domain,
+                "swarm_pattern": "MajorityVoting",
+                "voter_ids": voter_ids,
+                "decision_threshold": request.get("decision_threshold", 0.5)
+            } if domain else None
+        )
+        
+        return {
+            "task_id": task_result.task_id,
+            "status": "updated",
+            "assigned_agents": task_result.assigned_agents,
+            "swarm_pattern": "MajorityVoting",
+            "orchestration": task_result.orchestration,
+            "confidence": task_result.confidence,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
 @orchestration_router.post("/swarms/voting")
 @retry_on_error(max_retries=3)
 @validate_request(TaskRequest)
@@ -627,6 +817,103 @@ async def create_voting_task(
             "status": task_result.status,
             "assigned_agents": task_result.assigned_agents,
             "swarm_pattern": "MajorityVoting",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+# Task retrieval and update endpoints for round-robin pattern
+@orchestration_router.get("/swarms/round-robin/{task_id}")
+@retry_on_error(max_retries=3)
+async def get_round_robin_task(
+    task_id: str,
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("read")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
+) -> Dict:
+    """Get round-robin swarm task details."""
+    try:
+        task_result = await orchestration_agent.get_task(
+            task_id=task_id,
+            domain=domain,
+            metadata={"domain": domain} if domain else None
+        )
+        
+        if task_result.swarm_pattern != "RoundRobin":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "INVALID_PATTERN",
+                    "message": f"Task {task_id} is not a round-robin swarm task"
+                }
+            )
+        
+        return {
+            "task_id": task_result.task_id,
+            "status": task_result.status,
+            "assigned_agents": task_result.assigned_agents,
+            "swarm_pattern": "RoundRobin",
+            "orchestration": task_result.orchestration,
+            "confidence": task_result.confidence,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@orchestration_router.put("/swarms/round-robin/{task_id}")
+@retry_on_error(max_retries=3)
+@validate_request(TaskRequest)
+async def update_round_robin_task(
+    task_id: str,
+    request: Dict[str, Any],
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("write")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
+) -> Dict:
+    """Update round-robin swarm task."""
+    try:
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        agent_ids = request.get("agent_ids", [])
+        if not agent_ids:
+            raise ValidationError("round-robin pattern requires agent_ids")
+        
+        subtasks = request.get("subtasks", [])
+        if not subtasks:
+            raise ValidationError("round-robin pattern requires subtasks")
+        
+        # Update task
+        task_result = await orchestration_agent.update_task(
+            task_id=task_id,
+            task_data={
+                **request,
+                "swarm_pattern": "RoundRobin",
+                "assigned_agents": agent_ids,
+                "agent_ids": agent_ids,
+                "subtasks": subtasks
+            },
+            domain=domain or request.get("domain", "professional"),
+            metadata={
+                "domain": domain,
+                "swarm_pattern": "RoundRobin",
+                "agent_ids": agent_ids,
+                "subtasks": subtasks
+            } if domain else None
+        )
+        
+        return {
+            "task_id": task_result.task_id,
+            "status": "updated",
+            "assigned_agents": task_result.assigned_agents,
+            "swarm_pattern": "RoundRobin",
+            "orchestration": task_result.orchestration,
+            "confidence": task_result.confidence,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -712,6 +999,97 @@ async def create_round_robin_task(
             raise
         raise ServiceError(str(e))
 
+# Task retrieval and update endpoints for mesh pattern
+@orchestration_router.get("/swarms/mesh/{task_id}")
+@retry_on_error(max_retries=3)
+async def get_mesh_task(
+    task_id: str,
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("read")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
+) -> Dict:
+    """Get mesh swarm task details."""
+    try:
+        task_result = await orchestration_agent.get_task(
+            task_id=task_id,
+            domain=domain,
+            metadata={"domain": domain} if domain else None
+        )
+        
+        if task_result.swarm_pattern != "mesh":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "INVALID_PATTERN",
+                    "message": f"Task {task_id} is not a mesh swarm task"
+                }
+            )
+        
+        return {
+            "task_id": task_result.task_id,
+            "status": task_result.status,
+            "assigned_agents": task_result.assigned_agents,
+            "swarm_pattern": "mesh",
+            "orchestration": task_result.orchestration,
+            "confidence": task_result.confidence,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@orchestration_router.put("/swarms/mesh/{task_id}")
+@retry_on_error(max_retries=3)
+@validate_request(TaskRequest)
+async def update_mesh_task(
+    task_id: str,
+    request: Dict[str, Any],
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("write")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
+) -> Dict:
+    """Update mesh swarm task."""
+    try:
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        agent_ids = request.get("agent_ids", [])
+        if not agent_ids:
+            raise ValidationError("mesh pattern requires agent_ids")
+        
+        # Update task
+        task_result = await orchestration_agent.update_task(
+            task_id=task_id,
+            task_data={
+                **request,
+                "swarm_pattern": "mesh",
+                "assigned_agents": agent_ids
+            },
+            domain=domain or request.get("domain", "professional"),
+            metadata={
+                "domain": domain,
+                "swarm_pattern": "mesh",
+                "assigned_agents": agent_ids,
+                "communication_patterns": request.get("communication_patterns", [])
+            } if domain else None
+        )
+        
+        return {
+            "task_id": task_result.task_id,
+            "status": "updated",
+            "assigned_agents": task_result.assigned_agents,
+            "swarm_pattern": "mesh",
+            "orchestration": task_result.orchestration,
+            "confidence": task_result.confidence,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
 @orchestration_router.post("/swarms/mesh")
 @retry_on_error(max_retries=3)
 @validate_request(TaskRequest)
@@ -777,6 +1155,101 @@ async def create_mesh_task(
             "status": task_result.status,
             "assigned_agents": task_result.assigned_agents,
             "swarm_pattern": "mesh",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+# Task retrieval and update endpoints for swarm patterns
+@orchestration_router.get("/swarms/parallel/{task_id}")
+@retry_on_error(max_retries=3)
+async def get_parallel_task(
+    task_id: str,
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("read")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
+) -> Dict:
+    """Get parallel swarm task details."""
+    try:
+        task_result = await orchestration_agent.get_task(
+            task_id=task_id,
+            domain=domain,
+            metadata={"domain": domain} if domain else None
+        )
+        
+        if task_result.swarm_pattern != "parallel":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "INVALID_PATTERN",
+                    "message": f"Task {task_id} is not a parallel swarm task"
+                }
+            )
+        
+        return {
+            "task_id": task_result.task_id,
+            "status": task_result.status,
+            "assigned_agents": task_result.assigned_agents,
+            "swarm_pattern": "parallel",
+            "orchestration": task_result.orchestration,
+            "confidence": task_result.confidence,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@orchestration_router.put("/swarms/parallel/{task_id}")
+@retry_on_error(max_retries=3)
+@validate_request(TaskRequest)
+async def update_parallel_task(
+    task_id: str,
+    request: Dict[str, Any],
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("write")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
+) -> Dict:
+    """Update parallel swarm task."""
+    try:
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        agent_ids = request.get("agent_ids", [])
+        if not agent_ids:
+            raise ValidationError("parallel pattern requires agent_ids")
+        
+        subtasks = request.get("subtasks", [])
+        if not subtasks:
+            raise ValidationError("parallel pattern requires subtasks")
+        
+        # Update task
+        task_result = await orchestration_agent.update_task(
+            task_id=task_id,
+            task_data={
+                **request,
+                "swarm_pattern": "parallel",
+                "assigned_agents": agent_ids
+            },
+            domain=domain or request.get("domain", "professional"),
+            metadata={
+                "domain": domain,
+                "swarm_pattern": "parallel",
+                "assigned_agents": agent_ids,
+                "subtasks": subtasks
+            } if domain else None
+        )
+        
+        return {
+            "task_id": task_result.task_id,
+            "status": "updated",
+            "assigned_agents": task_result.assigned_agents,
+            "swarm_pattern": "parallel",
+            "orchestration": task_result.orchestration,
+            "confidence": task_result.confidence,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -853,6 +1326,103 @@ async def create_parallel_task(
             "status": task_result.status,
             "assigned_agents": task_result.assigned_agents,
             "swarm_pattern": "parallel",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+# Task retrieval and update endpoints for sequential pattern
+@orchestration_router.get("/swarms/sequential/{task_id}")
+@retry_on_error(max_retries=3)
+async def get_sequential_task(
+    task_id: str,
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("read")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
+) -> Dict:
+    """Get sequential swarm task details."""
+    try:
+        task_result = await orchestration_agent.get_task(
+            task_id=task_id,
+            domain=domain,
+            metadata={"domain": domain} if domain else None
+        )
+        
+        if task_result.swarm_pattern != "sequential":
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "INVALID_PATTERN",
+                    "message": f"Task {task_id} is not a sequential swarm task"
+                }
+            )
+        
+        return {
+            "task_id": task_result.task_id,
+            "status": task_result.status,
+            "assigned_agents": task_result.assigned_agents,
+            "swarm_pattern": "sequential",
+            "orchestration": task_result.orchestration,
+            "confidence": task_result.confidence,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@orchestration_router.put("/swarms/sequential/{task_id}")
+@retry_on_error(max_retries=3)
+@validate_request(TaskRequest)
+async def update_sequential_task(
+    task_id: str,
+    request: Dict[str, Any],
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("write")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
+) -> Dict:
+    """Update sequential swarm task."""
+    try:
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        agent_sequence = request.get("agent_sequence", [])
+        if not agent_sequence:
+            raise ValidationError("sequential pattern requires agent_sequence")
+        
+        # Extract agent IDs and types
+        agent_ids = [agent[0] for agent in agent_sequence]
+        agent_types = [agent[1] for agent in agent_sequence]
+        
+        # Update task
+        task_result = await orchestration_agent.update_task(
+            task_id=task_id,
+            task_data={
+                **request,
+                "swarm_pattern": "sequential",
+                "assigned_agents": agent_ids,
+                "agent_types": agent_types
+            },
+            domain=domain or request.get("domain", "professional"),
+            metadata={
+                "domain": domain,
+                "swarm_pattern": "sequential",
+                "assigned_agents": agent_ids,
+                "agent_types": agent_types,
+                "input_data": request.get("input_data")
+            } if domain else None
+        )
+        
+        return {
+            "task_id": task_result.task_id,
+            "status": "updated",
+            "assigned_agents": task_result.assigned_agents,
+            "swarm_pattern": "sequential",
+            "orchestration": task_result.orchestration,
+            "confidence": task_result.confidence,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:

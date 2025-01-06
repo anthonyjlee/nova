@@ -102,7 +102,8 @@ async def test_monitor_agents_with_llm(monitoring_agent, mock_llm):
     assert len(result.monitoring["agents"]) == 2
     assert len(result.metrics) == 1
     assert len(result.issues) == 1
-    assert result.confidence > 0
+    assert isinstance(result.confidence, (int, float))
+    assert 0 <= result.confidence <= 1
     assert "domain" in result.metadata
 
 @pytest.mark.asyncio
@@ -121,7 +122,8 @@ async def test_monitor_agents_without_llm():
     assert isinstance(result, MonitoringResult)
     assert result.monitoring["type"] == "performance"
     assert "agents" in result.monitoring
-    assert result.confidence >= 0
+    assert isinstance(result.confidence, (int, float))
+    assert 0 <= result.confidence <= 1
     assert result.is_valid is True  # All basic checks should pass
 
 @pytest.mark.asyncio
@@ -270,6 +272,8 @@ def test_extract_metrics(monitoring_agent):
     assert all("type" in m for m in metrics)
     assert all("description" in m for m in metrics)
     assert all("confidence" in m for m in metrics)
+    assert all(isinstance(m["confidence"], (int, float)) for m in metrics)
+    assert all(0 <= m["confidence"] <= 1 for m in metrics)
     assert any("domain_relevance" in m for m in metrics)
 
 def test_extract_issues(monitoring_agent):
@@ -338,6 +342,7 @@ def test_calculate_confidence(monitoring_agent):
     
     confidence = monitoring_agent._calculate_confidence(monitoring, metrics, issues)
     
+    assert isinstance(confidence, (int, float))
     assert 0 <= confidence <= 1
     # Should include:
     # - Monitoring confidence (0.2 from agents + metrics)

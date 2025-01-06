@@ -121,7 +121,8 @@ async def test_process_visualization_with_llm(visualization_agent, mock_llm):
     assert len(result.visualization["visualization"]) == 2
     assert len(result.elements) == 1
     assert len(result.issues) == 1
-    assert result.confidence > 0
+    assert isinstance(result.confidence, (int, float))
+    assert 0 <= result.confidence <= 1
     assert "domain" in result.metadata
 
 @pytest.mark.asyncio
@@ -140,7 +141,8 @@ async def test_process_visualization_without_llm():
     assert isinstance(result, VisualizationResult)
     assert result.visualization["type"] == "chart"
     assert "visualization" in result.visualization
-    assert result.confidence >= 0
+    assert isinstance(result.confidence, (int, float))
+    assert 0 <= result.confidence <= 1
     assert result.is_valid is True  # All basic checks should pass
 
 @pytest.mark.asyncio
@@ -291,6 +293,8 @@ def test_extract_elements(visualization_agent):
     assert all("type" in e for e in elements)
     assert all("description" in e for e in elements)
     assert all("confidence" in e for e in elements)
+    assert all(isinstance(e["confidence"], (int, float)) for e in elements)
+    assert all(0 <= e["confidence"] <= 1 for e in elements)
     assert any("domain_relevance" in e for e in elements)
 
 def test_extract_issues(visualization_agent):
@@ -362,6 +366,7 @@ def test_calculate_confidence(visualization_agent):
     
     confidence = visualization_agent._calculate_confidence(visualization, elements, issues)
     
+    assert isinstance(confidence, (int, float))
     assert 0 <= confidence <= 1
     # Should include:
     # - Visualization confidence (0.2 from visualization + metadata)

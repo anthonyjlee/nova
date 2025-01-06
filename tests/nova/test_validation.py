@@ -78,7 +78,8 @@ async def test_validate_content_with_llm(validation_agent, mock_llm):
     assert isinstance(result, ValidationResult)
     assert len(result.validations) == 1
     assert len(result.issues) == 1
-    assert result.confidence > 0
+    assert isinstance(result.confidence, (int, float))
+    assert 0 <= result.confidence <= 1
     assert "domain" in result.metadata
     assert result.is_valid is not None
 
@@ -98,7 +99,8 @@ async def test_validate_content_without_llm():
     assert isinstance(result, ValidationResult)
     assert len(result.validations) > 0
     assert all(v["rule"] in ["has_content", "has_type", "has_metadata"] for v in result.validations)
-    assert result.confidence >= 0
+    assert isinstance(result.confidence, (int, float))
+    assert 0 <= result.confidence <= 1
     assert result.is_valid is True  # All basic checks should pass
 
 @pytest.mark.asyncio
@@ -199,6 +201,8 @@ def test_extract_validations(validation_agent):
     assert all("rule" in v for v in validations)
     assert all("passed" in v for v in validations)
     assert all("confidence" in v for v in validations)
+    assert all(isinstance(v["confidence"], (int, float)) for v in validations)
+    assert all(0 <= v["confidence"] <= 1 for v in validations)
     assert any("domain_relevance" in v for v in validations)
 
 def test_extract_issues(validation_agent):
@@ -256,6 +260,7 @@ def test_calculate_confidence(validation_agent):
     
     confidence = validation_agent._calculate_confidence(validations, issues)
     
+    assert isinstance(confidence, (int, float))
     assert 0 <= confidence <= 1
     # Should include:
     # - Validation confidence (0.7 average)

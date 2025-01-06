@@ -104,7 +104,7 @@
 - [ ] Memory operation endpoints
 - [ ] Advanced query endpoints
 - [ ] Batch operation support
-- [ ] Core Swarm Pattern Endpoints
+- [x] Core Swarm Pattern Endpoints
   * Hierarchical swarm (supervisor-worker pattern)
   * Parallel swarm (concurrent task processing)
   * Sequential swarm (ordered task chain)

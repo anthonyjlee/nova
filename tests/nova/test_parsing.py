@@ -98,7 +98,8 @@ async def test_parse_text_with_llm(parser, mock_llm):
     assert isinstance(result, ParseResult)
     assert len(result.concepts) == 1
     assert len(result.key_points) == 1
-    assert result.confidence > 0
+    assert isinstance(result.confidence, (int, float))
+    assert 0 <= result.confidence <= 1
     assert "domain" in result.metadata
     assert result.structure is not None
 
@@ -114,7 +115,8 @@ async def test_parse_text_without_llm():
     assert isinstance(result, ParseResult)
     assert len(result.concepts) > 0
     assert any(c["type"] == "inferred_definition" for c in result.concepts)
-    assert result.confidence >= 0
+    assert isinstance(result.confidence, (int, float))
+    assert 0 <= result.confidence <= 1
     assert "similar_parses" not in result.structure  # No vector store
 
 @pytest.mark.asyncio
@@ -186,6 +188,9 @@ def test_extract_concepts(parser):
     assert any(c["type"] == "concept" for c in concepts)  # Default type
     assert any("domain_relevance" in c for c in concepts)
     assert any("complexity" in c for c in concepts)
+    assert all("confidence" in c for c in concepts)
+    assert all(isinstance(c["confidence"], (int, float)) for c in concepts)
+    assert all(0 <= c["confidence"] <= 1 for c in concepts)
 
 def test_extract_key_points(parser):
     """Test key point extraction and validation."""
@@ -215,6 +220,9 @@ def test_extract_key_points(parser):
     assert any(p["type"] == "key_point" for p in key_points)  # Default type
     assert any("domain_relevance" in p for p in key_points)
     assert any("importance" in p for p in key_points)
+    assert all("confidence" in p for p in key_points)
+    assert all(isinstance(p["confidence"], (int, float)) for p in key_points)
+    assert all(0 <= p["confidence"] <= 1 for p in key_points)
 
 def test_extract_structure(parser):
     """Test structure extraction and validation."""
@@ -298,6 +306,7 @@ def test_calculate_confidence(parser):
     
     confidence = parser._calculate_confidence(concepts, key_points, structure)
     
+    assert isinstance(confidence, (int, float))
     assert 0 <= confidence <= 1
     # Should include:
     # - Base confidence (0.7 average from concepts and key points)

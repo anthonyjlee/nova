@@ -257,10 +257,22 @@ async def memory_system(request):
         port=6333
     )
     
-    memory = TwoLayerMemorySystem(
-        neo4j_uri="bolt://localhost:7687",
-        vector_store=vector_store
-    )
+    memory = None
+    try:
+        memory = TwoLayerMemorySystem(
+            neo4j_uri="bolt://localhost:7687",
+            vector_store=vector_store
+        )
+        
+        # Initialize memory system components
+        await memory.initialize()  # This will initialize all layers
+        
+        # Verify episodic layer is properly initialized
+        if not memory.episodic.is_initialized:
+            raise Exception("EpisodicLayer failed to initialize")
+    except Exception as e:
+        print(f"Memory system initialization error: {str(e)}")
+        raise
     
     async def cleanup():
         """Clean up test data."""
@@ -271,24 +283,63 @@ async def memory_system(request):
             )
             
             # Clean up vector store test data
-            await memory.vector_store.delete_collection()
+            if hasattr(memory.vector_store, 'delete_collection'):
+                await memory.vector_store.delete_collection()
             
-            # Close connections
-            await memory.semantic.close()
-            await memory.episodic.close()
-            await memory.vector_store.close()
+            # Close connections in reverse order of initialization
+            try:
+                if hasattr(memory.vector_store, 'close'):
+                    await memory.vector_store.close()
+            except Exception as e:
+                print(f"Vector store cleanup error: {str(e)}")
+                
+            try:
+                if hasattr(memory.episodic, 'close'):
+                    await memory.episodic.close()
+            except Exception as e:
+                print(f"Episodic cleanup error: {str(e)}")
+                
+            try:
+                if hasattr(memory.semantic, 'close'):
+                    await memory.semantic.close()
+            except Exception as e:
+                print(f"Semantic cleanup error: {str(e)}")
         except Exception as e:
             print(f"Cleanup error: {str(e)}")
     
     try:
-        # Initialize connections
-        await memory.semantic.connect()
-        await memory.episodic.connect()
-        await memory.vector_store.connect()
+        # Initialize connections in order
+        try:
+            await memory.semantic.connect()
+        except Exception as e:
+            print(f"Semantic connection error: {str(e)}")
+            raise
+            
+        try:
+            await memory.episodic.connect()
+        except Exception as e:
+            print(f"Episodic connection error: {str(e)}")
+            await memory.semantic.close()
+            raise
+            
+        try:
+            await memory.vector_store.connect()
+        except Exception as e:
+            print(f"Vector store connection error: {str(e)}")
+            await memory.episodic.close()
+            await memory.semantic.close()
+            raise
         
-        # Create test collections
-        await memory.episodic.ensure_collection()
-        await memory.vector_store.ensure_collection()
+        # Create test collections with error handling
+        try:
+            await memory.episodic.ensure_collection()
+            await memory.vector_store.ensure_collection()
+        except Exception as e:
+            print(f"Collection creation error: {str(e)}")
+            await memory.vector_store.close()
+            await memory.episodic.close()
+            await memory.semantic.close()
+            raise
         
         yield memory
     finally:
@@ -352,38 +403,40 @@ class TestFullSystemIntegration:
         
         try:
             client = TestClient(app)
-            async with client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}) as websocket:
-                try:
-                    # Store test data in memory
-                    test_data = {
-                        "type": "test_content",
-                        "content": "Test analytics data",
-                        "timestamp": datetime.now().isoformat()
-                    }
-                    await memory_system.episodic.store(test_data)
-                    
-                    # Send analytics request
-                    await websocket.send_json({
-                        **VALID_ANALYTICS_REQUEST,
-                        "content": test_data
-                    })
-                    
-                    # Verify response includes memory context
-                    data = await websocket.receive_json()
-                    assert data["type"] == "analytics_update"
-                    assert data["analytics"]["memory_context"] is not None
-                    assert len(data["insights"]) > 0
-                    
-                    # Verify data was stored
-                    stored_data = await memory_system.episodic.search(
-                        query=test_data["content"]
-                    )
-                    assert len(stored_data) > 0
-                except websockets.exceptions.ConnectionClosed:
-                    pytest.fail("WebSocket connection closed unexpectedly")
-                except Exception as e:
-                    print(f"WebSocket error: {str(e)}")
-                    raise
+            websocket = await client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY})
+            try:
+                # Store test data in memory
+                test_data = {
+                    "type": "test_content",
+                    "content": "Test analytics data",
+                    "timestamp": datetime.now().isoformat()
+                }
+                await memory_system.episodic.store(test_data)
+                
+                # Send analytics request
+                await websocket.send_json({
+                    **VALID_ANALYTICS_REQUEST,
+                    "content": test_data
+                })
+                
+                # Verify response includes memory context
+                data = await websocket.receive_json()
+                assert data["type"] == "analytics_update"
+                assert data["analytics"]["memory_context"] is not None
+                assert len(data["insights"]) > 0
+                
+                # Verify data was stored
+                stored_data = await memory_system.episodic.search(
+                    query=test_data["content"]
+                )
+                assert len(stored_data) > 0
+            except websockets.exceptions.ConnectionClosed:
+                pytest.fail("WebSocket connection closed unexpectedly")
+            except Exception as e:
+                print(f"WebSocket error: {str(e)}")
+                raise
+            finally:
+                await websocket.close()
         finally:
             app.dependency_overrides.clear()
     

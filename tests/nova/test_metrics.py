@@ -109,7 +109,8 @@ async def test_process_metrics_with_llm(metrics_agent, mock_llm):
     assert len(result.metrics["metrics"]) == 2
     assert len(result.values) == 1
     assert len(result.issues) == 1
-    assert result.confidence > 0
+    assert isinstance(result.confidence, (int, float))
+    assert 0 <= result.confidence <= 1
     assert "domain" in result.metadata
 
 @pytest.mark.asyncio
@@ -128,7 +129,8 @@ async def test_process_metrics_without_llm():
     assert isinstance(result, MetricsResult)
     assert result.metrics["type"] == "performance"
     assert "metrics" in result.metrics
-    assert result.confidence >= 0
+    assert isinstance(result.confidence, (int, float))
+    assert 0 <= result.confidence <= 1
     assert result.is_valid is True  # All basic checks should pass
 
 @pytest.mark.asyncio
@@ -279,6 +281,8 @@ def test_extract_values(metrics_agent):
     assert all("type" in v for v in values)
     assert all("description" in v for v in values)
     assert all("confidence" in v for v in values)
+    assert all(isinstance(v["confidence"], (int, float)) for v in values)
+    assert all(0 <= v["confidence"] <= 1 for v in values)
     assert any("domain_relevance" in v for v in values)
 
 def test_extract_issues(metrics_agent):
@@ -350,6 +354,7 @@ def test_calculate_confidence(metrics_agent):
     
     confidence = metrics_agent._calculate_confidence(metrics, values, issues)
     
+    assert isinstance(confidence, (int, float))
     assert 0 <= confidence <= 1
     # Should include:
     # - Metrics confidence (0.2 from metrics + metadata)

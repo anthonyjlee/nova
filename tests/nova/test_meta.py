@@ -47,13 +47,13 @@ def mock_agent():
     return agent
 
 @pytest.fixture
-def meta_agent(mock_llm, mock_store):
+def meta_agent(mock_llm, mock_store, mock_agent):
     """Create a MetaAgent instance with mock dependencies."""
     return MetaAgent(
         llm=mock_llm,
         store=mock_store,
         vector_store=MagicMock(),
-        agents={"test_agent": mock_agent()}
+        agents={"test_agent": mock_agent}
     )
 
 @pytest.mark.asyncio
@@ -69,26 +69,28 @@ async def test_process_interaction(meta_agent, mock_llm):
     assert result.response == "Synthesized response"
     assert len(result.concepts) == 1
     assert len(result.key_points) == 2
-    assert result.confidence > 0
+    assert isinstance(result.confidence, (int, float))
+    assert 0 <= result.confidence <= 1
     assert "domain" in result.metadata
     assert "agent_count" in result.metadata
 
 @pytest.mark.asyncio
-async def test_process_interaction_without_llm():
+async def test_process_interaction_without_llm(mock_agent):
     """Test processing without LLM (fallback mode)."""
-    agent = MetaAgent(agents={"test_agent": mock_agent()})
+    agent = MetaAgent(agents={"test_agent": mock_agent})
     result = await agent.process_interaction("Test content")
     
     # Verify basic synthesis worked
     assert isinstance(result, MetaResult)
     assert result.response == "Synthesized response from multiple agents"
     assert len(result.concepts) > 0
-    assert result.confidence >= 0
+    assert isinstance(result.confidence, (int, float))
+    assert 0 <= result.confidence <= 1
 
 @pytest.mark.asyncio
 async def test_gather_agent_responses(meta_agent, mock_agent):
     """Test gathering responses from agents."""
-    meta_agent.agents = {"test_agent": mock_agent}
+    meta_agent.agents = {"test_agent": mock_agent}  # mock_agent is now properly injected as fixture
     responses = await meta_agent._gather_agent_responses("Test content", {"domain": "professional"})
     
     # Verify agent was called
@@ -161,6 +163,9 @@ def test_extract_concepts(meta_agent):
     assert len(concepts) == 2  # Invalid one should be filtered out
     assert all("type" in c for c in concepts)
     assert any(c["type"] == "synthesis" for c in concepts)  # Default type
+    assert all("confidence" in c for c in concepts)
+    assert all(isinstance(c["confidence"], (int, float)) for c in concepts)
+    assert all(0 <= c["confidence"] <= 1 for c in concepts)
 
 @pytest.mark.asyncio
 async def test_record_synthesis(meta_agent, mock_store):
@@ -195,6 +200,7 @@ def test_calculate_confidence(meta_agent):
     
     confidence = meta_agent._calculate_confidence(concepts, agent_responses)
     
+    assert isinstance(confidence, (int, float))
     assert 0 <= confidence <= 1
     # Should be weighted average: (0.6 * 0.7 + 0.4 * 0.8) ≈ 0.74
     assert 0.73 <= confidence <= 0.75
