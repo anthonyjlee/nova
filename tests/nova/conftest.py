@@ -19,7 +19,6 @@ from tinytroupe.agent import TinyPerson
 @pytest.fixture(autouse=True)
 async def setup_test_environment(event_loop):
     """Set up test environment with proper event loop handling."""
-    # Set the event loop
     asyncio.set_event_loop(event_loop)
     
     # Reset TinyTroupe agent registry
@@ -64,28 +63,58 @@ async def setup_test_environment(event_loop):
     }
 
     async def mock_analyze(*args, **kwargs):
-        return mock_response
+        try:
+            return await asyncio.wait_for(
+                asyncio.create_task(mock_response_coro()),
+                timeout=5.0
+            )
+        except asyncio.TimeoutError:
+            logger.error("Mock analyze timed out")
+            return {
+                "choices": [{
+                    "message": {
+                        "content": '{"error": "timeout"}'
+                    }
+                }]
+            }
 
     async def mock_get_structured_completion(*args, **kwargs):
+        try:
+            return await asyncio.wait_for(
+                asyncio.create_task(mock_response_coro()),
+                timeout=5.0
+            )
+        except asyncio.TimeoutError:
+            logger.error("Mock completion timed out")
+            return {
+                "choices": [{
+                    "message": {
+                        "content": '{"error": "timeout"}'
+                    }
+                }]
+            }
+
+    async def mock_response_coro():
         return mock_response
 
-    # Apply patches
-    with patch("nia.nova.core.llm.LMStudioLLM.analyze", new=AsyncMock(side_effect=mock_analyze)), \
-         patch("nia.nova.core.llm.LMStudioLLM.get_structured_completion", new=AsyncMock(side_effect=mock_get_structured_completion)):
-        yield
-
-    # Clean up any remaining connections
     try:
-        for task in asyncio.all_tasks(event_loop):
-            if not task.done():
-                logger.debug(f"Cancelling task: {task.get_name()}")
-                task.cancel()
-                try:
-                    await task
-                except asyncio.CancelledError:
-                    pass
-    except Exception as e:
-        logger.error(f"Error during cleanup: {str(e)}")
+        # Apply patches
+        with patch("nia.nova.core.llm.LMStudioLLM.analyze", new=AsyncMock(side_effect=mock_analyze)), \
+             patch("nia.nova.core.llm.LMStudioLLM.get_structured_completion", new=AsyncMock(side_effect=mock_get_structured_completion)):
+            yield
+    finally:
+        # Clean up tasks with timeout
+        try:
+            pending = asyncio.all_tasks(event_loop)
+            for task in pending:
+                if not task.done():
+                    task.cancel()
+                    try:
+                        await asyncio.wait_for(task, timeout=1.0)
+                    except (asyncio.CancelledError, asyncio.TimeoutError):
+                        pass
+        except Exception as e:
+            logger.error(f"Error during cleanup: {str(e)}")
 
 @pytest.fixture(autouse=True)
 async def reset_connections():
@@ -98,5 +127,33 @@ async def reset_connections():
         await reset_vector_store()
         yield
     finally:
-        await reset_neo4j_driver()
-        await reset_vector_store()
+        # Ensure connections are reset even if test fails
+        try:
+            await reset_neo4j_driver()
+            await reset_vector_store()
+        except Exception as e:
+            logger.error(f"Error resetting connections: {str(e)}")
+
+@pytest.fixture
+async def mock_analytics_agent():
+    """Create a mock analytics agent with proper error handling."""
+    agent = AsyncMock()
+    
+    async def process_with_timeout(*args, **kwargs):
+        try:
+            return await asyncio.wait_for(
+                asyncio.create_task(agent.process_analytics(*args, **kwargs)),
+                timeout=5.0
+            )
+        except asyncio.TimeoutError:
+            logger.error("Mock analytics processing timed out")
+            from nia.nova.core.analytics import AnalyticsResult
+            return AnalyticsResult(
+                is_valid=False,
+                analytics={},
+                insights=[{"type": "error", "description": "Processing timed out"}],
+                confidence=0.0
+            )
+    
+    agent.process_analytics.side_effect = process_with_timeout
+    return agent

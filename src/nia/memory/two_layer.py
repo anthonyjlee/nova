@@ -278,6 +278,33 @@ class TwoLayerMemorySystem:
         self.semantic = SemanticLayer()
         self.semantic.store = self.semantic
         self.consolidation_manager = None  # Will be set by ConsolidationManager
+        self._initialized = False
+        
+    async def initialize(self):
+        """Initialize connections to Neo4j and vector store."""
+        if not self._initialized:
+            # Initialize Neo4j connection
+            if hasattr(self.semantic, 'connect'):
+                await self.semantic.connect()
+            
+            # Initialize vector store if needed
+            if hasattr(self.episodic.store, 'connect'):
+                await self.episodic.store.connect()
+                
+            self._initialized = True
+            
+    async def cleanup(self):
+        """Clean up connections."""
+        if self._initialized:
+            # Close Neo4j connection
+            if hasattr(self.semantic, 'close'):
+                await self.semantic.close()
+                
+            # Close vector store connection if needed
+            if hasattr(self.episodic.store, 'close'):
+                await self.episodic.store.close()
+                
+            self._initialized = False
         
     async def store_experience(self, experience: Memory):
         """Store new experience in episodic memory."""
@@ -325,3 +352,22 @@ class TwoLayerMemorySystem:
     async def query_semantic(self, query: Dict) -> List[Dict]:
         """Query semantic knowledge."""
         return await self.semantic.query_knowledge(query)
+        
+    async def get_memory(self, memory_id: str) -> Optional[Memory]:
+        """Get a memory by its ID."""
+        try:
+            # Search for memory in episodic store
+            # Convert memory_id to content for searching
+            results = await self.episodic.store.search_vectors(
+                content={"id": memory_id},
+                limit=1,
+                score_threshold=0.99  # High threshold for exact match
+            )
+            if results and len(results) > 0:
+                # Convert first result to Memory object
+                memory_data = results[0]
+                return Memory(**memory_data)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get memory {memory_id}: {str(e)}")
+            return None

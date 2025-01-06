@@ -24,25 +24,72 @@ from nia.agents.tinytroupe_agent import TinyFactory
 TEST_API_KEY = "test-key"
 assert TEST_API_KEY in API_KEYS, "Test API key not found in API_KEYS"
 
+@pytest.fixture(autouse=True)
+async def check_infrastructure():
+    """Verify required infrastructure is running."""
+    try:
+        # Check Neo4j
+        import neo4j
+        from neo4j import AsyncGraphDatabase
+        driver = AsyncGraphDatabase.driver("bolt://localhost:7687")
+        await driver.verify_connectivity()
+        await driver.close()
+        
+        # Check vector store
+        import aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.get("http://localhost:6333/collections") as response:
+                if response.status != 200:
+                    pytest.skip("Vector store not available. Please ensure Qdrant is running on port 6333.")
+            
+    except neo4j.exceptions.ServiceUnavailable:
+        pytest.skip("Neo4j not available. Please ensure Neo4j is running on port 7687.")
+    except aiohttp.ClientError:
+        pytest.skip("Vector store not available. Please ensure Qdrant is running on port 6333.")
+    except Exception as e:
+        pytest.skip(f"Infrastructure check failed: {str(e)}")
+
 @pytest.fixture
-async def memory_system():
+async def memory_system(request):
     """Create real memory system for testing."""
     memory = TwoLayerMemorySystem(
         neo4j_uri="bolt://localhost:7687",
         vector_store_host="localhost",
         vector_store_port=6333
     )
+    
+    async def cleanup():
+        """Clean up test data."""
+        try:
+            # Clean up Neo4j test data
+            await memory.semantic.store.run_query(
+                "MATCH (n) WHERE n.domain = 'test' DETACH DELETE n"
+            )
+            
+            # Clean up vector store test data
+            await memory.vector_store.delete_collection()
+            
+            # Close connections
+            await memory.semantic.close()
+            await memory.episodic.close()
+            await memory.vector_store.close()
+        except Exception as e:
+            print(f"Cleanup error: {str(e)}")
+    
     try:
+        # Initialize connections
         await memory.semantic.connect()
         await memory.episodic.connect()
         await memory.vector_store.connect()
-        await memory.episodic.ensure_collection()
-        await memory.vector_store.ensure_collection()
+        
+        # Create test collections with unique names for isolation
+        await memory.episodic.ensure_collection("test_demo_episodic")
+        await memory.vector_store.ensure_collection("test_demo_vector")
+        
         yield memory
     finally:
-        await memory.semantic.close()
-        await memory.episodic.close()
-        await memory.vector_store.close()
+        # Register cleanup
+        request.addfinalizer(cleanup)
 
 @pytest.fixture
 async def llm_interface():
@@ -170,41 +217,48 @@ class TestDemoFunctionality:
         try:
             client = TestClient(app)
             
-            with client.websocket_connect(
+            async with client.websocket_connect(
                 "/api/analytics/ws",
                 headers={"X-API-Key": TEST_API_KEY}
             ) as websocket:
-                # Send coordination request
-                await websocket.send_json({
-                    "type": "agent_coordination",
-                    "content": "Why is the sky blue?",
-                    "domain": "science",
-                    "llm_config": {
-                        "chat_model": "test-chat-model",
-                        "embedding_model": "test-embedding-model"
-                    }
-                })
-                
-                # Track agent updates
-                updates_received = 0
-                response_received = False
-                
-                while True:
-                    data = await websocket.receive_json()
+                try:
+                    # Send coordination request
+                    await websocket.send_json({
+                        "type": "agent_coordination",
+                        "content": "Why is the sky blue?",
+                        "domain": "science",
+                        "llm_config": {
+                            "chat_model": "test-chat-model",
+                            "embedding_model": "test-embedding-model"
+                        }
+                    })
                     
-                    if data["type"] == "analytics_update":
-                        updates_received += 1
-                        assert "analytics" in data
-                        for agent, update in data["analytics"].items():
-                            assert "message" in update
+                    # Track agent updates
+                    updates_received = 0
+                    response_received = False
                     
-                    elif data["type"] == "response":
-                        response_received = True
-                        assert "content" in data
-                        break
-                
-                assert updates_received > 0
-                assert response_received
+                    while True:
+                        try:
+                            data = await websocket.receive_json()
+                            
+                            if data["type"] == "analytics_update":
+                                updates_received += 1
+                                assert "analytics" in data
+                                for agent, update in data["analytics"].items():
+                                    assert "message" in update
+                            
+                            elif data["type"] == "response":
+                                response_received = True
+                                assert "content" in data
+                                break
+                        except websockets.exceptions.ConnectionClosed:
+                            break
+                    
+                    assert updates_received > 0
+                    assert response_received
+                except Exception as e:
+                    print(f"WebSocket error: {str(e)}")
+                    raise
         finally:
             app.dependency_overrides.clear()
     
@@ -279,34 +333,41 @@ class TestDemoFunctionality:
             swarm_data = response.json()
             
             # Test swarm coordination through WebSocket
-            with client.websocket_connect(
+            async with client.websocket_connect(
                 "/api/analytics/ws",
                 headers={"X-API-Key": TEST_API_KEY}
             ) as websocket:
-                # Monitor swarm activity
-                websocket.send_json({
-                    "type": "swarm_monitor",
-                    "swarm_ids": [
-                        swarm_data["swarms"]["hierarchical"]["swarm_id"],
-                        swarm_data["swarms"]["parallel"]["swarm_id"],
-                        swarm_data["swarms"]["sequential"]["swarm_id"],
-                        swarm_data["swarms"]["mesh"]["swarm_id"],
-                        swarm_data["swarms"]["round_robin"]["swarm_id"],
-                        swarm_data["swarms"]["majority_voting"]["swarm_id"]
-                    ]
-                })
-                
-                # Track swarm events
-                events_received = {pattern: False for pattern in swarm_data["swarms"]}
-                
-                while not all(events_received.values()):
-                    data = websocket.receive_json()
-                    if data["type"] == "swarm_update":
-                        pattern = data.get("pattern")
-                        if pattern in events_received:
-                            events_received[pattern] = True
-                
-                assert all(events_received.values())
+                try:
+                    # Monitor swarm activity
+                    await websocket.send_json({
+                        "type": "swarm_monitor",
+                        "swarm_ids": [
+                            swarm_data["swarms"]["hierarchical"]["swarm_id"],
+                            swarm_data["swarms"]["parallel"]["swarm_id"],
+                            swarm_data["swarms"]["sequential"]["swarm_id"],
+                            swarm_data["swarms"]["mesh"]["swarm_id"],
+                            swarm_data["swarms"]["round_robin"]["swarm_id"],
+                            swarm_data["swarms"]["majority_voting"]["swarm_id"]
+                        ]
+                    })
+                    
+                    # Track swarm events
+                    events_received = {pattern: False for pattern in swarm_data["swarms"]}
+                    
+                    while not all(events_received.values()):
+                        try:
+                            data = await websocket.receive_json()
+                            if data["type"] == "swarm_update":
+                                pattern = data.get("pattern")
+                                if pattern in events_received:
+                                    events_received[pattern] = True
+                        except websockets.exceptions.ConnectionClosed:
+                            break
+                    
+                    assert all(events_received.values())
+                except Exception as e:
+                    print(f"WebSocket error: {str(e)}")
+                    raise
             
             # Cleanup swarms through Nova's orchestration
             cleanup_response = client.delete(
@@ -349,19 +410,25 @@ class TestDemoFunctionality:
             assert invalid_swarm_response.status_code == 400
             
             # Test WebSocket error handling
-            with client.websocket_connect(
+            async with client.websocket_connect(
                 "/api/analytics/ws",
                 headers={"X-API-Key": TEST_API_KEY}
             ) as websocket:
-                # Send invalid message
-                websocket.send_json({
-                    "type": "invalid_type",
-                    "content": "test"
-                })
-                
-                response = websocket.receive_json()
-                assert response["type"] == "error"
-                assert "message" in response
+                try:
+                    # Send invalid message
+                    await websocket.send_json({
+                        "type": "invalid_type",
+                        "content": "test"
+                    })
+                    
+                    response = await websocket.receive_json()
+                    assert response["type"] == "error"
+                    assert "message" in response
+                except websockets.exceptions.ConnectionClosed:
+                    pytest.fail("WebSocket connection closed unexpectedly")
+                except Exception as e:
+                    print(f"WebSocket error: {str(e)}")
+                    raise
             
             # Test cleanup with invalid swarm ID
             invalid_cleanup_response = client.delete(

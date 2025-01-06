@@ -189,7 +189,7 @@ async def startup_event():
     # Reset rate limits on startup
     reset_rate_limits()
 
-@app.get("/health", dependencies=[Depends(check_rate_limit)])
+@app.get("/health")
 async def health_check():
     """Health check endpoint."""
     return {
@@ -198,12 +198,18 @@ async def health_check():
         "version": app.version
     }
 
-@app.get("/", dependencies=[Depends(check_rate_limit)])
+@app.get("/")
 async def root():
     """Root endpoint."""
     return {
         "name": "Nova API",
         "version": app.version,
         "docs_url": "/docs",
-        "redoc_url": "/redoc"
+        "redoc_url": "/redoc",
+        "endpoints": {
+            "health": "/health",
+            "analytics": "/api/analytics",
+            "orchestration": "/api/orchestration",
+            "websocket": "/api/analytics/ws"
+        }
     }

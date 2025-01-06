@@ -149,6 +149,13 @@ async def get_llm_interface():
         embedding_model=EMBEDDING_MODEL
     )
 
+async def get_tiny_factory(
+    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
+):
+    """Get TinyFactory instance."""
+    from nia.agents.tinytroupe_agent import TinyFactory
+    return TinyFactory(memory_system=memory_system)
+
 async def get_analytics_agent(
     memory_system: TwoLayerMemorySystem = Depends(get_memory_system),
     llm: LMStudioLLM = Depends(get_llm)

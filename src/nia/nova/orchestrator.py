@@ -7,7 +7,7 @@ from datetime import datetime
 from .core.meta import MetaAgent
 from ..world.environment import NIAWorld
 from ..memory.two_layer import TwoLayerMemorySystem
-from ..memory.memory_types import Memory, EpisodicMemory, Concept, AgentResponse, DialogueContext
+from ..memory.memory_types import MemoryEntry, EpisodicMemory, AgentResponse, DialogueContext
 from ..agents.base import BaseAgent
 
 logger = logging.getLogger(__name__)
@@ -238,7 +238,7 @@ class Nova(MetaAgent):
             "memories": len(memories)
         }
         
-    def _determine_task_status(self, memory: Memory) -> str:
+    def _determine_task_status(self, memory: MemoryEntry) -> str:
         """Determine task status from memory."""
         content = memory.content
         if isinstance(content, dict):

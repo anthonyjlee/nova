@@ -1,6 +1,6 @@
 """Configuration for all agent-related settings."""
 
-from typing import Dict, Any
+from typing import Dict, Any, Set
 
 # Base template that all agent prompts extend
 BASE_AGENT_TEMPLATE = """You are an AI agent specialized in {agent_type} operations, operating within Nova's multi-agent architecture.
@@ -98,7 +98,7 @@ Your specific responsibilities include:
 {responsibilities}"""
 
 # Agent-specific responsibilities
-AGENT_RESPONSIBILITIES = {
+AGENT_RESPONSIBILITIES: Dict[str, str] = {
     "meta": """
 - Coordinate and integrate perspectives from other agents
 - Identify common themes and patterns across domains
@@ -448,36 +448,52 @@ AGENT_RESPONSIBILITIES = {
   * Maintain quality"""
 }
 
+VALID_DOMAINS: Set[str] = {"personal", "professional"}
+REQUIRED_CONFIG_FIELDS: Set[str] = {"name", "agent_type", "domain"}
+
 def get_agent_prompt(agent_type: str) -> str:
-    """Get the prompt template for a specific agent type."""
+    """Get the prompt template for a specific agent type.
+
+    Args:
+        agent_type: The type of the agent.
+
+    Returns:
+        The formatted prompt string.
+
+    Raises:
+        ValueError: If no prompt template is found for the given agent type.
+    """
     if agent_type not in AGENT_RESPONSIBILITIES:
         raise ValueError(f"No prompt template found for agent type: {agent_type}")
-        
+
     return BASE_AGENT_TEMPLATE.format(
         agent_type=agent_type,
         responsibilities=AGENT_RESPONSIBILITIES[agent_type],
-        domain="professional"  # Default domain
+        domain="professional",  # Default domain
     )
 
 def validate_agent_config(agent_type: str, config: Dict[str, Any]) -> bool:
-    """Validate agent configuration."""
-    required_fields = {
-        "name",
-        "agent_type",
-        "domain"
-    }
-    
-    # Check required fields
-    if not all(field in config for field in required_fields):
-        missing = required_fields - set(config.keys())
-        raise ValueError(f"Missing required fields: {missing}")
-        
-    # Validate agent type
+    """Validate agent configuration.
+
+    Args:
+        agent_type: The type of the agent.
+        config: A dictionary containing the agent's configuration.
+
+    Returns:
+        True if the configuration is valid.
+
+    Raises:
+        ValueError: If the configuration is missing required fields,
+                    or if the agent type or domain is invalid.
+    """
+    missing_fields = REQUIRED_CONFIG_FIELDS - config.keys()
+    if missing_fields:
+        raise ValueError(f"Missing required fields: {', '.join(missing_fields)}")
+
     if agent_type not in AGENT_RESPONSIBILITIES:
         raise ValueError(f"Invalid agent type: {agent_type}")
-        
-    # Validate domain
-    if config["domain"] not in {"personal", "professional"}:
+
+    if config["domain"] not in VALID_DOMAINS:
         raise ValueError(f"Invalid domain: {config['domain']}")
-        
+
     return True

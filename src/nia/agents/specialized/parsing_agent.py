@@ -27,6 +27,8 @@ class ParsingAgent(TinyTroupeAgent, NovaParser):
         domain: Optional[str] = None,
         llm_type: str = "generic"
     ):
+        self._initialized = False
+        self._last_parse = None  # Track last parse result
         """Initialize parsing agent.
         
         Args:
@@ -416,6 +418,9 @@ class ParsingAgent(TinyTroupeAgent, NovaParser):
                     structure=analysis.get("structure", {})
                 )
                 
+                # Store the result for get_last_parse
+                self._last_parse = result
+                
                 # Record domain-specific reflections
                 if self.domain == "personal":
                     await self.record_reflection(
@@ -731,6 +736,34 @@ class ParsingAgent(TinyTroupeAgent, NovaParser):
             "structure": structure
         }
         
+    async def get_last_parse(self) -> Optional[ParseResult]:
+        """Get the last parse result."""
+        return self._last_parse
+        
+    async def initialize(self):
+        """Initialize agent and memory system."""
+        if not self._initialized:
+            # Initialize memory system if available
+            if self._memory_system:
+                await self._memory_system.initialize()
+            
+            # Record initialization reflections
+            if self._memory_system and hasattr(self._memory_system, 'semantic'):
+                for reflection_content, reflection_domain in getattr(self, '_pending_init_reflections', []):
+                    await self.record_reflection(reflection_content, reflection_domain)
+                if hasattr(self, '_pending_init_reflections'):
+                    delattr(self, '_pending_init_reflections')
+            
+            self._initialized = True
+            
+    async def cleanup(self):
+        """Clean up agent and memory system."""
+        if self._initialized:
+            # Clean up memory system if available
+            if self._memory_system:
+                await self._memory_system.cleanup()
+            self._initialized = False
+            
     @property
     def memory_system(self):
         """Get memory system."""

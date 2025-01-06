@@ -91,197 +91,351 @@ def test_invalid_api_key():
     assert "error" in data
     assert data["error"]["code"] == "AUTHENTICATION_ERROR"
 
-def test_flow_analytics():
+@pytest.mark.asyncio
+async def test_flow_analytics(mock_memory, mock_analytics_agent, world):
     """Test flow analytics endpoint."""
-    response = client.get(
-        "/api/analytics/flows",
-        headers=HEADERS,
-        params={"flow_id": "test-flow"}
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert "analytics" in data
-    assert "insights" in data
-    assert "confidence" in data
-    assert "timestamp" in data
+    # Override dependencies
+    app.dependency_overrides[get_memory_system] = lambda: mock_memory
+    app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    app.dependency_overrides[get_world] = lambda: world
+    
+    try:
+        response = client.get(
+            "/api/analytics/flows",
+            headers=HEADERS,
+            params={"flow_id": "test-flow"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "analytics" in data
+        assert "insights" in data
+        assert "confidence" in data
+        assert "timestamp" in data
+    finally:
+        if "get_analytics_agent" in app.dependency_overrides:
+            del app.dependency_overrides["get_analytics_agent"]
+        if "get_memory_system" in app.dependency_overrides:
+            del app.dependency_overrides["get_memory_system"]
+        if "get_world" in app.dependency_overrides:
+            del app.dependency_overrides["get_world"]
 
-def test_resource_analytics():
+@pytest.mark.asyncio
+async def test_resource_analytics(mock_memory, mock_analytics_agent, world):
     """Test resource analytics endpoint."""
-    response = client.get(
-        "/api/analytics/resources",
-        headers=HEADERS,
-        params={"resource_id": "test-resource"}
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert "analytics" in data
-    assert "insights" in data
-    assert "confidence" in data
-    assert "timestamp" in data
+    # Override dependencies
+    app.dependency_overrides[get_memory_system] = lambda: mock_memory
+    app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    app.dependency_overrides[get_world] = lambda: world
+    
+    try:
+        response = client.get(
+            "/api/analytics/resources",
+            headers=HEADERS,
+            params={"resource_id": "test-resource"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "analytics" in data
+        assert "insights" in data
+        assert "confidence" in data
+        assert "timestamp" in data
+    finally:
+        if "get_analytics_agent" in app.dependency_overrides:
+            del app.dependency_overrides["get_analytics_agent"]
+        if "get_memory_system" in app.dependency_overrides:
+            del app.dependency_overrides["get_memory_system"]
+        if "get_world" in app.dependency_overrides:
+            del app.dependency_overrides["get_world"]
 
-def test_agent_analytics():
+@pytest.mark.asyncio
+async def test_agent_analytics(mock_memory, mock_analytics_agent, world):
     """Test agent analytics endpoint."""
-    response = client.get(
-        "/api/analytics/agents",
-        headers=HEADERS,
-        params={"agent_id": "test-agent"}
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert "analytics" in data
-    assert "insights" in data
-    assert "confidence" in data
-    assert "timestamp" in data
+    # Override dependencies
+    app.dependency_overrides[get_memory_system] = lambda: mock_memory
+    app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    app.dependency_overrides[get_world] = lambda: world
+    
+    try:
+        response = client.get(
+            "/api/analytics/agents",
+            headers=HEADERS,
+            params={"agent_id": "test-agent"}
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "analytics" in data
+        assert "insights" in data
+        assert "confidence" in data
+        assert "timestamp" in data
+    finally:
+        if "get_analytics_agent" in app.dependency_overrides:
+            del app.dependency_overrides["get_analytics_agent"]
+        if "get_memory_system" in app.dependency_overrides:
+            del app.dependency_overrides["get_memory_system"]
+        if "get_world" in app.dependency_overrides:
+            del app.dependency_overrides["get_world"]
 
-def test_create_task():
+@pytest.mark.asyncio
+async def test_create_task(mock_memory, mock_analytics_agent, world):
     """Test task creation endpoint."""
-    response = client.post(
-        "/api/orchestration/tasks",
-        headers=HEADERS,
-        json=VALID_TASK
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert "task_id" in data
-    assert data["status"] == "created"
-    assert "orchestration" in data
-    assert "confidence" in data
-    assert "timestamp" in data
+    # Override dependencies
+    app.dependency_overrides[get_memory_system] = lambda: mock_memory
+    app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    app.dependency_overrides[get_world] = lambda: world
     
-    # Store task_id for subsequent tests
-    return data["task_id"]
+    try:
+        response = client.post(
+            "/api/orchestration/tasks",
+            headers=HEADERS,
+            json=VALID_TASK
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "task_id" in data
+        assert data["status"] == "created"
+        assert "orchestration" in data
+        assert "confidence" in data
+        assert "timestamp" in data
+        
+        # Store task_id for subsequent tests
+        return data["task_id"]
+    finally:
+        if "get_analytics_agent" in app.dependency_overrides:
+            del app.dependency_overrides["get_analytics_agent"]
+        if "get_memory_system" in app.dependency_overrides:
+            del app.dependency_overrides["get_memory_system"]
+        if "get_world" in app.dependency_overrides:
+            del app.dependency_overrides["get_world"]
 
-def test_get_task():
+@pytest.mark.asyncio
+async def test_get_task(mock_memory, mock_analytics_agent, world):
     """Test task retrieval endpoint."""
-    # First create a task
-    task_id = test_create_task()
+    # Override dependencies
+    app.dependency_overrides[get_memory_system] = lambda: mock_memory
+    app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    app.dependency_overrides[get_world] = lambda: world
     
-    # Then retrieve it
-    response = client.get(
-        f"/api/orchestration/tasks/{task_id}",
-        headers=HEADERS
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["task_id"] == task_id
-    assert "status" in data
-    assert "orchestration" in data
-    assert "confidence" in data
-    assert "timestamp" in data
+    try:
+        # First create a task
+        task_id = await test_create_task(mock_memory, mock_analytics_agent, world)
+        
+        # Then retrieve it
+        response = client.get(
+            f"/api/orchestration/tasks/{task_id}",
+            headers=HEADERS
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["task_id"] == task_id
+        assert "status" in data
+        assert "orchestration" in data
+        assert "confidence" in data
+        assert "timestamp" in data
+    finally:
+        if "get_analytics_agent" in app.dependency_overrides:
+            del app.dependency_overrides["get_analytics_agent"]
+        if "get_memory_system" in app.dependency_overrides:
+            del app.dependency_overrides["get_memory_system"]
+        if "get_world" in app.dependency_overrides:
+            del app.dependency_overrides["get_world"]
 
-def test_update_task():
+@pytest.mark.asyncio
+async def test_update_task(mock_memory, mock_analytics_agent, world):
     """Test task update endpoint."""
-    # First create a task
-    task_id = test_create_task()
+    # Override dependencies
+    app.dependency_overrides[get_memory_system] = lambda: mock_memory
+    app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    app.dependency_overrides[get_world] = lambda: world
     
-    # Then update it
-    updates = VALID_TASK.copy()
-    updates["parameters"]["key"] = "updated"
-    updates["priority"] = 2
-    
-    response = client.put(
-        f"/api/orchestration/tasks/{task_id}",
-        headers=HEADERS,
-        json=updates
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["task_id"] == task_id
-    assert data["status"] == "updated"
-    assert "orchestration" in data
-    assert "confidence" in data
-    assert "timestamp" in data
+    try:
+        # First create a task
+        task_id = await test_create_task(mock_memory, mock_analytics_agent, world)
+        
+        # Then update it
+        updates = VALID_TASK.copy()
+        updates["parameters"]["key"] = "updated"
+        updates["priority"] = 2
+        
+        response = client.put(
+            f"/api/orchestration/tasks/{task_id}",
+            headers=HEADERS,
+            json=updates
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["task_id"] == task_id
+        assert data["status"] == "updated"
+        assert "orchestration" in data
+        assert "confidence" in data
+        assert "timestamp" in data
+    finally:
+        if "get_analytics_agent" in app.dependency_overrides:
+            del app.dependency_overrides["get_analytics_agent"]
+        if "get_memory_system" in app.dependency_overrides:
+            del app.dependency_overrides["get_memory_system"]
+        if "get_world" in app.dependency_overrides:
+            del app.dependency_overrides["get_world"]
 
-def test_coordinate_agents():
+@pytest.mark.asyncio
+async def test_coordinate_agents(mock_memory, mock_analytics_agent, world):
     """Test agent coordination endpoint."""
-    response = client.post(
-        "/api/orchestration/agents/coordinate",
-        headers=HEADERS,
-        json=VALID_COORDINATION_REQUEST
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert "coordination_id" in data
-    assert data["status"] == "coordinated"
-    assert "orchestration" in data
-    assert "confidence" in data
-    assert "timestamp" in data
+    # Override dependencies
+    app.dependency_overrides[get_memory_system] = lambda: mock_memory
+    app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    app.dependency_overrides[get_world] = lambda: world
+    
+    try:
+        response = client.post(
+            "/api/orchestration/agents/coordinate",
+            headers=HEADERS,
+            json=VALID_COORDINATION_REQUEST
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "coordination_id" in data
+        assert data["status"] == "coordinated"
+        assert "orchestration" in data
+        assert "confidence" in data
+        assert "timestamp" in data
+    finally:
+        if "get_analytics_agent" in app.dependency_overrides:
+            del app.dependency_overrides["get_analytics_agent"]
+        if "get_memory_system" in app.dependency_overrides:
+            del app.dependency_overrides["get_memory_system"]
+        if "get_world" in app.dependency_overrides:
+            del app.dependency_overrides["get_world"]
 
-def test_assign_agent():
+@pytest.mark.asyncio
+async def test_assign_agent(mock_memory, mock_analytics_agent, world):
     """Test agent assignment endpoint."""
-    response = client.post(
-        "/api/orchestration/agents/test-agent/assign",
-        headers=HEADERS,
-        json=VALID_AGENT_ASSIGNMENT
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["agent_id"] == "test-agent"
-    assert data["status"] == "assigned"
-    assert "orchestration" in data
-    assert "confidence" in data
-    assert "timestamp" in data
+    # Override dependencies
+    app.dependency_overrides[get_memory_system] = lambda: mock_memory
+    app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    app.dependency_overrides[get_world] = lambda: world
+    
+    try:
+        response = client.post(
+            "/api/orchestration/agents/test-agent/assign",
+            headers=HEADERS,
+            json=VALID_AGENT_ASSIGNMENT
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["agent_id"] == "test-agent"
+        assert data["status"] == "assigned"
+        assert "orchestration" in data
+        assert "confidence" in data
+        assert "timestamp" in data
+    finally:
+        if "get_analytics_agent" in app.dependency_overrides:
+            del app.dependency_overrides["get_analytics_agent"]
+        if "get_memory_system" in app.dependency_overrides:
+            del app.dependency_overrides["get_memory_system"]
+        if "get_world" in app.dependency_overrides:
+            del app.dependency_overrides["get_world"]
 
-def test_optimize_flow():
+@pytest.mark.asyncio
+async def test_optimize_flow(mock_memory, mock_analytics_agent, world):
     """Test flow optimization endpoint."""
-    response = client.post(
-        "/api/orchestration/flows/test-flow/optimize",
-        headers=HEADERS,
-        json=VALID_FLOW_OPTIMIZATION
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert data["flow_id"] == "test-flow"
-    assert "optimizations" in data
-    assert "analytics" in data
-    assert "confidence" in data
-    assert "timestamp" in data
+    # Override dependencies
+    app.dependency_overrides[get_memory_system] = lambda: mock_memory
+    app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    app.dependency_overrides[get_world] = lambda: world
+    
+    try:
+        response = client.post(
+            "/api/orchestration/flows/test-flow/optimize",
+            headers=HEADERS,
+            json=VALID_FLOW_OPTIMIZATION
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["flow_id"] == "test-flow"
+        assert "optimizations" in data
+        assert "analytics" in data
+        assert "confidence" in data
+        assert "timestamp" in data
+    finally:
+        if "get_analytics_agent" in app.dependency_overrides:
+            del app.dependency_overrides["get_analytics_agent"]
+        if "get_memory_system" in app.dependency_overrides:
+            del app.dependency_overrides["get_memory_system"]
+        if "get_world" in app.dependency_overrides:
+            del app.dependency_overrides["get_world"]
 
-def test_allocate_resources():
+@pytest.mark.asyncio
+async def test_allocate_resources(mock_memory, mock_analytics_agent, world):
     """Test resource allocation endpoint."""
-    response = client.post(
-        "/api/orchestration/resources/allocate",
-        headers=HEADERS,
-        json=VALID_RESOURCE_ALLOCATION
-    )
-    assert response.status_code == 200
-    data = response.json()
-    assert "allocations" in data
-    assert "analytics" in data
-    assert "confidence" in data
-    assert "timestamp" in data
+    # Override dependencies
+    app.dependency_overrides[get_memory_system] = lambda: mock_memory
+    app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    app.dependency_overrides[get_world] = lambda: world
+    
+    try:
+        response = client.post(
+            "/api/orchestration/resources/allocate",
+            headers=HEADERS,
+            json=VALID_RESOURCE_ALLOCATION
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "allocations" in data
+        assert "analytics" in data
+        assert "confidence" in data
+        assert "timestamp" in data
+    finally:
+        if "get_analytics_agent" in app.dependency_overrides:
+            del app.dependency_overrides["get_analytics_agent"]
+        if "get_memory_system" in app.dependency_overrides:
+            del app.dependency_overrides["get_memory_system"]
+        if "get_world" in app.dependency_overrides:
+            del app.dependency_overrides["get_world"]
 
-def test_memory_operations():
+@pytest.mark.asyncio
+async def test_memory_operations(mock_memory, mock_analytics_agent, world):
     """Test memory operations endpoints."""
-    # Test store
-    store_response = client.post(
-        "/api/orchestration/memory/store",
-        headers=HEADERS,
-        json=VALID_MEMORY_STORE
-    )
-    assert store_response.status_code == 200
-    store_data = store_response.json()
-    memory_id = store_data["memory_id"]
+    # Override dependencies
+    app.dependency_overrides[get_memory_system] = lambda: mock_memory
+    app.dependency_overrides[get_analytics_agent] = lambda: mock_analytics_agent
+    app.dependency_overrides[get_world] = lambda: world
     
-    # Test retrieve
-    retrieve_response = client.get(
-        f"/api/orchestration/memory/{memory_id}",
-        headers=HEADERS
-    )
-    assert retrieve_response.status_code == 200
-    retrieve_data = retrieve_response.json()
-    assert retrieve_data["memory_id"] == memory_id
-    assert "content" in retrieve_data
-    
-    # Test search
-    search_response = client.post(
-        "/api/orchestration/memory/search",
-        headers=HEADERS,
-        json=VALID_MEMORY_SEARCH
-    )
-    assert search_response.status_code == 200
-    search_data = search_response.json()
-    assert "matches" in search_data
+    try:
+        # Test store
+        store_response = client.post(
+            "/api/orchestration/memory/store",
+            headers=HEADERS,
+            json=VALID_MEMORY_STORE
+        )
+        assert store_response.status_code == 200
+        store_data = store_response.json()
+        memory_id = store_data["memory_id"]
+        
+        # Test retrieve
+        retrieve_response = client.get(
+            f"/api/orchestration/memory/{memory_id}",
+            headers=HEADERS
+        )
+        assert retrieve_response.status_code == 200
+        retrieve_data = retrieve_response.json()
+        assert retrieve_data["memory_id"] == memory_id
+        assert "content" in retrieve_data
+        
+        # Test search
+        search_response = client.post(
+            "/api/orchestration/memory/search",
+            headers=HEADERS,
+            json=VALID_MEMORY_SEARCH
+        )
+        assert search_response.status_code == 200
+        search_data = search_response.json()
+        assert "matches" in search_data
+    finally:
+        if "get_analytics_agent" in app.dependency_overrides:
+            del app.dependency_overrides["get_analytics_agent"]
+        if "get_memory_system" in app.dependency_overrides:
+            del app.dependency_overrides["get_memory_system"]
+        if "get_world" in app.dependency_overrides:
+            del app.dependency_overrides["get_world"]
 
 def test_rate_limiting():
     """Test rate limiting."""
@@ -307,27 +461,8 @@ def test_rate_limiting():
     assert data["error"]["code"] == "RATE_LIMIT_EXCEEDED"
 
 @pytest.fixture
-def mock_memory():
-    class AsyncIterator:
-        def __init__(self, memory_system):
-            self.memory_system = memory_system
-            self.done = False
-
-        def __aiter__(self):
-            return self
-
-        async def __anext__(self):
-            if self.done:
-                raise StopAsyncIteration
-            self.done = True
-            return self.memory_system
-
+async def mock_memory():
     class MockStore:
-        def __init__(self):
-            self.store = self
-            self.collection = "test_collection"
-            self.client = self
-            
         async def connect(self):
             return self
             
@@ -335,7 +470,7 @@ def mock_memory():
             return None
             
         async def ensure_collection(self):
-            return self.collection
+            return "test_collection"
             
         async def store(self, *args, **kwargs):
             return {"id": "test-id"}
@@ -344,26 +479,29 @@ def mock_memory():
             return []
             
         async def get_collection(self):
-            return self.collection
-            
-        async def __aenter__(self):
-            await self.connect()
-            return self
-            
-        async def __aexit__(self, exc_type, exc_val, exc_tb):
-            await self.close()
+            return "test_collection"
     
     class MockMemorySystem:
         def __init__(self):
             self.semantic = MockStore()
             self.episodic = MockStore()
             self.vector_store = MockStore()
+            
+        async def __aenter__(self):
+            await self.semantic.connect()
+            await self.episodic.connect()
+            return self
+            
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            await self.semantic.close()
+            await self.episodic.close()
     
     memory_system = MockMemorySystem()
-    return AsyncIterator(memory_system)
+    async with memory_system as ms:
+        yield ms
 
 @pytest.fixture
-def mock_analytics_agent():
+async def mock_analytics_agent():
     class MockAnalyticsAgent:
         async def process_analytics(self, content, analytics_type, metadata=None):
             from nia.nova.core.analytics import AnalyticsResult
