@@ -141,6 +141,72 @@
 - [ ] Advanced pattern recognition
 - [ ] Cross-agent synthesis
 
+### Knowledge Graph Agents
+- [ ] KGPruningAgent implementation:
+  * Graph maintenance automation
+  * Node relevance scoring
+  * Edge weight calculation
+  * Orphan node cleanup
+  * Relationship validation
+  * Graph optimization
+  * Version history tracking
+  * Backup and recovery
+  * Performance monitoring
+- [ ] GraphValidationAgent implementation:
+  * Relationship consistency checks
+  * Domain boundary validation
+  * Cross-reference verification
+  * Cycle detection
+  * Constraint enforcement
+  * Error reporting and logging
+- [ ] GraphOptimizationAgent implementation:
+  * Structure optimization
+  * Query performance analysis
+  * Index management
+  * Cache strategy
+  * Resource utilization
+  * Load balancing
+
+### Prompt Management Agents
+- [ ] PromptAgent implementation:
+  * Template management
+  * Cache operations
+  * Performance monitoring
+  * Optimization strategies
+  * Validation rules
+- [ ] PromptOptimizationAgent implementation:
+  * Token usage analysis
+  * Response time optimization
+  * Cache hit rate improvement
+  * Template refinement
+  * Cost optimization
+- [ ] PromptValidationAgent implementation:
+  * Structure validation
+  * Parameter verification
+  * Output validation
+  * Error detection
+  * Quality assurance
+
+### User Profile Agents
+- [ ] ProfileAgent implementation:
+  * Profile data management
+  * Version control
+  * History tracking
+  * Data validation
+  * Privacy enforcement
+- [ ] AdaptationAgent implementation:
+  * Task granularity adjustment
+  * Communication style matching
+  * UI preference application
+  * Emotional framing calibration
+  * Learning style accommodation
+- [ ] PreferenceAgent implementation:
+  * Domain-specific preferences
+  * Auto-approval rules
+  * Interface customization
+  * Notification settings
+  * Privacy preferences
+
 ### Cognitive Agents
 - [x] BeliefAgent implementation
 - [x] DesireAgent implementation
@@ -281,11 +347,31 @@
 ### API Endpoints
 - [x] Analytics endpoints
 - [ ] User Profile Endpoints (Not Implemented):
-  * POST /api/users/profile/questionnaire (Submit psychometric questionnaire)
-  * GET /api/users/profile (Get user profile data)
-  * PUT /api/users/profile/preferences (Update user preferences)
-  * GET /api/users/profile/learning-style (Get learning style settings)
-  * PUT /api/users/profile/auto-approval (Update auto-approval settings)
+  * Questionnaire Management:
+    - POST /api/users/profile/questionnaire (Submit psychometric questionnaire)
+    - GET /api/users/profile/questionnaire/results (Get questionnaire analysis)
+    - GET /api/users/profile/questionnaire/history (Get previous assessments)
+  * Profile Management:
+    - GET /api/users/profile (Get user profile data)
+    - GET /api/users/profile/versions (Get profile version history)
+    - POST /api/users/profile/versions (Create profile snapshot)
+  * Preference Management:
+    - PUT /api/users/profile/preferences (Update user preferences)
+    - GET /api/users/profile/preferences/domain/{domain} (Get domain-specific preferences)
+    - PUT /api/users/profile/preferences/domain/{domain} (Update domain preferences)
+  * Learning Style Management:
+    - GET /api/users/profile/learning-style (Get learning style settings)
+    - PUT /api/users/profile/learning-style (Update learning preferences)
+    - GET /api/users/profile/learning-style/analysis (Get style effectiveness analysis)
+  * Approval Settings:
+    - GET /api/users/profile/auto-approval (Get auto-approval rules)
+    - PUT /api/users/profile/auto-approval (Update auto-approval settings)
+    - GET /api/users/profile/auto-approval/history (Get approval decision history)
+  * Adaptation Settings:
+    - GET /api/users/profile/adaptation (Get adaptation settings)
+    - PUT /api/users/profile/adaptation/granularity (Update task granularity)
+    - PUT /api/users/profile/adaptation/communication (Update communication style)
+    - PUT /api/users/profile/adaptation/emotional (Update emotional framing)
 - [x] Task management endpoints
 - [x] Agent coordination endpoints
 - [ ] Memory operation endpoints
@@ -323,6 +409,68 @@
     - Node relationships
     - Domain boundaries
     - Task dependencies
+- [ ] Knowledge Graph Management Endpoints:
+  * Graph Management:
+    - POST /api/graph/prune (Trigger graph pruning)
+    - GET /api/graph/health (Graph health metrics)
+    - POST /api/graph/optimize (Optimize graph structure)
+    - GET /api/graph/statistics (Graph statistics)
+    - POST /api/graph/backup (Create graph backup)
+  * Node Management:
+    - GET /api/graph/nodes/{node_id} (Get node details)
+    - PUT /api/graph/nodes/{node_id} (Update node properties)
+    - DELETE /api/graph/nodes/{node_id} (Remove node)
+    - GET /api/graph/nodes/orphaned (List orphaned nodes)
+  * Edge Management:
+    - GET /api/graph/edges/{edge_id} (Get edge details)
+    - PUT /api/graph/edges/{edge_id} (Update edge properties)
+    - DELETE /api/graph/edges/{edge_id} (Remove edge)
+    - GET /api/graph/edges/validation (Validate relationships)
+
+- [ ] Prompt Cache Endpoints:
+  * Template Management:
+    - POST /api/prompts/templates (Create prompt template)
+    - GET /api/prompts/templates/{id} (Get template details)
+    - PUT /api/prompts/templates/{id} (Update template)
+    - DELETE /api/prompts/templates/{id} (Remove template)
+    - GET /api/prompts/templates/list (List all templates)
+  * Cache Operations:
+    - POST /api/prompts/cache (Store prompt result)
+    - GET /api/prompts/cache/{key} (Get cached result)
+    - DELETE /api/prompts/cache/{key} (Invalidate cache entry)
+    - POST /api/prompts/cache/bulk (Batch cache operations)
+    - DELETE /api/prompts/cache/expired (Clean expired entries)
+  * Performance Management:
+    - GET /api/prompts/metrics/hit-rate (Get cache hit rates)
+    - GET /api/prompts/metrics/latency (Get response times)
+    - GET /api/prompts/metrics/storage (Get cache size stats)
+    - GET /api/prompts/metrics/tokens (Get token usage stats)
+  * Optimization:
+    - POST /api/prompts/optimize/templates (Optimize templates)
+    - GET /api/prompts/optimize/suggestions (Get optimization tips)
+    - POST /api/prompts/validate (Validate prompt structure)
+    - GET /api/prompts/validate/results (Get validation reports)
+
+- [ ] Emergent Task Endpoints:
+  * Task Management:
+    - POST /api/tasks/emergent (Create new emergent task)
+    - GET /api/tasks/{task_id} (Get task details)
+    - PUT /api/tasks/{task_id}/status (Update task status)
+    - GET /api/tasks/types (List supported task types)
+  * Output Management:
+    - POST /api/tasks/{task_id}/output (Store task output)
+    - GET /api/tasks/{task_id}/output/history (Get output versions)
+    - PUT /api/tasks/{task_id}/output/validate (Validate output)
+  * External Services:
+    - POST /api/tasks/services/tts (11labs TTS integration)
+    - POST /api/tasks/services/workflow (n8n workflow trigger)
+    - POST /api/tasks/services/messaging (Twilio integration)
+    - POST /api/tasks/services/storage (S3 operations)
+  * Task Lifecycle:
+    - GET /api/tasks/{task_id}/lifecycle (Get status history)
+    - PUT /api/tasks/{task_id}/lifecycle/transition (Update status)
+    - GET /api/tasks/{task_id}/lifecycle/validation (Get state rules)
+
 - [x] Core Swarm Pattern Endpoints
   * Hierarchical swarm (supervisor-worker pattern)
   * Parallel swarm (concurrent task processing)
