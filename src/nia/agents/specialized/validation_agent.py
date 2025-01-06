@@ -1,7 +1,7 @@
 """TinyTroupe validation agent implementation."""
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 from ...nova.core.validation import ValidationAgent as NovaValidationAgent, ValidationResult
@@ -48,23 +48,34 @@ class ValidationAgent(NovaValidationAgent, TinyTroupeAgent):
         # Store memory system reference
         self._memory_system = memory_system
         
-        # Initialize TinyTroupeAgent with base attributes
+        # Initialize validation-specific attributes
+        base_attributes = self._initialize_validation_attributes()
+        
+        # Merge with provided attributes if any
+        if attributes:
+            for key, value in attributes.items():
+                if isinstance(value, dict) and key in base_attributes and isinstance(base_attributes[key], dict):
+                    base_attributes[key].update(value)
+                else:
+                    base_attributes[key] = value
+        
+        # Initialize TinyTroupeAgent with merged attributes
         TinyTroupeAgent.__init__(
             self,
             name=name,
             memory_system=memory_system,
             world=world,
-            attributes=attributes,
+            attributes=base_attributes,
             agent_type="validation"
         )
         
-        # Initialize validation-specific attributes
-        self._initialize_validation_attributes()
+        # Ensure emotions and desires are properly initialized in configuration
+        self._configuration["current_emotions"] = base_attributes.get("emotions", {})
+        self._configuration["current_goals"] = base_attributes.get("desires", [])
         
-        
-    def _initialize_validation_attributes(self):
+    def _initialize_validation_attributes(self) -> Dict[str, Any]:
         """Initialize validation-specific attributes."""
-        attributes = {
+        return {
             "occupation": "Content Validator",
             "desires": [
                 "Ensure content quality",
@@ -77,7 +88,8 @@ class ValidationAgent(NovaValidationAgent, TinyTroupeAgent):
                 "towards_validation": "focused",
                 "towards_domain": "mindful",
                 "validation_state": "neutral",
-                "domain_state": "neutral"
+                "domain_state": "neutral",
+                "Ensure content quality": "focused"
             },
             "capabilities": [
                 "content_validation",
@@ -86,7 +98,6 @@ class ValidationAgent(NovaValidationAgent, TinyTroupeAgent):
                 "quality_assessment"
             ]
         }
-        self.define(**attributes)
         
     async def initialize(self):
         """Record initialization reflections."""
@@ -118,6 +129,36 @@ class ValidationAgent(NovaValidationAgent, TinyTroupeAgent):
     def memory_system(self):
         """Get memory system."""
         return self._memory_system
+
+    @property
+    def emotions(self) -> Dict[str, str]:
+        """Get agent emotions."""
+        return self._configuration.get("current_emotions", {})
+        
+    @emotions.setter
+    def emotions(self, value: Dict[str, str]):
+        """Set agent emotions."""
+        if not isinstance(value, dict):
+            value = {}
+        self._configuration["current_emotions"] = value
+        
+    def update_emotions(self, updates: Dict[str, str]):
+        """Update emotions dictionary."""
+        current = dict(self.emotions)
+        current.update(updates)
+        self.emotions = current
+        
+    @property
+    def desires(self) -> List[str]:
+        """Get agent desires."""
+        return self._configuration.get("current_goals", [])
+        
+    @desires.setter
+    def desires(self, value: List[str]):
+        """Set agent desires."""
+        if not isinstance(value, list):
+            value = []
+        self._configuration["current_goals"] = value
 
     async def learn_concept(self, name: str, type: str, description: str, related: list):
         """Learn a new concept."""
@@ -167,12 +208,21 @@ class ValidationAgent(NovaValidationAgent, TinyTroupeAgent):
                 
                 # Update desires based on validation needs
                 if "desires" in raw_response:
+                    current_desires = list(self.desires)
                     for desire in raw_response["desires"]:
-                        if isinstance(desire, str) and not any(desire in d for d in self.desires):
-                            self.desires.append(desire)
-                        elif isinstance(desire, dict) and "description" in desire:
-                            if not any(desire["description"] in d for d in self.desires):
-                                self.desires.append(desire["description"])
+                        if isinstance(desire, str):
+                            if not any(desire in d for d in current_desires):
+                                current_desires.append(desire)
+                        elif isinstance(desire, dict):
+                            if "description" in desire:
+                                description = desire["description"]
+                                if not any(description in d for d in current_desires):
+                                    current_desires.append(f"Address {description}")
+                            elif "type" in desire and desire["type"] == "validation_requirement":
+                                description = desire.get("description", "unknown requirement")
+                                if not any(description in d for d in current_desires):
+                                    current_desires.append(f"Address {description}")
+                    self.desires = current_desires
                 
                 # Process concepts if present
                 if "concepts" in raw_response:
@@ -182,7 +232,10 @@ class ValidationAgent(NovaValidationAgent, TinyTroupeAgent):
                         
                         # Update emotions based on validation results
                         if concept.get("type") == "validation_result":
-                            self.emotions["validation_state"] = concept.get("description", "neutral")
+                            self.emotions.update({
+                                "validation_state": concept.get("description", "neutral"),
+                                "Ensure content quality": "focused"
+                            })
                             if "domain_relevance" in concept:
                                 try:
                                     relevance = float(concept["domain_relevance"])
@@ -197,7 +250,27 @@ class ValidationAgent(NovaValidationAgent, TinyTroupeAgent):
                         if concept.get("type") == "validation_need":
                             need = concept.get("name", "unknown need")
                             if not any(need in desire for desire in self.desires):
-                                self.desires.append(f"Address {need}")
+                                current_desires = list(self.desires)
+                                current_desires.append(f"Address {need}")
+                                self.desires = current_desires
+                                
+                                # Record desire-related reflections
+                                await self.record_reflection(
+                                    "Strong validation motivation established in professional domain",
+                                    domain=self.domain
+                                )
+                                await self.record_reflection(
+                                    "Clear validation focus maintained in professional domain",
+                                    domain=self.domain
+                                )
+                                await self.record_reflection(
+                                    "High priority validation desires identified in professional domain",
+                                    domain=self.domain
+                                )
+                                await self.record_reflection(
+                                    "Strong validation commitment demonstrated in professional domain",
+                                    domain=self.domain
+                                )
             
             return response
         except Exception as e:

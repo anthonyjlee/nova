@@ -100,11 +100,15 @@ class TestSwarmArchitecture:
     @pytest.mark.asyncio
     async def test_hierarchical_swarm(self, memory_system, coordination_agent, tiny_factory):
         """Test hierarchical swarm pattern with supervisor and worker agents."""
-        app.dependency_overrides.update({
-            get_memory_system: lambda: memory_system,
-            get_coordination_agent: lambda: coordination_agent,
-            get_tiny_factory: lambda: tiny_factory
-        })
+        # Override dependencies
+        app.dependency_overrides[get_memory_system] = lambda: memory_system
+        app.dependency_overrides[get_coordination_agent] = lambda: coordination_agent
+        app.dependency_overrides[get_tiny_factory] = lambda: tiny_factory
+        app.dependency_overrides[get_orchestration_agent] = lambda: OrchestrationAgent(
+            name=f"test_orchestrator_{int(datetime.now().timestamp())}",
+            memory_system=memory_system,
+            domain="test"
+        )
         
         try:
             client = TestClient(app)
@@ -142,11 +146,10 @@ class TestSwarmArchitecture:
             with client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}) as websocket:
                 # Create task for swarm
                 task_response = client.post(
-                    "/api/orchestration/tasks",
+                    "/api/orchestration/swarms/hierarchical",
                     headers={"X-API-Key": TEST_API_KEY},
                     json={
                         **VALID_TASK,
-                        "swarm_pattern": "hierarchical",
                         "supervisor_id": supervisor_id,
                         "worker_ids": worker_ids
                     }
@@ -189,11 +192,15 @@ class TestSwarmArchitecture:
     @pytest.mark.asyncio
     async def test_domain_boundaries(self, memory_system, coordination_agent, tiny_factory):
         """Test domain separation and cross-domain operations."""
-        app.dependency_overrides.update({
-            get_memory_system: lambda: memory_system,
-            get_coordination_agent: lambda: coordination_agent,
-            get_tiny_factory: lambda: tiny_factory
-        })
+        # Override dependencies
+        app.dependency_overrides[get_memory_system] = lambda: memory_system
+        app.dependency_overrides[get_coordination_agent] = lambda: coordination_agent
+        app.dependency_overrides[get_tiny_factory] = lambda: tiny_factory
+        app.dependency_overrides[get_orchestration_agent] = lambda: OrchestrationAgent(
+            name=f"test_orchestrator_{int(datetime.now().timestamp())}",
+            memory_system=memory_system,
+            domain="test"
+        )
         
         try:
             client = TestClient(app)
@@ -223,24 +230,26 @@ class TestSwarmArchitecture:
             
             # Test cross-domain operation without approval
             cross_domain_response = client.post(
-                "/api/orchestration/tasks",
+                "/api/orchestration/swarms/parallel",
                 headers={"X-API-Key": TEST_API_KEY},
                 json={
                     **VALID_TASK,
                     "domain": "personal",
-                    "assigned_agents": [professional_agent_id]
+                    "agent_ids": [professional_agent_id],
+                    "subtasks": [{"id": "test_task", "data": "test"}]
                 }
             )
             assert cross_domain_response.status_code == 403
             
             # Test cross-domain operation with approval
             approved_response = client.post(
-                "/api/orchestration/tasks",
+                "/api/orchestration/swarms/parallel",
                 headers={"X-API-Key": TEST_API_KEY},
                 json={
                     **VALID_TASK,
                     "domain": "personal",
-                    "assigned_agents": [professional_agent_id],
+                    "agent_ids": [professional_agent_id],
+                    "subtasks": [{"id": "test_task", "data": "test"}],
                     "cross_domain_approved": True
                 }
             )
@@ -262,11 +271,15 @@ class TestSwarmArchitecture:
     @pytest.mark.asyncio
     async def test_swarm_voting(self, memory_system, coordination_agent, tiny_factory):
         """Test majority voting swarm pattern."""
-        app.dependency_overrides.update({
-            get_memory_system: lambda: memory_system,
-            get_coordination_agent: lambda: coordination_agent,
-            get_tiny_factory: lambda: tiny_factory
-        })
+        # Override dependencies
+        app.dependency_overrides[get_memory_system] = lambda: memory_system
+        app.dependency_overrides[get_coordination_agent] = lambda: coordination_agent
+        app.dependency_overrides[get_tiny_factory] = lambda: tiny_factory
+        app.dependency_overrides[get_orchestration_agent] = lambda: OrchestrationAgent(
+            name=f"test_orchestrator_{int(datetime.now().timestamp())}",
+            memory_system=memory_system,
+            domain="test"
+        )
         
         try:
             client = TestClient(app)
@@ -288,11 +301,10 @@ class TestSwarmArchitecture:
             
             # Create decision task
             task_response = client.post(
-                "/api/orchestration/tasks",
+                "/api/orchestration/swarms/voting",
                 headers={"X-API-Key": TEST_API_KEY},
                 json={
                     **VALID_TASK,
-                    "swarm_type": "MajorityVoting",
                     "voter_ids": voter_ids,
                     "decision_threshold": 0.6
                 }
@@ -332,11 +344,15 @@ class TestSwarmArchitecture:
     @pytest.mark.asyncio
     async def test_parallel_swarm(self, memory_system, coordination_agent, tiny_factory):
         """Test parallel swarm pattern with independent agents."""
-        app.dependency_overrides.update({
-            get_memory_system: lambda: memory_system,
-            get_coordination_agent: lambda: coordination_agent,
-            get_tiny_factory: lambda: tiny_factory
-        })
+        # Override dependencies
+        app.dependency_overrides[get_memory_system] = lambda: memory_system
+        app.dependency_overrides[get_coordination_agent] = lambda: coordination_agent
+        app.dependency_overrides[get_tiny_factory] = lambda: tiny_factory
+        app.dependency_overrides[get_orchestration_agent] = lambda: OrchestrationAgent(
+            name=f"test_orchestrator_{int(datetime.now().timestamp())}",
+            memory_system=memory_system,
+            domain="test"
+        )
         
         try:
             client = TestClient(app)
@@ -358,11 +374,10 @@ class TestSwarmArchitecture:
             
             # Create parallel task
             task_response = client.post(
-                "/api/orchestration/tasks",
+                "/api/orchestration/swarms/parallel",
                 headers={"X-API-Key": TEST_API_KEY},
                 json={
                     **VALID_TASK,
-                    "swarm_pattern": "parallel",
                     "agent_ids": agent_ids,
                     "subtasks": [
                         {"id": f"subtask_{i}", "data": f"data_{i}"}
@@ -406,11 +421,15 @@ class TestSwarmArchitecture:
     @pytest.mark.asyncio
     async def test_sequential_swarm(self, memory_system, coordination_agent, tiny_factory):
         """Test sequential swarm pattern with ordered task processing."""
-        app.dependency_overrides.update({
-            get_memory_system: lambda: memory_system,
-            get_coordination_agent: lambda: coordination_agent,
-            get_tiny_factory: lambda: tiny_factory
-        })
+        # Override dependencies
+        app.dependency_overrides[get_memory_system] = lambda: memory_system
+        app.dependency_overrides[get_coordination_agent] = lambda: coordination_agent
+        app.dependency_overrides[get_tiny_factory] = lambda: tiny_factory
+        app.dependency_overrides[get_orchestration_agent] = lambda: OrchestrationAgent(
+            name=f"test_orchestrator_{int(datetime.now().timestamp())}",
+            memory_system=memory_system,
+            domain="test"
+        )
         
         try:
             client = TestClient(app)
@@ -433,11 +452,10 @@ class TestSwarmArchitecture:
             
             # Create sequential task
             task_response = client.post(
-                "/api/orchestration/tasks",
+                "/api/orchestration/swarms/sequential",
                 headers={"X-API-Key": TEST_API_KEY},
                 json={
                     **VALID_TASK,
-                    "swarm_pattern": "sequential",
                     "agent_sequence": list(zip(agent_ids, agent_types)),
                     "input_data": "test_data"
                 }
@@ -477,11 +495,15 @@ class TestSwarmArchitecture:
     @pytest.mark.asyncio
     async def test_mesh_swarm(self, memory_system, coordination_agent, tiny_factory):
         """Test mesh swarm pattern with free-form agent communication."""
-        app.dependency_overrides.update({
-            get_memory_system: lambda: memory_system,
-            get_coordination_agent: lambda: coordination_agent,
-            get_tiny_factory: lambda: tiny_factory
-        })
+        # Override dependencies
+        app.dependency_overrides[get_memory_system] = lambda: memory_system
+        app.dependency_overrides[get_coordination_agent] = lambda: coordination_agent
+        app.dependency_overrides[get_tiny_factory] = lambda: tiny_factory
+        app.dependency_overrides[get_orchestration_agent] = lambda: OrchestrationAgent(
+            name=f"test_orchestrator_{int(datetime.now().timestamp())}",
+            memory_system=memory_system,
+            domain="test"
+        )
         
         try:
             client = TestClient(app)
@@ -503,11 +525,10 @@ class TestSwarmArchitecture:
             
             # Create mesh task
             task_response = client.post(
-                "/api/orchestration/tasks",
+                "/api/orchestration/swarms/mesh",
                 headers={"X-API-Key": TEST_API_KEY},
                 json={
                     **VALID_TASK,
-                    "swarm_pattern": "mesh",
                     "agent_ids": agent_ids,
                     "communication_patterns": ["broadcast", "direct", "group"]
                 }
@@ -554,16 +575,15 @@ class TestSwarmArchitecture:
     @pytest.mark.asyncio
     async def test_nova_swarm_decisions(self, memory_system, coordination_agent, tiny_factory):
         """Test Nova's decision-making about swarm patterns."""
-        app.dependency_overrides.update({
-            get_memory_system: lambda: memory_system,
-            get_coordination_agent: lambda: coordination_agent,
-            get_tiny_factory: lambda: tiny_factory,
-            get_orchestration_agent: lambda: OrchestrationAgent(
-                name=f"test_orchestrator_{int(datetime.now().timestamp())}",
-                memory_system=memory_system,
-                domain="test"
-            )
-        })
+        # Override dependencies
+        app.dependency_overrides[get_memory_system] = lambda: memory_system
+        app.dependency_overrides[get_coordination_agent] = lambda: coordination_agent
+        app.dependency_overrides[get_tiny_factory] = lambda: tiny_factory
+        app.dependency_overrides[get_orchestration_agent] = lambda: OrchestrationAgent(
+            name=f"test_orchestrator_{int(datetime.now().timestamp())}",
+            memory_system=memory_system,
+            domain="test"
+        )
         
         try:
             client = TestClient(app)
@@ -635,11 +655,15 @@ class TestSwarmArchitecture:
     @pytest.mark.asyncio
     async def test_round_robin_swarm(self, memory_system, coordination_agent, tiny_factory):
         """Test round-robin swarm type with cyclic task distribution."""
-        app.dependency_overrides.update({
-            get_memory_system: lambda: memory_system,
-            get_coordination_agent: lambda: coordination_agent,
-            get_tiny_factory: lambda: tiny_factory
-        })
+        # Override dependencies
+        app.dependency_overrides[get_memory_system] = lambda: memory_system
+        app.dependency_overrides[get_coordination_agent] = lambda: coordination_agent
+        app.dependency_overrides[get_tiny_factory] = lambda: tiny_factory
+        app.dependency_overrides[get_orchestration_agent] = lambda: OrchestrationAgent(
+            name=f"test_orchestrator_{int(datetime.now().timestamp())}",
+            memory_system=memory_system,
+            domain="test"
+        )
         
         try:
             client = TestClient(app)
@@ -661,11 +685,10 @@ class TestSwarmArchitecture:
             
             # Create round-robin task
             task_response = client.post(
-                "/api/orchestration/tasks",
+                "/api/orchestration/swarms/round-robin",
                 headers={"X-API-Key": TEST_API_KEY},
                 json={
                     **VALID_TASK,
-                    "swarm_type": "RoundRobin",
                     "agent_ids": agent_ids,
                     "subtasks": [
                         {"id": f"subtask_{i}", "data": f"data_{i}"}

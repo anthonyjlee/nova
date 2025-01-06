@@ -70,7 +70,8 @@ def parsing_agent(mock_memory_system, mock_world, base_agent_config, request):
         name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
-        domain=config["domain"]
+        domain=config["domain"],
+        llm_type="generic"  # Add default llm_type for tests
     )
 
 @pytest.mark.asyncio
@@ -633,7 +634,15 @@ async def test_parse_with_different_domains(parsing_agent, mock_memory_system):
     parsing_agent.domain = "personal"
     pers_result = await parsing_agent.parse_and_store(
         text,
-        {"domain": "personal"}
+        {
+            "domain": "personal",
+            "type": "test",
+            "metadata": {
+                "importance": "high",
+                "security_level": "standard",
+                "parsing_requirements": "strict"
+            }
+        }
     )
     assert pers_result.metadata["domain"] == "personal"
     

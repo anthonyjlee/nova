@@ -112,12 +112,7 @@ async def test_flow_analytics(mock_memory, mock_analytics_agent, world):
         assert "confidence" in data
         assert "timestamp" in data
     finally:
-        if "get_analytics_agent" in app.dependency_overrides:
-            del app.dependency_overrides["get_analytics_agent"]
-        if "get_memory_system" in app.dependency_overrides:
-            del app.dependency_overrides["get_memory_system"]
-        if "get_world" in app.dependency_overrides:
-            del app.dependency_overrides["get_world"]
+        app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
 async def test_resource_analytics(mock_memory, mock_analytics_agent, world):
@@ -140,12 +135,7 @@ async def test_resource_analytics(mock_memory, mock_analytics_agent, world):
         assert "confidence" in data
         assert "timestamp" in data
     finally:
-        if "get_analytics_agent" in app.dependency_overrides:
-            del app.dependency_overrides["get_analytics_agent"]
-        if "get_memory_system" in app.dependency_overrides:
-            del app.dependency_overrides["get_memory_system"]
-        if "get_world" in app.dependency_overrides:
-            del app.dependency_overrides["get_world"]
+        app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
 async def test_agent_analytics(mock_memory, mock_analytics_agent, world):
@@ -168,12 +158,7 @@ async def test_agent_analytics(mock_memory, mock_analytics_agent, world):
         assert "confidence" in data
         assert "timestamp" in data
     finally:
-        if "get_analytics_agent" in app.dependency_overrides:
-            del app.dependency_overrides["get_analytics_agent"]
-        if "get_memory_system" in app.dependency_overrides:
-            del app.dependency_overrides["get_memory_system"]
-        if "get_world" in app.dependency_overrides:
-            del app.dependency_overrides["get_world"]
+        app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
 async def test_create_task(mock_memory, mock_analytics_agent, world):
@@ -184,8 +169,10 @@ async def test_create_task(mock_memory, mock_analytics_agent, world):
     app.dependency_overrides[get_world] = lambda: world
     
     try:
+        # Use appropriate swarm pattern endpoint based on task type
+        pattern = VALID_TASK.get("swarm_pattern", "parallel")
         response = client.post(
-            "/api/orchestration/tasks",
+            f"/api/orchestration/swarms/{pattern}",
             headers=HEADERS,
             json=VALID_TASK
         )
@@ -200,12 +187,7 @@ async def test_create_task(mock_memory, mock_analytics_agent, world):
         # Store task_id for subsequent tests
         return data["task_id"]
     finally:
-        if "get_analytics_agent" in app.dependency_overrides:
-            del app.dependency_overrides["get_analytics_agent"]
-        if "get_memory_system" in app.dependency_overrides:
-            del app.dependency_overrides["get_memory_system"]
-        if "get_world" in app.dependency_overrides:
-            del app.dependency_overrides["get_world"]
+        app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
 async def test_get_task(mock_memory, mock_analytics_agent, world):
@@ -232,12 +214,7 @@ async def test_get_task(mock_memory, mock_analytics_agent, world):
         assert "confidence" in data
         assert "timestamp" in data
     finally:
-        if "get_analytics_agent" in app.dependency_overrides:
-            del app.dependency_overrides["get_analytics_agent"]
-        if "get_memory_system" in app.dependency_overrides:
-            del app.dependency_overrides["get_memory_system"]
-        if "get_world" in app.dependency_overrides:
-            del app.dependency_overrides["get_world"]
+        app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
 async def test_update_task(mock_memory, mock_analytics_agent, world):
@@ -269,12 +246,7 @@ async def test_update_task(mock_memory, mock_analytics_agent, world):
         assert "confidence" in data
         assert "timestamp" in data
     finally:
-        if "get_analytics_agent" in app.dependency_overrides:
-            del app.dependency_overrides["get_analytics_agent"]
-        if "get_memory_system" in app.dependency_overrides:
-            del app.dependency_overrides["get_memory_system"]
-        if "get_world" in app.dependency_overrides:
-            del app.dependency_overrides["get_world"]
+        app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
 async def test_coordinate_agents(mock_memory, mock_analytics_agent, world):
@@ -298,12 +270,7 @@ async def test_coordinate_agents(mock_memory, mock_analytics_agent, world):
         assert "confidence" in data
         assert "timestamp" in data
     finally:
-        if "get_analytics_agent" in app.dependency_overrides:
-            del app.dependency_overrides["get_analytics_agent"]
-        if "get_memory_system" in app.dependency_overrides:
-            del app.dependency_overrides["get_memory_system"]
-        if "get_world" in app.dependency_overrides:
-            del app.dependency_overrides["get_world"]
+        app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
 async def test_assign_agent(mock_memory, mock_analytics_agent, world):
@@ -327,12 +294,7 @@ async def test_assign_agent(mock_memory, mock_analytics_agent, world):
         assert "confidence" in data
         assert "timestamp" in data
     finally:
-        if "get_analytics_agent" in app.dependency_overrides:
-            del app.dependency_overrides["get_analytics_agent"]
-        if "get_memory_system" in app.dependency_overrides:
-            del app.dependency_overrides["get_memory_system"]
-        if "get_world" in app.dependency_overrides:
-            del app.dependency_overrides["get_world"]
+        app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
 async def test_optimize_flow(mock_memory, mock_analytics_agent, world):
@@ -356,12 +318,7 @@ async def test_optimize_flow(mock_memory, mock_analytics_agent, world):
         assert "confidence" in data
         assert "timestamp" in data
     finally:
-        if "get_analytics_agent" in app.dependency_overrides:
-            del app.dependency_overrides["get_analytics_agent"]
-        if "get_memory_system" in app.dependency_overrides:
-            del app.dependency_overrides["get_memory_system"]
-        if "get_world" in app.dependency_overrides:
-            del app.dependency_overrides["get_world"]
+        app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
 async def test_allocate_resources(mock_memory, mock_analytics_agent, world):
@@ -384,12 +341,7 @@ async def test_allocate_resources(mock_memory, mock_analytics_agent, world):
         assert "confidence" in data
         assert "timestamp" in data
     finally:
-        if "get_analytics_agent" in app.dependency_overrides:
-            del app.dependency_overrides["get_analytics_agent"]
-        if "get_memory_system" in app.dependency_overrides:
-            del app.dependency_overrides["get_memory_system"]
-        if "get_world" in app.dependency_overrides:
-            del app.dependency_overrides["get_world"]
+        app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
 async def test_memory_operations(mock_memory, mock_analytics_agent, world):
@@ -430,10 +382,7 @@ async def test_memory_operations(mock_memory, mock_analytics_agent, world):
         search_data = search_response.json()
         assert "matches" in search_data
     finally:
-        if "get_analytics_agent" in app.dependency_overrides:
-            del app.dependency_overrides["get_analytics_agent"]
-        if "get_memory_system" in app.dependency_overrides:
-            del app.dependency_overrides["get_memory_system"]
+        app.dependency_overrides.clear()
         if "get_world" in app.dependency_overrides:
             del app.dependency_overrides["get_world"]
 
@@ -486,6 +435,12 @@ async def mock_memory():
             self.semantic = MockStore()
             self.episodic = MockStore()
             self.vector_store = MockStore()
+            self.llm = AsyncMock()
+            self.llm.analyze = AsyncMock(return_value={
+                "status": "success",
+                "confidence": 0.95,
+                "analysis": {}
+            })
             
         async def __aenter__(self):
             await self.semantic.connect()
@@ -621,10 +576,7 @@ async def test_websocket_success(mock_memory, mock_analytics_agent, world):
             assert "confidence" in data
             assert "timestamp" in data
     finally:
-        if "get_analytics_agent" in app.dependency_overrides:
-            del app.dependency_overrides["get_analytics_agent"]
-        if "get_memory_system" in app.dependency_overrides:
-            del app.dependency_overrides["get_memory_system"]
+        app.dependency_overrides.clear()
 
 def test_websocket_invalid_api_key():
     """Test WebSocket connection with invalid API key."""
@@ -660,10 +612,7 @@ async def test_websocket_invalid_request(mock_memory, mock_analytics_agent, worl
             assert "error" in data
             assert data["error"]["code"] == "VALIDATION_ERROR"
     finally:
-        if "get_analytics_agent" in app.dependency_overrides:
-            del app.dependency_overrides["get_analytics_agent"]
-        if "get_memory_system" in app.dependency_overrides:
-            del app.dependency_overrides["get_memory_system"]
+        app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
 async def test_websocket_processing_error(mock_memory, mock_analytics_agent, world):
@@ -689,10 +638,7 @@ async def test_websocket_processing_error(mock_memory, mock_analytics_agent, wor
             assert "error" in data
             assert data["error"]["code"] == "PROCESSING_ERROR"
     finally:
-        if "get_analytics_agent" in app.dependency_overrides:
-            del app.dependency_overrides["get_analytics_agent"]
-        if "get_memory_system" in app.dependency_overrides:
-            del app.dependency_overrides["get_memory_system"]
+        app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
 async def test_websocket_rate_limiting(mock_memory, mock_analytics_agent, world):
@@ -716,10 +662,7 @@ async def test_websocket_rate_limiting(mock_memory, mock_analytics_agent, world)
             with client.websocket_connect("/api/analytics/ws", headers={"X-API-Key": TEST_API_KEY}):
                 pass
     finally:
-        if "get_analytics_agent" in app.dependency_overrides:
-            del app.dependency_overrides["get_analytics_agent"]
-        if "get_memory_system" in app.dependency_overrides:
-            del app.dependency_overrides["get_memory_system"]
+        app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
 async def test_websocket_cleanup_on_disconnect(mock_memory, mock_analytics_agent, world):
@@ -741,10 +684,7 @@ async def test_websocket_cleanup_on_disconnect(mock_memory, mock_analytics_agent
             data = websocket.receive_json()
             assert data["type"] == "analytics_update"
     finally:
-        if "get_analytics_agent" in app.dependency_overrides:
-            del app.dependency_overrides["get_analytics_agent"]
-        if "get_memory_system" in app.dependency_overrides:
-            del app.dependency_overrides["get_memory_system"]
+        app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
 async def test_websocket_concurrent_connections(mock_memory, mock_analytics_agent, world):
@@ -771,10 +711,7 @@ async def test_websocket_concurrent_connections(mock_memory, mock_analytics_agen
             assert data1["type"] == "analytics_update"
             assert data2["type"] == "analytics_update"
     finally:
-        if "get_analytics_agent" in app.dependency_overrides:
-            del app.dependency_overrides["get_analytics_agent"]
-        if "get_memory_system" in app.dependency_overrides:
-            del app.dependency_overrides["get_memory_system"]
+        app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
 async def test_websocket_timeout(mock_memory, mock_analytics_agent, world):
@@ -800,10 +737,7 @@ async def test_websocket_timeout(mock_memory, mock_analytics_agent, world):
             with pytest.raises(Exception) as exc_info:  # FastAPI's TestClient raises its own exception
                 websocket.send_json(VALID_ANALYTICS_REQUEST)
     finally:
-        if "get_analytics_agent" in app.dependency_overrides:
-            del app.dependency_overrides["get_analytics_agent"]
-        if "get_memory_system" in app.dependency_overrides:
-            del app.dependency_overrides["get_memory_system"]
+        app.dependency_overrides.clear()
 
 @pytest.mark.asyncio
 async def test_websocket_heartbeat(mock_memory, mock_analytics_agent, world):
@@ -830,7 +764,4 @@ async def test_websocket_heartbeat(mock_memory, mock_analytics_agent, world):
             data = websocket.receive_json()
             assert data["type"] == "analytics_update"
     finally:
-        if "get_analytics_agent" in app.dependency_overrides:
-            del app.dependency_overrides["get_analytics_agent"]
-        if "get_memory_system" in app.dependency_overrides:
-            del app.dependency_overrides["get_memory_system"]
+        app.dependency_overrides.clear()

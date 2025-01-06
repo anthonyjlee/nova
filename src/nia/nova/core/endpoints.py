@@ -221,24 +221,49 @@ async def analytics_websocket(
                 data = await websocket.receive_json()
                 
                 try:
-                    # First validate the request
-                    request = AnalyticsRequest(**data)
-                    
-                    # Then process analytics
-                    result = await analytics_agent.process_analytics(
-                        content=data,
-                        analytics_type=request.type,
-                        metadata={"domain": request.domain} if request.domain else None
-                    )
-                    
-                    # Send analytics update
-                    await websocket.send_json({
-                        "type": "analytics_update",
-                        "analytics": result.analytics if hasattr(result, 'analytics') else {},
-                        "insights": result.insights if hasattr(result, 'insights') else [],
-                        "confidence": result.confidence if hasattr(result, 'confidence') else 1.0,
-                        "timestamp": datetime.now().isoformat()
-                    })
+                    # Handle different message types
+                    if data.get("type") == "swarm_monitor":
+                        # Monitor swarm activity for specific task
+                        task_id = data.get("task_id")
+                        if not task_id:
+                            raise ValidationError("swarm_monitor requires task_id")
+                            
+                        # Get swarm analytics
+                        result = await analytics_agent.process_analytics(
+                            content={
+                                "type": "swarm_analytics",
+                                "task_id": task_id,
+                                "timestamp": datetime.now().isoformat()
+                            },
+                            analytics_type="behavioral",
+                            metadata={"domain": data.get("domain")}
+                        )
+                        
+                        # Send swarm updates based on analytics
+                        for event in result.analytics.get("events", []):
+                            await websocket.send_json({
+                                "type": "swarm_update",
+                                "event_type": event["type"],
+                                **event["data"],
+                                "timestamp": datetime.now().isoformat()
+                            })
+                    else:
+                        # Handle regular analytics requests
+                        request = AnalyticsRequest(**data)
+                        result = await analytics_agent.process_analytics(
+                            content=data,
+                            analytics_type=request.type,
+                            metadata={"domain": request.domain} if request.domain else None
+                        )
+                        
+                        # Send analytics update
+                        await websocket.send_json({
+                            "type": "analytics_update",
+                            "analytics": result.analytics if hasattr(result, 'analytics') else {},
+                            "insights": result.insights if hasattr(result, 'insights') else [],
+                            "confidence": result.confidence if hasattr(result, 'confidence') else 1.0,
+                            "timestamp": datetime.now().isoformat()
+                        })
                 except ValidationError as e:
                     await websocket.send_json({
                         "type": "error",
@@ -405,6 +430,630 @@ async def get_resource_analytics(
             "analytics": result.analytics,
             "insights": result.insights,
             "confidence": result.confidence,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@orchestration_router.post("/agents/create")
+@retry_on_error(max_retries=3)
+async def create_agent(
+    request: Dict[str, Any],
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("write")),
+    tiny_factory: Any = Depends(get_tiny_factory),
+    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
+) -> Dict:
+    """Create a new agent with specified type and capabilities."""
+    try:
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        required_fields = ["agent_type", "capabilities"]
+        for field in required_fields:
+            if field not in request:
+                raise ValidationError(f"Request must include '{field}' field")
+        
+        # Create agent using TinyFactory with unique name
+        agent_name = f"{request['agent_type']}_{uuid.uuid4().hex[:8]}"
+        agent = await tiny_factory.create_agent(
+            name=agent_name,
+            agent_type=request["agent_type"],
+            capabilities=request["capabilities"],
+            domain=domain or request.get("domain", "professional"),
+            supervisor_id=request.get("supervisor_id"),
+            metadata={"domain": domain} if domain else None
+        )
+        
+        return {
+            "agent_id": agent.name,
+            "agent_type": request["agent_type"],
+            "capabilities": request["capabilities"],
+            "domain": agent.domain,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@orchestration_router.post("/swarms/hierarchical")
+@retry_on_error(max_retries=3)
+@validate_request(TaskRequest)
+async def create_hierarchical_task(
+    request: Dict[str, Any],
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("write")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent),
+    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
+) -> Dict:
+    """Create a hierarchical swarm task with supervisor and worker agents."""
+    try:
+        # Check domain access
+        if request.get("domain") and not request.get("cross_domain_approved"):
+            # Get agent domains
+            agent_domains = []
+            supervisor_id = request.get("supervisor_id")
+            worker_ids = request.get("worker_ids", [])
+            for agent_id in [supervisor_id] + worker_ids:
+                agent_data = await memory_system.semantic.search(
+                    query=f"id:{agent_id}"
+                )
+                if agent_data:
+                    agent_domains.append(agent_data[0].get("domain"))
+            
+            # Check if any agent is from a different domain
+            task_domain = request.get("domain")
+            if any(d != task_domain for d in agent_domains if d):
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "code": "DOMAIN_ACCESS_DENIED",
+                        "message": "Cross-domain operation requires approval"
+                    }
+                )
+        
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        supervisor_id = request.get("supervisor_id")
+        if not supervisor_id:
+            raise ValidationError("hierarchical pattern requires supervisor_id")
+            
+        worker_ids = request.get("worker_ids", [])
+        if not worker_ids:
+            raise ValidationError("hierarchical pattern requires worker_ids")
+        
+        # Create task with hierarchical pattern
+        task_id = f"task_{uuid.uuid4().hex[:8]}"
+        task_result = await orchestration_agent.create_task(
+            task_id=task_id,
+            task_data={
+                **request,
+                "swarm_pattern": "hierarchical",
+                "assigned_agents": [supervisor_id] + worker_ids,
+                "supervisor_id": supervisor_id,
+                "worker_ids": worker_ids
+            },
+            domain=domain or request.get("domain", "professional"),
+            metadata={
+                "domain": domain,
+                "swarm_pattern": "hierarchical",
+                "supervisor_id": supervisor_id,
+                "worker_ids": worker_ids
+            } if domain else None
+        )
+        
+        return {
+            "task_id": task_result.task_id,
+            "status": task_result.status,
+            "assigned_agents": task_result.assigned_agents,
+            "swarm_pattern": "hierarchical",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@orchestration_router.post("/swarms/voting")
+@retry_on_error(max_retries=3)
+@validate_request(TaskRequest)
+async def create_voting_task(
+    request: Dict[str, Any],
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("write")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent),
+    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
+) -> Dict:
+    """Create a majority voting swarm task."""
+    try:
+        # Check domain access
+        if request.get("domain") and not request.get("cross_domain_approved"):
+            # Get agent domains
+            agent_domains = []
+            for agent_id in request.get("voter_ids", []):
+                agent_data = await memory_system.semantic.search(
+                    query=f"id:{agent_id}"
+                )
+                if agent_data:
+                    agent_domains.append(agent_data[0].get("domain"))
+            
+            # Check if any agent is from a different domain
+            task_domain = request.get("domain")
+            if any(d != task_domain for d in agent_domains if d):
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "code": "DOMAIN_ACCESS_DENIED",
+                        "message": "Cross-domain operation requires approval"
+                    }
+                )
+        
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        voter_ids = request.get("voter_ids", [])
+        if not voter_ids:
+            raise ValidationError("voting pattern requires voter_ids")
+        
+        # Create task with voting pattern
+        task_id = f"task_{uuid.uuid4().hex[:8]}"
+        task_result = await orchestration_agent.create_task(
+            task_id=task_id,
+            task_data={
+                **request,
+                "swarm_pattern": "MajorityVoting",
+                "assigned_agents": voter_ids,
+                "voter_ids": voter_ids,
+                "decision_threshold": request.get("decision_threshold", 0.5)
+            },
+            domain=domain or request.get("domain", "professional"),
+            metadata={
+                "domain": domain,
+                "swarm_pattern": "MajorityVoting",
+                "voter_ids": voter_ids,
+                "decision_threshold": request.get("decision_threshold", 0.5)
+            } if domain else None
+        )
+        
+        return {
+            "task_id": task_result.task_id,
+            "status": task_result.status,
+            "assigned_agents": task_result.assigned_agents,
+            "swarm_pattern": "MajorityVoting",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@orchestration_router.post("/swarms/round-robin")
+@retry_on_error(max_retries=3)
+@validate_request(TaskRequest)
+async def create_round_robin_task(
+    request: Dict[str, Any],
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("write")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent),
+    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
+) -> Dict:
+    """Create a round-robin swarm task with cyclic task distribution."""
+    try:
+        # Check domain access
+        if request.get("domain") and not request.get("cross_domain_approved"):
+            # Get agent domains
+            agent_domains = []
+            for agent_id in request.get("agent_ids", []):
+                agent_data = await memory_system.semantic.search(
+                    query=f"id:{agent_id}"
+                )
+                if agent_data:
+                    agent_domains.append(agent_data[0].get("domain"))
+            
+            # Check if any agent is from a different domain
+            task_domain = request.get("domain")
+            if any(d != task_domain for d in agent_domains if d):
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "code": "DOMAIN_ACCESS_DENIED",
+                        "message": "Cross-domain operation requires approval"
+                    }
+                )
+        
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        agent_ids = request.get("agent_ids", [])
+        if not agent_ids:
+            raise ValidationError("round-robin pattern requires agent_ids")
+        
+        subtasks = request.get("subtasks", [])
+        if not subtasks:
+            raise ValidationError("round-robin pattern requires subtasks")
+        
+        # Create task with round-robin pattern
+        task_id = f"task_{uuid.uuid4().hex[:8]}"
+        task_result = await orchestration_agent.create_task(
+            task_id=task_id,
+            task_data={
+                **request,
+                "swarm_pattern": "RoundRobin",
+                "assigned_agents": agent_ids,
+                "agent_ids": agent_ids,
+                "subtasks": subtasks
+            },
+            domain=domain or request.get("domain", "professional"),
+            metadata={
+                "domain": domain,
+                "swarm_pattern": "RoundRobin",
+                "agent_ids": agent_ids,
+                "subtasks": subtasks
+            } if domain else None
+        )
+        
+        return {
+            "task_id": task_result.task_id,
+            "status": task_result.status,
+            "assigned_agents": task_result.assigned_agents,
+            "swarm_pattern": "RoundRobin",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@orchestration_router.post("/swarms/mesh")
+@retry_on_error(max_retries=3)
+@validate_request(TaskRequest)
+async def create_mesh_task(
+    request: Dict[str, Any],
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("write")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent),
+    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
+) -> Dict:
+    """Create a mesh swarm task with free-form agent communication."""
+    try:
+        # Check domain access
+        if request.get("domain") and not request.get("cross_domain_approved"):
+            # Get agent domains
+            agent_domains = []
+            for agent_id in request.get("agent_ids", []):
+                agent_data = await memory_system.semantic.search(
+                    query=f"id:{agent_id}"
+                )
+                if agent_data:
+                    agent_domains.append(agent_data[0].get("domain"))
+            
+            # Check if any agent is from a different domain
+            task_domain = request.get("domain")
+            if any(d != task_domain for d in agent_domains if d):
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "code": "DOMAIN_ACCESS_DENIED",
+                        "message": "Cross-domain operation requires approval"
+                    }
+                )
+        
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        agent_ids = request.get("agent_ids", [])
+        if not agent_ids:
+            raise ValidationError("mesh pattern requires agent_ids")
+        
+        # Create task with mesh pattern
+        task_id = f"task_{uuid.uuid4().hex[:8]}"
+        task_result = await orchestration_agent.create_task(
+            task_id=task_id,
+            task_data={
+                **request,
+                "swarm_pattern": "mesh",
+                "assigned_agents": agent_ids
+            },
+            domain=domain or request.get("domain", "professional"),
+            metadata={
+                "domain": domain,
+                "swarm_pattern": "mesh",
+                "assigned_agents": agent_ids,
+                "communication_patterns": request.get("communication_patterns", [])
+            } if domain else None
+        )
+        
+        return {
+            "task_id": task_result.task_id,
+            "status": task_result.status,
+            "assigned_agents": task_result.assigned_agents,
+            "swarm_pattern": "mesh",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@orchestration_router.post("/swarms/parallel")
+@retry_on_error(max_retries=3)
+@validate_request(TaskRequest)
+async def create_parallel_task(
+    request: Dict[str, Any],
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("write")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent),
+    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
+) -> Dict:
+    """Create a parallel swarm task with independent agents."""
+    try:
+        # Check domain access
+        if request.get("domain") and not request.get("cross_domain_approved"):
+            # Get agent domains
+            agent_domains = []
+            for agent_id in request.get("agent_ids", []):
+                agent_data = await memory_system.semantic.search(
+                    query=f"id:{agent_id}"
+                )
+                if agent_data:
+                    agent_domains.append(agent_data[0].get("domain"))
+            
+            # Check if any agent is from a different domain
+            task_domain = request.get("domain")
+            if any(d != task_domain for d in agent_domains if d):
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "code": "DOMAIN_ACCESS_DENIED",
+                        "message": "Cross-domain operation requires approval"
+                    }
+                )
+        
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        agent_ids = request.get("agent_ids", [])
+        if not agent_ids:
+            raise ValidationError("parallel pattern requires agent_ids")
+        
+        subtasks = request.get("subtasks", [])
+        if not subtasks:
+            raise ValidationError("parallel pattern requires subtasks")
+        
+        # Create task with parallel pattern
+        task_id = f"task_{uuid.uuid4().hex[:8]}"
+        task_result = await orchestration_agent.create_task(
+            task_id=task_id,
+            task_data={
+                **request,
+                "swarm_pattern": "parallel",
+                "assigned_agents": agent_ids
+            },
+            domain=domain or request.get("domain", "professional"),
+            metadata={
+                "domain": domain,
+                "swarm_pattern": "parallel",
+                "assigned_agents": agent_ids,
+                "subtasks": subtasks
+            } if domain else None
+        )
+        
+        return {
+            "task_id": task_result.task_id,
+            "status": task_result.status,
+            "assigned_agents": task_result.assigned_agents,
+            "swarm_pattern": "parallel",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@orchestration_router.post("/swarms/sequential")
+@retry_on_error(max_retries=3)
+@validate_request(TaskRequest)
+async def create_sequential_task(
+    request: Dict[str, Any],
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("write")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent),
+    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
+) -> Dict:
+    """Create a sequential swarm task with ordered processing."""
+    try:
+        # Check domain access
+        if request.get("domain") and not request.get("cross_domain_approved"):
+            # Get agent domains
+            agent_domains = []
+            agent_sequence = request.get("agent_sequence", [])
+            for agent_id, _ in agent_sequence:
+                agent_data = await memory_system.semantic.search(
+                    query=f"id:{agent_id}"
+                )
+                if agent_data:
+                    agent_domains.append(agent_data[0].get("domain"))
+            
+            # Check if any agent is from a different domain
+            task_domain = request.get("domain")
+            if any(d != task_domain for d in agent_domains if d):
+                raise HTTPException(
+                    status_code=403,
+                    detail={
+                        "code": "DOMAIN_ACCESS_DENIED",
+                        "message": "Cross-domain operation requires approval"
+                    }
+                )
+        
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        agent_sequence = request.get("agent_sequence", [])
+        if not agent_sequence:
+            raise ValidationError("sequential pattern requires agent_sequence")
+        
+        # Extract agent IDs and types
+        agent_ids = [agent[0] for agent in agent_sequence]
+        agent_types = [agent[1] for agent in agent_sequence]
+        
+        # Create task with sequential pattern
+        task_id = f"task_{uuid.uuid4().hex[:8]}"
+        task_result = await orchestration_agent.create_task(
+            task_id=task_id,
+            task_data={
+                **request,
+                "swarm_pattern": "sequential",
+                "assigned_agents": agent_ids,
+                "agent_types": agent_types
+            },
+            domain=domain or request.get("domain", "professional"),
+            metadata={
+                "domain": domain,
+                "swarm_pattern": "sequential",
+                "assigned_agents": agent_ids,
+                "agent_types": agent_types,
+                "input_data": request.get("input_data")
+            } if domain else None
+        )
+        
+        return {
+            "task_id": task_result.task_id,
+            "status": task_result.status,
+            "assigned_agents": task_result.assigned_agents,
+            "swarm_pattern": "sequential",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@orchestration_router.post("/tasks", deprecated=True)
+@retry_on_error(max_retries=3)
+async def create_task(
+    request: Dict[str, Any],
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("write")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent),
+    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
+) -> Dict:
+    """[Deprecated] Create a new task with specified pattern and agents.
+    
+    This endpoint is deprecated. Please use the pattern-specific endpoints:
+    - /swarms/hierarchical for supervisor/worker pattern
+    - /swarms/voting for majority voting pattern
+    - /swarms/round-robin for cyclic task distribution
+    - /swarms/mesh for free-form communication
+    - /swarms/parallel for independent task processing
+    - /swarms/sequential for ordered task processing
+    """
+    try:
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        # Process task creation with validation
+        swarm_pattern = request.get("swarm_pattern") or request.get("swarm_type")
+        
+        # Handle different agent assignment fields based on pattern
+        assigned_agents = []
+        if swarm_pattern == "MajorityVoting":
+            assigned_agents = request.get("voter_ids", [])
+        elif swarm_pattern == "RoundRobin":
+            assigned_agents = request.get("agent_ids", [])
+        elif swarm_pattern == "hierarchical":
+            # For hierarchical pattern, combine supervisor and workers
+            supervisor_id = request.get("supervisor_id")
+            worker_ids = request.get("worker_ids", [])
+            if not supervisor_id:
+                raise ValidationError("hierarchical pattern requires supervisor_id")
+            if not worker_ids:
+                raise ValidationError("hierarchical pattern requires worker_ids")
+            assigned_agents = [supervisor_id] + worker_ids
+        else:
+            assigned_agents = request.get("assigned_agents", [])
+            if swarm_pattern and not assigned_agents:
+                raise ValidationError("swarm_pattern requires assigned_agents")
+            
+        task_id = f"task_{uuid.uuid4().hex[:8]}"
+        task_result = await orchestration_agent.create_task(
+            task_id=task_id,
+            task_data={
+                **request,
+                "assigned_agents": assigned_agents,  # Normalize agent assignments
+                "supervisor_id": request.get("supervisor_id") if swarm_pattern == "hierarchical" else None,
+                "worker_ids": request.get("worker_ids") if swarm_pattern == "hierarchical" else None,
+                "voter_ids": request.get("voter_ids") if swarm_pattern == "MajorityVoting" else None,
+                "agent_ids": request.get("agent_ids") if swarm_pattern == "RoundRobin" else None
+            },
+            domain=domain or request.get("domain", "professional"),
+            metadata={
+                "domain": domain,
+                "swarm_pattern": swarm_pattern,
+                "assigned_agents": assigned_agents
+            } if domain else None
+        )
+        
+        return {
+            "task_id": task_result.task_id,
+            "status": task_result.status,
+            "assigned_agents": task_result.assigned_agents,
+            "swarm_pattern": swarm_pattern,  # Use normalized pattern
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@orchestration_router.post("/swarms/decide")
+@retry_on_error(max_retries=3)
+async def decide_swarm_pattern(
+    request: Dict[str, Any],
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("read")),
+    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
+) -> Dict:
+    """Decide optimal swarm pattern for a given task."""
+    try:
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        if "task" not in request:
+            raise ValidationError("Request must include 'task' field")
+        
+        # Generate task ID for decision
+        task_id = f"task_{uuid.uuid4().hex[:8]}"
+        
+        # Get swarm pattern decision
+        decision = await orchestration_agent.decide_swarm_pattern(
+            task_id=task_id,
+            task=request["task"],
+            domain=domain or request.get("domain", "professional"),
+            metadata={
+                "domain": domain,
+                "task_type": request["task"].get("type"),
+                "requirements": request["task"].get("requirements", {})
+            } if domain else None
+        )
+        
+        return {
+            "task_id": decision.task_id,
+            "selected_pattern": decision.pattern,
+            "reasoning": decision.reasoning,
+            "confidence": decision.confidence,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:

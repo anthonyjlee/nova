@@ -112,24 +112,30 @@ async def test_process_with_alert_tracking(alerting_agent, mock_memory_system):
     """Test content processing with alert state tracking."""
     # Mock memory system response
     mock_memory_system.llm.analyze = AsyncMock(return_value={
-        "concepts": [
-            {
-                "type": "alerting_result",
-                "description": "successful"
+        "alerting": {
+            "type": "notification",
+            "routing_state": {
+                "state": "optimal",
+                "confidence": 0.9
             },
-            {
-                "type": "routing_state",
-                "state": "optimal"
+            "delivery_state": {
+                "state": "completed",
+                "confidence": 0.9
             },
-            {
-                "type": "delivery_state",
-                "state": "completed"
-            },
-            {
-                "type": "filter_state",
-                "state": "active"
+            "filter_state": {
+                "state": "active",
+                "confidence": 0.9
             }
-        ]
+        },
+        "alerts": [
+            {
+                "type": "system",
+                "description": "Alert processed",
+                "confidence": 0.9,
+                "importance": 0.8
+            }
+        ],
+        "issues": []
     })
     
     content = {

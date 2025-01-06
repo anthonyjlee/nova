@@ -143,17 +143,25 @@ class ExecutionAgent(NovaExecutionAgent, TinyTroupeAgent):  # Changed inheritanc
     async def execute_and_store(
         self,
         content: Dict[str, Any],
-        target_domain: Optional[str] = None
+        target_domain: Optional[str] = None,
+        execution_type: str = "sequential"  # Default to sequential execution
     ):
         """Execute actions and store results with domain awareness."""
         # Validate domain access if specified
         if target_domain:
             await self.validate_domain_access(target_domain)
             
+        # Validate sequential domain access if needed
+        if execution_type == "sequential":
+            await self.validate_domain_access("sequential")
+            
         # Execute actions
         result = await self.execute_actions(
             content,
-            metadata={"domain": target_domain or self.domain}
+            metadata={
+                "domain": target_domain or self.domain,
+                "execution_type": execution_type
+            }
         )
         
         # Store execution results
@@ -251,26 +259,68 @@ class ExecutionAgent(NovaExecutionAgent, TinyTroupeAgent):  # Changed inheritanc
             if action["status"] == "pending":
                 self.schedule_queue[priority].append(action)
                 
+    @property
+    def memory_system(self):
+        """Get memory system."""
+        return self._memory_system
+
+    @property
+    def emotions(self) -> Dict[str, str]:
+        """Get agent emotions."""
+        return self._configuration.get("current_emotions", {})
+        
+    @emotions.setter
+    def emotions(self, value: Dict[str, str]):
+        """Set agent emotions."""
+        if not isinstance(value, dict):
+            value = {}
+        self._configuration["current_emotions"] = value
+        
+    def update_emotions(self, updates: Dict[str, str]):
+        """Update emotions dictionary."""
+        current = dict(self.emotions)
+        current.update(updates)
+        self.emotions = current
+        
+    @property
+    def desires(self) -> List[str]:
+        """Get agent desires."""
+        return self._configuration.get("current_goals", [])
+        
+    @desires.setter
+    def desires(self, value: List[str]):
+        """Set agent desires."""
+        if not isinstance(value, list):
+            value = []
+        self._configuration["current_goals"] = value
+
     async def get_domain_access(self, domain: str) -> bool:
         """Check if agent has access to specified domain."""
-        if self.memory_system and hasattr(self.memory_system, "semantic"):
-            return await self.memory_system.semantic.store.get_domain_access(
-                self.name,
-                domain
-            )
+        if self._memory_system and hasattr(self._memory_system, "semantic"):
+            try:
+                return await self._memory_system.semantic.store.get_domain_access(
+                    self.name,
+                    domain
+                )
+            except Exception:
+                return False
         return False
         
     async def validate_domain_access(self, domain: str):
         """Validate access to a domain before processing."""
-        if not await self.get_domain_access(domain):
+        has_access = await self.get_domain_access(domain)
+        if not has_access:
             raise PermissionError(
                 f"ExecutionAgent {self.name} does not have access to domain: {domain}"
             )
             
     async def record_reflection(self, content: str, domain: Optional[str] = None):
         """Record a reflection with domain awareness."""
-        if self.memory_system and hasattr(self.memory_system, "semantic"):
-            await self.memory_system.semantic.store.record_reflection(
-                content=content,
-                domain=domain or self.domain
-            )
+        if self._memory_system and hasattr(self._memory_system, "semantic"):
+            try:
+                await self._memory_system.semantic.store.record_reflection(
+                    content=content,
+                    domain=domain or self.domain
+                )
+            except Exception as e:
+                logger.error(f"Error recording reflection: {str(e)}")

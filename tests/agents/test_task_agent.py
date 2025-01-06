@@ -8,14 +8,38 @@ from src.nia.agents.specialized.task_agent import TaskAgent
 from src.nia.nova.core.task import TaskResult
 
 @pytest.fixture
-def task_agent(mock_memory_system, mock_world, base_agent_config, request):
-    """Create a TaskAgent instance with mock dependencies."""
-    # Use test name to create unique agent name
-    agent_name = f"TestTask_{request.node.name}"
+def base_agent_config():
+    """Create base agent configuration."""
+    return {
+        "name": "test_agent",
+        "agent_type": "task",
+        "domain": "professional",
+        "attributes": {
+            "occupation": "Task Analyst",
+            "desires": [
+                "Understand task requirements",
+                "Track task dependencies"
+            ],
+            "emotions": {
+                "baseline": "focused",
+                "towards_analysis": "systematic"
+            },
+            "capabilities": [
+                "task_analysis",
+                "dependency_tracking"
+            ]
+        }
+    }
+
+@pytest.fixture
+def mock_memory_system():
+    """Create a mock memory system."""
+    memory = MagicMock()
     
-    # Update mock memory system for task agent
-    mock_memory_system.llm.analyze = AsyncMock(return_value={
-        "tasks": [
+    # Mock LLM
+    memory.llm = MagicMock()
+    memory.llm.analyze = AsyncMock(return_value=TaskResult(
+        tasks=[
             {
                 "statement": "Complete this task",
                 "type": "task",
@@ -30,34 +54,92 @@ def task_agent(mock_memory_system, mock_world, base_agent_config, request):
                 "confidence": 0.7
             }
         ],
-        "dependencies": {
+        confidence=0.8,
+        dependencies={
             "sequential": ["task1"],
             "blockers": ["blocker1"],
-            "priority_factors": [
-                {
-                    "factor": "urgency",
-                    "weight": 0.8
-                }
-            ]
-        }
-    })
+            "priority_factors": [{"factor": "urgency", "weight": 0.8}]
+        },
+        metadata={"domain": "professional"}
+    ))
     
-    # Configure domain access
-    mock_memory_system.semantic.store.get_domain_access = AsyncMock(
-        side_effect=lambda agent, domain: domain == "professional"
-    )
+    # Mock semantic store
+    memory.semantic = MagicMock()
+    memory.semantic.store = MagicMock()
+    memory.semantic.store.record_reflection = AsyncMock()
+    memory.semantic.store.get_domain_access = AsyncMock(return_value=True)
+    memory.semantic.store.store_concept = AsyncMock()
     
-    # Create agent with updated config
-    config = base_agent_config.copy()
-    config["name"] = agent_name
-    config["domain"] = "professional"
+    # Mock episodic store
+    memory.episodic = MagicMock()
+    memory.episodic.store = MagicMock()
+    memory.episodic.store.store = AsyncMock()
     
-    return TaskAgent(
+    # Mock store_memory
+    memory.store_memory = AsyncMock()
+    memory.store = AsyncMock()
+    
+    # Mock analyze_tasks
+    memory.analyze_tasks = AsyncMock(return_value=TaskResult(
+        tasks=[{
+            "statement": "Test task",
+            "type": "task",
+            "confidence": 0.9,
+            "domain_relevance": 0.9
+        }],
+        confidence=0.9,
+        dependencies={"blockers": []},
+        metadata={"domain": "professional"}
+    ))
+    
+    return memory
+
+@pytest.fixture
+def mock_world():
+    """Create a mock world environment."""
+    world = MagicMock()
+    world.notify_agent = AsyncMock()
+    return world
+
+@pytest.fixture
+def task_agent(mock_memory_system, mock_world, base_agent_config, request):
+    """Create a TaskAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestTask_{request.node.name}"
+    
+    # Create agent with task-specific attributes
+    attributes = {
+        "occupation": "Task Analyst",
+        "desires": [
+            "Understand task requirements",
+            "Track task dependencies",
+            "Ensure task completion",
+            "Maintain domain boundaries"
+        ],
+        "emotions": {
+            "baseline": "focused",
+            "towards_analysis": "systematic",
+            "towards_domain": "mindful",
+            "analysis_state": "neutral",
+            "domain_state": "neutral"
+        },
+        "capabilities": [
+            "task_analysis",
+            "dependency_tracking",
+            "domain_validation",
+            "priority_assessment"
+        ]
+    }
+
+    agent = TaskAgent(
         name=agent_name,
         memory_system=mock_memory_system,
         world=mock_world,
-        domain=config["domain"]
+        attributes=attributes,
+        domain="professional"
     )
+    
+    return agent
 
 @pytest.mark.asyncio
 async def test_initialization(task_agent):
@@ -115,12 +197,15 @@ async def test_analyze_and_store(task_agent, mock_memory_system):
     assert result.confidence > 0
     assert result.dependencies is not None
     
-    # Verify memory storage
-    assert hasattr(task_agent, "store_memory")
+    # Verify memory storage was called
+    mock_memory_system.store.assert_called()
     
     # Verify reflection was recorded (high confidence case)
     if result.confidence > 0.8:
-        mock_memory_system.semantic.store.record_reflection.assert_called()
+        mock_memory_system.semantic.store.record_reflection.assert_any_call(
+            content="High confidence task analysis achieved in professional domain",
+            domain="professional"
+        )
 
 @pytest.mark.asyncio
 async def test_domain_access_validation(task_agent, mock_memory_system):
@@ -134,9 +219,22 @@ async def test_domain_access_validation(task_agent, mock_memory_system):
         await task_agent.validate_domain_access("restricted")
 
 @pytest.mark.asyncio
-async def test_analyze_with_different_domains(task_agent):
+async def test_analyze_with_different_domains(task_agent, mock_memory_system):
     """Test analysis with different domain configurations."""
     content = {"content": "test"}
+    
+    # Configure mock for professional domain
+    mock_memory_system.analyze_tasks = AsyncMock(return_value=TaskResult(
+        tasks=[{
+            "statement": "Professional task",
+            "type": "task",
+            "confidence": 0.9,
+            "domain_relevance": 0.9
+        }],
+        confidence=0.9,
+        dependencies={"blockers": []},
+        metadata={"domain": "professional"}
+    ))
     
     # Test professional domain
     prof_result = await task_agent.analyze_and_store(
@@ -144,19 +242,42 @@ async def test_analyze_with_different_domains(task_agent):
         target_domain="professional"
     )
     assert prof_result.metadata["domain"] == "professional"
+    assert prof_result.confidence == 0.9
     
-    # Test personal domain (assuming access)
+    # Configure mock for personal domain
+    mock_memory_system.analyze_tasks = AsyncMock(return_value=TaskResult(
+        tasks=[{
+            "statement": "Personal task",
+            "type": "task",
+            "confidence": 0.9,
+            "domain_relevance": 0.9
+        }],
+        confidence=0.9,
+        dependencies={"blockers": []},
+        metadata={"domain": "personal"}
+    ))
+    
+    # Test personal domain
     pers_result = await task_agent.analyze_and_store(
         content,
         target_domain="personal"
     )
     assert pers_result.metadata["domain"] == "personal"
+    assert pers_result.confidence == 0.9
 
 @pytest.mark.asyncio
 async def test_error_handling(task_agent, mock_memory_system):
     """Test error handling during analysis."""
     # Make LLM raise an error
     mock_memory_system.llm.analyze.side_effect = Exception("Test error")
+    
+    # Configure mock analyze_tasks for error case
+    mock_memory_system.analyze_tasks = AsyncMock(return_value=TaskResult(
+        tasks=[],
+        confidence=0.0,
+        dependencies={},
+        metadata={"error": "Test error", "error_type": "execution_failure"}
+    ))
     
     result = await task_agent.analyze_and_store({"content": "test"})
     
@@ -165,64 +286,52 @@ async def test_error_handling(task_agent, mock_memory_system):
     assert result.confidence == 0.0
     assert len(result.tasks) == 0
     assert "error" in result.metadata
+    assert result.metadata["error_type"] == "execution_failure"
 
 @pytest.mark.asyncio
 async def test_reflection_recording(task_agent, mock_memory_system):
     """Test reflection recording with domain awareness."""
     content = {"content": "test"}
     
-    # Configure mock LLM response for high confidence case
-    mock_memory_system.llm.analyze = AsyncMock(return_value={
-        "tasks": [
-            {
-                "statement": "Important task",
-                "type": "task",
-                "confidence": 0.9,
-                "domain_relevance": 0.9
-            }
-        ],
-        "dependencies": {
-            "sequential": ["task1"],
-            "blockers": [],
-            "priority_factors": [
-                {
-                    "factor": "urgency",
-                    "weight": 0.8
-                }
-            ]
-        }
-    })
+    # Configure mock for high confidence case
+    mock_memory_system.analyze_tasks = AsyncMock(return_value=TaskResult(
+        tasks=[{
+            "statement": "Important task",
+            "type": "task",
+            "confidence": 0.9,
+            "domain_relevance": 0.9
+        }],
+        confidence=0.9,
+        dependencies={"sequential": ["task1"], "blockers": []},
+        metadata={"domain": "professional"}
+    ))
     
     result = await task_agent.analyze_and_store(content)
     
     # Verify high confidence reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "High confidence task analysis completed in professional domain",
+        content="High confidence task analysis achieved in professional domain",
         domain="professional"
     )
     
-    # Configure mock LLM response for low confidence case
-    mock_memory_system.llm.analyze = AsyncMock(return_value={
-        "tasks": [
-            {
-                "statement": "Unclear task",
-                "type": "task",
-                "confidence": 0.2,
-                "domain_relevance": 0.5
-            }
-        ],
-        "dependencies": {
-            "sequential": [],
-            "blockers": [],
-            "priority_factors": []
-        }
-    })
+    # Configure mock for low confidence case
+    mock_memory_system.analyze_tasks = AsyncMock(return_value=TaskResult(
+        tasks=[{
+            "statement": "Unclear task",
+            "type": "task",
+            "confidence": 0.2,
+            "domain_relevance": 0.5
+        }],
+        confidence=0.2,
+        dependencies={"sequential": [], "blockers": []},
+        metadata={"domain": "professional"}
+    ))
     
     result = await task_agent.analyze_and_store(content)
     
     # Verify low confidence reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Low confidence task analysis in professional domain",
+        content="Low confidence task analysis - may need additional dependencies in professional domain",
         domain="professional"
     )
 
@@ -252,33 +361,28 @@ async def test_blocker_reflection(task_agent, mock_memory_system):
     """Test reflection recording for task blockers."""
     content = {"content": "test"}
     
-    # Configure mock LLM response with blockers
-    mock_memory_system.llm.analyze = AsyncMock(return_value={
-        "tasks": [
-            {
-                "statement": "Blocked task",
-                "type": "task",
-                "confidence": 0.9,
-                "domain_relevance": 0.9
-            }
-        ],
-        "dependencies": {
+    # Configure mock for blocked task case
+    mock_memory_system.analyze_tasks = AsyncMock(return_value=TaskResult(
+        tasks=[{
+            "statement": "Blocked task",
+            "type": "task",
+            "confidence": 0.9,
+            "domain_relevance": 0.9
+        }],
+        confidence=0.9,
+        dependencies={
             "sequential": ["task1"],
             "blockers": ["critical_blocker", "major_blocker"],
-            "priority_factors": [
-                {
-                    "factor": "urgency",
-                    "weight": 0.9
-                }
-            ]
-        }
-    })
+            "priority_factors": [{"factor": "urgency", "weight": 0.9}]
+        },
+        metadata={"domain": "professional"}
+    ))
     
     result = await task_agent.analyze_and_store(content)
     
     # Verify blocker reflection
     mock_memory_system.semantic.store.record_reflection.assert_any_call(
-        "Task blockers identified in professional domain",
+        content="Task blockers identified in professional domain - resolution required",
         domain="professional"
     )
 

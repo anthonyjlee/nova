@@ -397,7 +397,11 @@ async def test_execution_pattern_matching(execution_agent, mock_memory_system):
         }
     }
     
-    execution_agent._update_execution_patterns({"pattern1": pattern})
+    # Update execution state with pattern
+    await execution_agent._update_execution_state({
+        "actions": {"pattern1": pattern},
+        "status": {"pattern1": "active"}
+    })
     
     # Test matching content with detailed state
     content = {

@@ -9,25 +9,20 @@ from src.nia.nova.core.validation import ValidationResult
 from src.nia.memory.memory_types import AgentResponse
 
 @pytest.fixture
-async def validation_agent(mock_memory_system, mock_world, base_agent_config, request):
-    """Create a ValidationAgent instance with mock dependencies."""
-    # Use test name to create unique agent name
-    agent_name = f"TestValidation_{request.node.name}"
+def mock_world():
+    """Create a mock world environment."""
+    world = MagicMock()
+    world.notify_agent = AsyncMock()
+    return world
+
+@pytest.fixture
+def mock_memory_system():
+    """Create a mock memory system."""
+    memory = MagicMock()
     
-    # Configure mock memory system with proper property mocking
-    mock_store = AsyncMock()
-    mock_store.store = AsyncMock()
-    mock_store.store_concept = AsyncMock()
-    mock_store.record_reflection = AsyncMock()
-    mock_store.get_domain_access = AsyncMock(return_value=True)
-    
-    mock_memory_system.semantic = MagicMock()
-    mock_memory_system.semantic.store = mock_store
-    mock_memory_system.episodic = MagicMock()
-    mock_memory_system.episodic.store = mock_store
-    
-    # Configure mock LLM with response that updates emotions and desires
-    mock_memory_system.llm.analyze = AsyncMock(return_value={
+    # Mock LLM
+    memory.llm = MagicMock()
+    memory.llm.analyze = AsyncMock(return_value={
         "concepts": [
             {
                 "type": "validation_result",
@@ -40,17 +35,65 @@ async def validation_agent(mock_memory_system, mock_world, base_agent_config, re
                 "priority": 0.9
             }
         ],
+        "emotions": {
+            "validation_state": "confident",
+            "domain_state": "aligned"
+        },
+        "desires": [
+            "Ensure content quality",
+            "Validate domain boundaries"
+        ],
         "is_valid": True,
         "confidence": 0.9,
         "validations": [{"rule": "test", "passed": True}],
         "metadata": {"domain": "professional"}
     })
+    
+    # Mock semantic store
+    memory.semantic = MagicMock()
+    memory.semantic.store = MagicMock()
+    memory.semantic.store.record_reflection = AsyncMock()
+    memory.semantic.store.get_domain_access = AsyncMock(return_value=True)
+    memory.semantic.store.store_concept = AsyncMock()
+    
+    # Mock store_memory
+    memory.store = AsyncMock()
+    
+    return memory
 
+@pytest.fixture
+def base_agent_config():
+    """Create base agent configuration."""
+    return {
+        "name": "test_agent",
+        "agent_type": "validation",
+        "domain": "professional",
+        "attributes": {
+            "occupation": "Content Validator",
+            "desires": [
+                "Ensure content quality",
+                "Validate domain boundaries"
+            ],
+            "emotions": {
+                "baseline": "analytical",
+                "towards_validation": "focused"
+            },
+            "capabilities": [
+                "content_validation",
+                "domain_validation"
+            ]
+        }
+    }
+
+@pytest.fixture
+def validation_agent(mock_memory_system, mock_world, base_agent_config, request):
+    """Create a ValidationAgent instance with mock dependencies."""
+    # Use test name to create unique agent name
+    agent_name = f"TestValidation_{request.node.name}"
+    
     # Create agent with validation-specific attributes
     attributes = {
-        "type": "validation",
         "occupation": "Content Validator",
-        "domain": "professional",
         "desires": [
             "Ensure content quality",
             "Validate domain boundaries", 
@@ -79,9 +122,6 @@ async def validation_agent(mock_memory_system, mock_world, base_agent_config, re
         attributes=attributes,
         domain="professional"
     )
-    
-    # Initialize agent with reflections
-    await agent.initialize()
     
     return agent
 

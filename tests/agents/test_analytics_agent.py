@@ -889,7 +889,7 @@ async def test_process_and_store_with_enhancements(analytics_agent, mock_memory_
     """Test enhanced analytics processing and storage."""
     # Create test data
     data = pd.DataFrame({
-        "timestamp": pd.date_range(start="2024-01-01", periods=10, freq="H"),
+        "timestamp": pd.date_range(start="2024-01-01", periods=10, freq="h"),
         "value": np.random.randn(10)
     })
     
@@ -1089,7 +1089,7 @@ async def test_trend_detector_application(analytics_agent, mock_memory_system):
     
     # Apply detector to analysis
     data = pd.DataFrame({
-        "timestamp": pd.date_range(start="2024-01-01", periods=10, freq="H"),
+        "timestamp": pd.date_range(start="2024-01-01", periods=10, freq="h"),
         "value": np.random.randn(10)
     })
     

@@ -58,6 +58,22 @@ class ParsingAgent(NovaParser, TinyTroupeAgent):
                 else:
                     base_attributes[key] = value
         
+        # Store memory system reference and LLM type
+        self._memory_system = memory_system
+        self.llm_type = llm_type
+        
+        # Record initialization reflections
+        if memory_system and hasattr(memory_system, 'semantic'):
+            # These reflections will be recorded when the agent is used
+            # since __init__ can't be async
+            self._pending_init_reflections = [
+                ("Parsing agent initialized successfully in professional domain", "professional"),
+                ("Core attributes validated in professional domain", "professional"),
+                ("Parsing capabilities confirmed in professional domain", "professional"),
+                ("Parsing tracking systems ready in professional domain", "professional"),
+                ("Parsing agent ready for operation in professional domain", "professional")
+            ]
+
         # Initialize TinyTroupeAgent with merged attributes
         TinyTroupeAgent.__init__(
             self,
@@ -67,6 +83,10 @@ class ParsingAgent(NovaParser, TinyTroupeAgent):
             attributes=base_attributes,
             agent_type="parsing"
         )
+        
+        # Ensure emotions and desires are properly initialized in configuration
+        self._configuration["current_emotions"] = base_attributes.get("emotions", {})
+        self._configuration["current_goals"] = base_attributes.get("desires", [])
         
     def _initialize_parsing_attributes(self) -> Dict[str, Any]:
         """Initialize parsing-specific attributes."""
@@ -93,24 +113,6 @@ class ParsingAgent(NovaParser, TinyTroupeAgent):
                 "schema_validation"
             ]
         }
-        
-        # Store memory system reference
-        self._memory_system = memory_system
-        
-        # Additional param for multi-LLM parse logic
-        self.llm_type = llm_type
-        
-        # Record initialization reflections
-        if self._memory_system and hasattr(self._memory_system, 'semantic'):
-            # These reflections will be recorded when the agent is used
-            # since __init__ can't be async
-            self._pending_init_reflections = [
-                ("Parsing agent initialized successfully in professional domain", "professional"),
-                ("Core attributes validated in professional domain", "professional"),
-                ("Parsing capabilities confirmed in professional domain", "professional"),
-                ("Parsing tracking systems ready in professional domain", "professional"),
-                ("Parsing agent ready for operation in professional domain", "professional")
-            ]
         
     def get_attributes(self) -> Dict[str, Any]:
         """Get agent attributes."""
@@ -198,6 +200,24 @@ class ParsingAgent(NovaParser, TinyTroupeAgent):
                     domain=self.domain
                 )
                 
+                # Update desires based on validation needs
+                if "desires" in analysis:
+                    current_desires = list(self.desires)
+                    for desire in analysis["desires"]:
+                        if isinstance(desire, str):
+                            if not any(desire in d for d in current_desires):
+                                current_desires.append(desire)
+                        elif isinstance(desire, dict):
+                            if "description" in desire:
+                                description = desire["description"]
+                                if not any(description in d for d in current_desires):
+                                    current_desires.append(f"Validate {description}")
+                            elif "type" in desire and desire["type"] == "parsing_requirement":
+                                description = desire.get("description", "unknown requirement")
+                                if not any(description in d for d in current_desires):
+                                    current_desires.append(f"Validate {description}")
+                    self.desires = current_desires
+
                 # Process concepts and update state
                 if analysis and analysis.get("concepts"):
                     for concept in analysis["concepts"]:
@@ -207,9 +227,11 @@ class ParsingAgent(NovaParser, TinyTroupeAgent):
                             })
                             
                         if concept.get("type") == "validation_need":
-                            current_goals = list(self.desires)
-                            current_goals.append(f"Validate {concept['statement']}")
-                            self.desires = current_goals
+                            need = concept.get("statement", "unknown need")
+                            if not any(need in desire for desire in self.desires):
+                                current_desires = list(self.desires)
+                                current_desires.append(f"Validate {need}")
+                                self.desires = current_desires
                 
                 # Check for errors first
                 has_errors = any(c.get("type") == "error" for c in analysis.get("concepts", []))
