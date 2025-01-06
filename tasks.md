@@ -23,6 +23,37 @@
   * Swarm lifecycle management
   * Capability requirement handling
   * Cleanup mechanisms
+  * [ ] Local Template Storage:
+    - Template directory structure setup
+    - YAML/JSON template persistence
+    - Version control integration
+    - Template loading at startup
+    - Runtime template updates
+    - Template registry management
+    - Admin Interface Implementation:
+      * Command handling system
+      * Template reload mechanism
+      * Template listing functionality
+      * Template editing capabilities
+      * Error handling and validation
+    - Reload Mechanism:
+      * Runtime template reloading
+      * Registry updates
+      * Memory synchronization
+      * Admin commands integration
+      * Slack-like interface commands
+    - Auto-Launch System:
+      * Init flow configuration
+      * Auto-launch validation
+      * Channel/thread creation
+      * Flow spawning system
+      * Startup sequence handling
+    - Template File Management:
+      * Version control integration
+      * File system operations
+      * Template validation
+      * Registry maintenance
+      * Backup procedures
 
 - [x] Specialized Agents:
   * Core Processing:
@@ -225,6 +256,16 @@
     - Skill integration handler
 
 ### API Endpoints
+- [ ] Chain Template Endpoints:
+  * GET /api/templates/chains (List available chain templates)
+  * GET /api/templates/chains/{template_id} (Get template details)
+  * POST /api/templates/chains (Create new template)
+  * PUT /api/templates/chains/{template_id} (Update template)
+  * DELETE /api/templates/chains/{template_id} (Delete template)
+  * POST /api/templates/chains/{template_id}/instantiate (Create chain from template)
+  * GET /api/templates/chains/{template_id}/instances (List template instances)
+  * GET /api/templates/chains/{template_id}/analytics (Get template usage analytics)
+
 - [x] Analytics endpoints
   * GET /api/analytics/agents (Agent performance analytics)
   * GET /api/analytics/flows (Flow analytics)
@@ -246,6 +287,17 @@
 - [x] Agent coordination endpoints
   * POST /api/swarms/decide (Swarm pattern decision)
   * POST /api/flows/{flow_id}/optimize (Flow optimization)
+- [ ] Agent Identity Endpoints:
+  * GET /api/agents (List all agents with IDs)
+  * GET /api/agents/{agent_id} (Get agent details)
+  * GET /api/agents/{agent_id}/status (Get agent status)
+  * GET /api/agents/{agent_id}/capabilities (Get agent capabilities)
+  * POST /api/agents/{agent_id}/activate (Activate agent)
+  * POST /api/agents/{agent_id}/deactivate (Deactivate agent)
+  * GET /api/agents/types (List available agent types)
+  * GET /api/agents/search (Search agents by capability/type)
+  * GET /api/agents/{agent_id}/history (Get agent interaction history)
+  * GET /api/agents/{agent_id}/metrics (Get agent performance metrics)
 - [ ] Memory operation endpoints
 - [ ] Advanced query endpoints
 - [ ] Batch operation support
@@ -323,7 +375,88 @@
 
 ## Frontend Development
 
+### Chain Template System
+- [ ] Template Management:
+  * Chain Template Storage:
+    - YAML/JSON template format
+    - Version control integration
+    - Template validation rules
+    - Template categorization
+    - Access control management
+
+  * Template Features:
+    - Predefined workflow chains
+    - Cross-team patterns
+    - Resource allocation rules
+    - Error handling strategies
+    - Performance configurations
+
+  * Template UI:
+    - Template browser interface
+    - Visual template editor
+    - Template testing tools
+    - Version comparison view
+    - Template analytics
+
+  * Template Integration:
+    - Chain instantiation from templates
+    - Runtime template modification
+    - Template performance tracking
+    - Template optimization suggestions
+    - Usage analytics and insights
+
 ### Core UI
+- [ ] Graph Tab Implementation:
+  * Interactive Knowledge Graph:
+    - Node and edge visualization
+    - Real-time data updates
+    - Domain-labeled relationships
+    - Sub-task DAG display
+    - Click-to-expand details
+    - Search and filtering
+    - Node property inspection
+    - Thread linking capabilities
+    - Node interaction details:
+      * Property inspection panel
+      * Edge relationship details
+      * Sub-task dependency view
+      * Thread jump functionality
+    - Real-time Capabilities:
+      * Live data updates
+      * Dynamic node coloring
+      * Status indicators
+      * Performance metrics
+    - Domain Visualization:
+      * Brand-labeled info display
+      * Cross-domain relationships
+      * Policy visualization
+      * Access control indicators
+
+- [ ] Main Interface (Slack-like):
+  * Chat Environment:
+    - Sub-thread spawning
+    - Agent response logging
+    - Partial message display
+    - Thread navigation
+    - Domain labeling
+    - Task management
+    - Real-time updates
+    - Advanced Features:
+      * Partial agent logs
+      * Chain-of-thought display
+      * Response aggregation
+      * Domain boundary indicators
+    - Thread Management:
+      * Dynamic thread creation
+      * Sub-agent assignment
+      * Task flow visualization
+      * Resource monitoring
+    - Domain Integration:
+      * Cross-floor policy display
+      * Brand-specific threads
+      * VIP customer handling
+      * Discount rule visualization
+
 - [ ] User Onboarding Interface:
   * Psychometric Questionnaire UI:
     - Multi-step questionnaire flow
@@ -488,11 +621,76 @@
 - [ ] Security tests
 
 ### Frontend Tests
-- [ ] Component tests
-- [ ] Integration tests
-- [ ] End-to-end tests
-- [ ] Performance tests
-- [ ] Accessibility tests
+- [ ] Component Tests:
+  * Graph Tab Tests:
+    - Node interaction testing
+    - Real-time update verification
+    - Search functionality
+    - Filter operations
+    - Domain labeling
+    - Thread linking
+    - Performance under load
+  * Main Interface Tests:
+    - Chat environment functionality
+    - Sub-thread creation
+    - Agent response handling
+    - Domain labeling
+    - Task management
+    - Real-time updates
+  * Thread Management Tests:
+    - Thread creation/deletion
+    - Message organization
+    - Navigation features
+    - Status indicators
+    - Archive functionality
+
+- [ ] Integration Tests:
+  * WebSocket Communication:
+    - Real-time updates
+    - Connection stability
+    - Error handling
+    - Reconnection logic
+  * Domain Integration:
+    - Cross-domain operations
+    - Policy enforcement
+    - Access control
+    - Data separation
+
+- [ ] End-to-End Tests:
+  * Complete Workflows:
+    - Task creation to completion
+    - Thread management lifecycle
+    - Graph navigation and interaction
+    - Domain-aware operations
+  * Error Scenarios:
+    - Connection loss handling
+    - Invalid input handling
+    - Permission violation handling
+    - Resource limit handling
+
+- [ ] Performance Tests:
+  * Graph Visualization:
+    - Large graph rendering
+    - Real-time update performance
+    - Memory usage optimization
+    - CPU utilization
+  * Thread Management:
+    - Multiple thread handling
+    - Message volume testing
+    - Search performance
+    - Archive operations
+
+- [ ] Accessibility Tests:
+  * WCAG Compliance:
+    - Screen reader compatibility
+    - Keyboard navigation
+    - Color contrast
+    - Focus management
+  * Responsive Design:
+    - Mobile compatibility
+    - Tablet optimization
+    - Desktop layout
+    - Dynamic resizing
 
 ## Documentation
 

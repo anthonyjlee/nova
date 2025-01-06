@@ -3,11 +3,414 @@
 This document serves as a technical reference with detailed implementation examples for the NIA system. It complements the main README by providing specific code patterns and examples.
 
 ## Table of Contents
-1. [Memory System Implementation](#memory-system-implementation)
-2. [Agent Implementation Examples](#agent-implementation-examples)
-3. [Testing Framework Examples](#testing-framework-examples)
-4. [Task Management Examples](#task-management-examples)
-5. [Integration Examples](#integration-examples)
+1. [User Initialization System](#user-initialization-system)
+2. [Template Storage Examples](#template-storage-examples)
+3. [Memory System Implementation](#memory-system-implementation)
+4. [Agent Implementation Examples](#agent-implementation-examples)
+5. [Testing Framework Examples](#testing-framework-examples)
+6. [Task Management Examples](#task-management-examples)
+7. [Integration Examples](#integration-examples)
+
+## User Initialization System
+
+### Psychometric Questionnaire System
+```python
+class PsychometricQuestionnaire:
+    """Manages user psychometric profiling."""
+    def __init__(self):
+        self.questions = {
+            "big_five": self.load_big_five_questions(),
+            "learning_style": self.load_learning_style_questions()
+        }
+        
+    async def conduct_questionnaire(self) -> Dict:
+        """Conduct full psychometric assessment."""
+        results = {
+            "personality": await self.assess_big_five(),
+            "learning_style": await self.assess_learning_style(),
+            "task_preferences": await self.assess_task_preferences()
+        }
+        return results
+
+    async def store_profile(self, results: Dict):
+        """Store profile in Neo4j."""
+        query = """
+        MERGE (p:UserProfile {user_id: $user_id})
+        SET p.personality = $personality,
+            p.learning_style = $learning_style,
+            p.task_preferences = $task_preferences,
+            p.updated_at = datetime()
+        """
+        await self.neo4j.execute(query, {
+            "user_id": results["user_id"],
+            "personality": results["personality"],
+            "learning_style": results["learning_style"],
+            "task_preferences": results["task_preferences"]
+        })
+```
+
+### Profile-Based Task Adaptation
+```python
+class TaskAdaptationSystem:
+    """Adapts task presentation based on user profile."""
+    def __init__(self, profile: Dict):
+        self.profile = profile
+        
+    def adapt_task_presentation(self, task: Dict) -> Dict:
+        """Modify task based on user profile."""
+        # Adjust detail level based on conscientiousness
+        if self.profile["personality"]["conscientiousness"] > 0.7:
+            task = self.add_detailed_steps(task)
+            
+        # Adapt to learning style
+        if self.profile["learning_style"] == "visual":
+            task = self.add_visual_elements(task)
+            
+        # Consider emotional aspects
+        if self.profile["personality"]["neuroticism"] > 0.6:
+            task = self.add_reassurance(task)
+            
+        return task
+        
+    def should_auto_approve(self, task: Dict) -> bool:
+        """Determine if task should be auto-approved."""
+        return (
+            self.profile["task_preferences"]["auto_approve"] and
+            task["complexity"] <= self.profile["task_preferences"]["max_auto_complexity"]
+        )
+```
+
+### Profile Integration with Nova
+```python
+class ProfileAwareNova:
+    """Nova implementation with profile awareness."""
+    def __init__(self):
+        self.questionnaire = PsychometricQuestionnaire()
+        self.adaptation = None
+        
+    async def initialize_user(self):
+        """Initialize new user with profiling."""
+        # Conduct questionnaire
+        profile = await self.questionnaire.conduct_questionnaire()
+        
+        # Store in Neo4j
+        await self.questionnaire.store_profile(profile)
+        
+        # Initialize adaptation system
+        self.adaptation = TaskAdaptationSystem(profile)
+        
+        # Configure agents based on profile
+        await self.configure_agents_for_profile(profile)
+        
+    async def configure_agents_for_profile(self, profile: Dict):
+        """Configure specialized agents based on profile."""
+        # Adjust EmotionAgent sensitivity
+        await self.emotion_agent.configure_sensitivity(
+            profile["personality"]["neuroticism"]
+        )
+        
+        # Set DesireAgent motivation tracking
+        await self.desire_agent.set_motivation_preferences(
+            profile["task_preferences"]
+        )
+        
+        # Configure DialogueAgent style
+        await self.dialogue_agent.set_communication_style(
+            profile["personality"]
+        )
+```
+
+## Template Storage Examples
+
+### Template Management System
+```python
+class TemplateManager:
+    """Manages local storage of agent and flow templates."""
+    def __init__(self, template_dir: str = "templates"):
+        self.template_dir = template_dir
+        self.agent_dir = f"{template_dir}/agents"
+        self.flow_dir = f"{template_dir}/flows"
+        self.registry_file = f"{template_dir}/agent_registry.yaml"
+        self.init_file = f"{template_dir}/init_agents.yaml"
+        self.ensure_directories()
+        
+    def ensure_directories(self):
+        """Create template directories if they don't exist."""
+        os.makedirs(self.agent_dir, exist_ok=True)
+        os.makedirs(self.flow_dir, exist_ok=True)
+        
+    def register_agent_template(self, agent_name: str, template_data: dict):
+        """Store new agent template."""
+        file_path = f"{self.agent_dir}/{agent_name.lower()}_agent.yaml"
+        with open(file_path, "w") as f:
+            yaml.dump(template_data, f)
+            
+        # Update registry
+        self.update_registry(agent_name, file_path)
+        
+        # Trigger reload
+        self.reload_templates()
+        return file_path
+        
+    def register_flow(self, flow_name: str, flow_config: dict):
+        """Store new flow template."""
+        file_path = f"{self.flow_dir}/{flow_name.lower()}.yaml"
+        with open(file_path, "w") as f:
+            yaml.dump(flow_config, f)
+            
+        # Update init flows if auto-launch
+        if flow_config.get("auto_launch"):
+            self.update_init_flows(flow_name, file_path)
+            
+        # Trigger reload
+        self.reload_templates()
+        return file_path
+        
+    def update_registry(self, agent_name: str, file_path: str):
+        """Update agent registry."""
+        registry = {}
+        if os.path.exists(self.registry_file):
+            with open(self.registry_file) as f:
+                registry = yaml.safe_load(f) or {}
+                
+        registry[agent_name] = {
+            "path": file_path,
+            "updated_at": datetime.now().isoformat()
+        }
+        
+        with open(self.registry_file, "w") as f:
+            yaml.dump(registry, f)
+            
+    def update_init_flows(self, flow_name: str, file_path: str):
+        """Update init flows configuration."""
+        init_config = {}
+        if os.path.exists(self.init_file):
+            with open(self.init_file) as f:
+                init_config = yaml.safe_load(f) or {}
+                
+        init_flows = init_config.get("init_flows", [])
+        init_flows.append({
+            "name": flow_name,
+            "file": file_path,
+            "auto_launch": True
+        })
+        
+        init_config["init_flows"] = init_flows
+        with open(self.init_file, "w") as f:
+            yaml.dump(init_config, f)
+            
+    def reload_templates(self):
+        """Reload all templates into memory."""
+        agents, flows = self.load_templates()
+        # Notify system of template updates
+        self.notify_template_update(agents, flows)
+        
+    def load_templates(self):
+        """Load all templates at startup."""
+        agents = {}
+        flows = {}
+        
+        # Load agent templates
+        for file in glob.glob(f"{self.agent_dir}/*.yaml"):
+            with open(file) as f:
+                name = os.path.basename(file).replace("_agent.yaml", "")
+                agents[name] = yaml.safe_load(f)
+                
+        # Load flow templates
+        for file in glob.glob(f"{self.flow_dir}/*.yaml"):
+            with open(file) as f:
+                name = os.path.basename(file).replace(".yaml", "")
+                flows[name] = yaml.safe_load(f)
+                
+        return agents, flows
+```
+
+### Template Integration with TinyFactory
+```python
+class TinyFactory:
+    """Enhanced factory with template persistence."""
+    def __init__(self):
+        self.template_manager = TemplateManager()
+        self.agents, self.flows = self.template_manager.load_templates()
+        self.registry = self.load_registry()
+        
+    def load_registry(self):
+        """Load agent registry."""
+        if os.path.exists(self.template_manager.registry_file):
+            with open(self.template_manager.registry_file) as f:
+                return yaml.safe_load(f) or {}
+        return {}
+        
+    async def create_agent(self, agent_type: str, config: dict):
+        """Create agent and persist template."""
+        # Store template first
+        template_path = self.template_manager.register_agent_template(
+            agent_type,
+            config
+        )
+        
+        # Create agent instance
+        agent = await self._spawn_agent(agent_type, config)
+        
+        # Update registry
+        self.agents[agent_type] = config
+        self.registry = self.load_registry()  # Reload registry
+        
+        return agent
+        
+    async def create_flow(self, flow_name: str, flow_config: dict):
+        """Create flow and persist template."""
+        # Store flow template
+        template_path = self.template_manager.register_flow(
+            flow_name,
+            flow_config
+        )
+        
+        # Create flow instance
+        flow = await self._spawn_flow(flow_config)
+        
+        # Update registry
+        self.flows[flow_name] = flow_config
+        
+        return flow
+```
+
+### Initialization System
+```python
+class SystemInitializer:
+    """Handles system startup and template loading."""
+    def __init__(self):
+        self.template_manager = TemplateManager()
+        self.factory = TinyFactory()
+        
+    async def initialize(self):
+        """Initialize system with templates."""
+        # Load init configuration
+        with open("templates/init_agents.yaml") as f:
+            init_config = yaml.safe_load(f)
+            
+        # Auto-launch configured flows
+        for flow in init_config.get("init_flows", []):
+            if flow.get("auto_launch"):
+                await self.factory.create_flow(
+                    flow["name"],
+                    flow["config"]
+                )
+                
+        # Initialize required agents
+        for agent in init_config.get("init_agents", []):
+            await self.factory.create_agent(
+                agent["type"],
+                agent["config"]
+            )
+```
+
+### Admin Interface
+```python
+class TemplateAdmin:
+    """Admin interface for template management."""
+    def __init__(self, template_manager: TemplateManager):
+        self.manager = template_manager
+        
+    async def handle_command(self, command: str, args: dict = None):
+        """Handle admin commands."""
+        if command == "/reload_configs":
+            await self.reload_templates()
+        elif command == "/list_templates":
+            return await self.list_templates()
+        elif command == "/edit_template":
+            return await self.edit_template(args["name"], args["content"])
+            
+    async def reload_templates(self):
+        """Reload all templates."""
+        self.manager.reload_templates()
+        return "Templates reloaded successfully"
+        
+    async def list_templates(self):
+        """List all available templates."""
+        agents, flows = self.manager.load_templates()
+        return {
+            "agents": list(agents.keys()),
+            "flows": list(flows.keys())
+        }
+        
+    async def edit_template(self, name: str, content: dict):
+        """Edit existing template."""
+        if name.endswith("_agent"):
+            return await self.manager.register_agent_template(
+                name.replace("_agent", ""),
+                content
+            )
+        else:
+            return await self.manager.register_flow(name, content)
+```
+
+### Example Template Files
+
+1. Agent Template (templates/agents/math_proof_agent.yaml):
+```yaml
+agent_type: "MathProofAgent"
+system_prompt: "You are a math proof-checker..."
+capabilities:
+  - "checkProof"
+  - "explainErrors"
+domain_constraints:
+  - "professional"
+version: "1.0.0"
+created_at: "2025-01-06T12:00:00Z"
+updated_at: "2025-01-06T12:00:00Z"
+```
+
+2. Flow Template (templates/flows/survey_flow.yaml):
+```yaml
+flow_name: "SurveyFlow"
+description: "Multi-agent flow for survey processing"
+agent_list:
+  - "SurveyAggregatorAgent"
+  - "StatAnalysisAgent"
+pattern: "parallel"
+domain: "professional"
+auto_launch: true
+version: "1.0.0"
+```
+
+3. Registry File (templates/agent_registry.yaml):
+```yaml
+MathProofAgent:
+  path: "templates/agents/math_proof_agent.yaml"
+  updated_at: "2025-01-06T12:00:00Z"
+  version: "1.0.0"
+  status: "active"
+
+SurveyAggregatorAgent:
+  path: "templates/agents/survey_aggregator_agent.yaml"
+  updated_at: "2025-01-06T12:00:00Z"
+  version: "1.0.0"
+  status: "active"
+```
+
+4. Init Configuration (templates/init_agents.yaml):
+```yaml
+init_flows:
+  - name: "DailyReflectionFlow"
+    file: "templates/flows/daily_reflection.yaml"
+    auto_launch: true
+    
+  - name: "PromptWizardFlow"
+    file: "templates/flows/prompt_wizard.yaml"
+    auto_launch: false
+
+init_agents:
+  - type: "CoreProcessingAgent"
+    config:
+      capabilities: ["parsing", "analysis"]
+      auto_start: true
+      
+  - type: "MonitoringAgent"
+    config:
+      capabilities: ["metrics", "alerts"]
+      auto_start: true
+```
 
 ## Memory System Implementation
 
@@ -339,6 +742,104 @@ class TaskApprovalSystem:
             del self.pending_tasks[task_id]
             return True
         return False
+```
+
+## Agent Identity Examples
+
+### Agent Identity Management
+```python
+class AgentIdentityManager:
+    """Manages agent identity and lifecycle."""
+    def __init__(self, neo4j_store):
+        self.store = neo4j_store
+        
+    async def get_agent_details(self, agent_id: str) -> Dict:
+        """Get detailed agent information."""
+        query = """
+        MATCH (a:Agent {id: $agent_id})
+        RETURN a {
+            .id,
+            .type,
+            .capabilities,
+            .status,
+            .created_at,
+            .updated_at
+        }
+        """
+        result = await self.store.execute(query, {"agent_id": agent_id})
+        return result[0] if result else None
+        
+    async def get_agent_status(self, agent_id: str) -> str:
+        """Get current agent status."""
+        query = """
+        MATCH (a:Agent {id: $agent_id})
+        RETURN a.status
+        """
+        result = await self.store.execute(query, {"agent_id": agent_id})
+        return result[0] if result else None
+        
+    async def update_agent_status(self, agent_id: str, status: str):
+        """Update agent status."""
+        query = """
+        MATCH (a:Agent {id: $agent_id})
+        SET a.status = $status,
+            a.updated_at = datetime()
+        """
+        await self.store.execute(query, {
+            "agent_id": agent_id,
+            "status": status
+        })
+        
+    async def get_agent_history(self, agent_id: str) -> List[Dict]:
+        """Get agent interaction history."""
+        query = """
+        MATCH (a:Agent {id: $agent_id})-[r:PARTICIPATED_IN]->(i:Interaction)
+        RETURN i {
+            .id,
+            .type,
+            .timestamp,
+            .outcome
+        }
+        ORDER BY i.timestamp DESC
+        """
+        return await self.store.execute(query, {"agent_id": agent_id})
+```
+
+### Agent Identity API Routes
+```python
+@router.get("/agents")
+async def list_agents():
+    """List all agents with IDs."""
+    return await identity_manager.get_all_agents()
+
+@router.get("/agents/{agent_id}")
+async def get_agent(agent_id: str):
+    """Get agent details."""
+    return await identity_manager.get_agent_details(agent_id)
+
+@router.get("/agents/{agent_id}/status")
+async def get_agent_status(agent_id: str):
+    """Get agent status."""
+    return await identity_manager.get_agent_status(agent_id)
+
+@router.post("/agents/{agent_id}/activate")
+async def activate_agent(agent_id: str):
+    """Activate agent."""
+    await identity_manager.update_agent_status(agent_id, "active")
+    return {"status": "activated"}
+
+@router.get("/agents/search")
+async def search_agents(
+    capability: Optional[str] = None,
+    agent_type: Optional[str] = None
+):
+    """Search agents by capability/type."""
+    return await identity_manager.search_agents(capability, agent_type)
+
+@router.get("/agents/{agent_id}/metrics")
+async def get_agent_metrics(agent_id: str):
+    """Get agent performance metrics."""
+    return await identity_manager.get_agent_metrics(agent_id)
 ```
 
 ## Integration Examples

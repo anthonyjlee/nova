@@ -130,12 +130,13 @@ config = {
 ### Nova Orchestrator
 The core orchestration system that combines metacognition with specialized agents to:
 - Build and maintain a self-model in Neo4j for reflection and adaptation
-- Understand user context through multi-modal intake
+- Understand user context through multi-modal intake and psychometric profiling
 - Manage personal vs. professional domain boundaries
 - Coordinate specialized agents for complex tasks
 - Generate and manage emergent tasks through agent collaboration
 - Create new agents dynamically via TinyFactory
 - Provide skill access through SkillsAgent
+- Adapt behavior based on user psychometric profile
 
 #### Initialization Protocol
 1. System Identity
@@ -143,20 +144,25 @@ The core orchestration system that combines metacognition with specialized agent
    * Initializes specialized agents
    * Configures tool access and memory layers
 
-2. User Context
-   * Gathers user profile and preferences
+2. User Context & Profiling
+   * Conducts psychometric questionnaire (Big Five, learning style)
+   * Stores profile in Neo4j (personality traits, preferences)
    * Analyzes work/personal domain boundaries
    * Establishes security and privacy settings
+   * Configures task adaptation preferences
 
 3. Memory Initialization
    * Verifies episodic (vector) and semantic (Neo4j) stores
    * Loads relevant conversation history
    * Prepares domain-specific knowledge partitions
+   * Initializes user profile storage
 
-4. Agent Reflection
-   * ReflectionAgent analyzes user context
+4. Agent Reflection & Adaptation
+   * ReflectionAgent analyzes user context and profile
    * BeliefAgent updates system beliefs
-   * Specialized agents prepare domain-specific strategies
+   * EmotionAgent calibrates based on user profile
+   * DesireAgent aligns with user motivations
+   * Specialized agents prepare profile-aware strategies
 
 #### Self-Model & Metacognition
 Nova maintains a self-model in Neo4j that:
@@ -195,14 +201,47 @@ Nova uses TinyFactory to:
 - Manage agent lifecycle and resource allocation
 - Scale agent populations as needed
 - Optimize agent distribution for tasks
+- Persist agent templates to local storage
+- Version control agent definitions
 
 Example agent creation flow:
 1. Nova receives complex task
 2. Task analyzed for required capabilities
 3. TinyFactory designs optimal agent configuration
-4. New agent spawned with specific skills
-5. Agent integrated into existing workflow
-6. Performance monitored for optimization
+4. New agent template stored in local YAML/JSON
+5. Agent spawned with specific skills
+6. Agent integrated into existing workflow
+7. Performance monitored for optimization
+
+#### Local Template Storage
+The system maintains persistent storage of agent and flow templates:
+
+1. Directory Structure:
+   ```
+   templates/
+   ├── agents/           # Agent template definitions
+   │   ├── critique_agent.yaml
+   │   ├── synthesis_agent.yaml
+   │   └── ...
+   ├── flows/            # Multi-agent flow definitions
+   │   ├── prompt_wizard.yaml
+   │   ├── reflection_flow.yaml
+   │   └── ...
+   └── init_agents.yaml  # Startup configuration
+   ```
+
+2. Template Management:
+   - All new agents/flows are stored as YAML/JSON files
+   - Version controlled through Git
+   - Human-readable and editable
+   - Survives system restarts
+   - Supports manual and programmatic updates
+
+3. Initialization Process:
+   - System reads all templates at startup
+   - Auto-launches configured flows
+   - Maintains registry of available templates
+   - Supports runtime updates and reloading
 
 ### Skills Management
 The SkillsAgent provides:
@@ -694,11 +733,136 @@ response = requests.post(
 - Vector store (FAISS/Qdrant) for ephemeral memory
 - TinyTroupe for agent simulation
 
-### Frontend
+### Agent Identity Management
+- **Agent Lifecycle Management**:
+  * Unique agent identification
+  * Status tracking and updates
+  * Capability registration
+  * Performance metrics
+  * Interaction history
+
+- **API Endpoints**:
+  * GET /api/agents - List all agents
+  * GET /api/agents/{agent_id} - Get agent details
+  * GET /api/agents/{agent_id}/status - Get agent status
+  * POST /api/agents/{agent_id}/activate - Activate agent
+  * GET /api/agents/search - Search by capability/type
+  * GET /api/agents/{agent_id}/metrics - Get performance metrics
+
+- **Storage & Persistence**:
+  * Neo4j for agent metadata
+  * Status history tracking
+  * Capability indexing
+  * Performance metrics storage
+  * Interaction logging
+
+### Frontend Architecture
 - SvelteKit for UI framework
 - Cytoscape.js for graph visualization
 - WebSocket for real-time updates
 - Domain-aware UI components
+
+### Main Interface
+- **Slack-like Environment**:
+  * Primary chat-style interface
+  * Sub-thread spawning for tasks
+  * Agent response logging
+  * Real-time updates via WebSocket
+  * Domain-labeled interactions
+
+### Graph System
+- **Dual Implementation**:
+  * DAG (Runtime Execution):
+    - Task execution flow tracking
+    - Dynamic dependency management
+    - Real-time state updates
+    - Concurrent execution handling
+    - Performance optimization
+  * Neo4j (Pattern Storage):
+    - Swarm pattern persistence
+    - Configuration templates
+    - Historical execution data
+    - Pattern relationships
+    - Optimization insights
+
+- **Graph Visualization**:
+  * Interactive Cytoscape.js display:
+    - DAG view for active executions
+    - Neo4j view for stored patterns
+    - Combined view for debugging
+  * Real-time updates and animations
+  * Domain-labeled data visualization
+  * Node and edge interactions
+  * Performance metrics overlay
+
+- **Graph Features**:
+  * Click-to-expand node details
+  * Search and filtering
+  * Domain-based node coloring
+  * Task dependency visualization
+  * Thread linking capabilities
+  * Pattern template management
+  * Execution flow tracking
+  * Performance analysis tools
+
+### Channel Chaining
+- **Team Connections**:
+  * Link multiple channels for complex workflows
+  * Cross-team task coordination
+  * Resource sharing between teams
+  * Domain boundary management
+  * Access control and permissions
+
+- **Chain Management**:
+  * Visual chain builder interface
+  * Drag-and-drop channel linking
+  * Chain templates and presets
+  * Validation and testing tools
+  * Performance monitoring
+
+- **Chain Features**:
+  * Bidirectional data flow
+  * Event propagation control
+  * Error handling and recovery
+  * Resource allocation
+  * Load balancing
+  * Monitoring and metrics
+
+- **Chain UI**:
+  * Chain visualization dashboard
+  * Real-time status updates
+  * Performance analytics
+  * Debug and troubleshooting tools
+  * Configuration management
+
+### Thread Management UI
+- **Main Channel Interface**:
+  * Primary Nova interaction channel
+  * Real-time message updates via WebSocket
+  * Thread creation and management
+  * Task proposal and approval workflow
+  * Aggregator summaries with drill-down
+
+- **Sub-Thread Management**:
+  * Specialized task threads (100+ messages)
+  * Direct agent-to-agent communication
+  * Thread status indicators
+  * Progress tracking visualization
+  * Resource utilization monitoring
+
+- **Thread Navigation**:
+  * Thread list with status overview
+  * Quick thread switching
+  * Search and filtering capabilities
+  * Thread archiving controls
+  * Thread relationship visualization
+
+- **Message Organization**:
+  * Hierarchical message threading
+  * Context-aware message grouping
+  * Domain labeling and separation
+  * Message type indicators
+  * Interaction history tracking
 
 #### Swarm Architecture UI
 - **Swarm Visualization**:
