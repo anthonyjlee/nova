@@ -302,6 +302,70 @@ async def test_websocket_concurrent_connections(mock_memory, mock_analytics_agen
 
 @pytest.mark.timeout(10)
 @pytest.mark.asyncio
+async def test_websocket_malformed_json(mock_memory, mock_analytics_agent, world):
+    """Test handling of malformed JSON requests."""
+    logger.info("Starting malformed JSON websocket test")
+    client = TestClient(app)
+    with client.websocket_connect("/api/analytics/ws", headers={"x-api-key": TEST_API_KEY}) as ws:
+        ws.send_text("invalid json{")
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()
+
+@pytest.mark.timeout(10)
+@pytest.mark.asyncio
+async def test_websocket_missing_fields(mock_memory, mock_analytics_agent, world):
+    """Test handling of requests with missing required fields."""
+    logger.info("Starting missing fields websocket test")
+    client = TestClient(app)
+    with client.websocket_connect("/api/analytics/ws", headers={"x-api-key": TEST_API_KEY}) as ws:
+        ws.send_json({
+            "type": "analytics"
+            # Missing required 'content' and 'analytics_type'
+        })
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()
+
+@pytest.mark.timeout(10)
+@pytest.mark.asyncio
+async def test_websocket_invalid_types(mock_memory, mock_analytics_agent, world):
+    """Test handling of requests with invalid data types."""
+    logger.info("Starting invalid types websocket test")
+    client = TestClient(app)
+    with client.websocket_connect("/api/analytics/ws", headers={"x-api-key": TEST_API_KEY}) as ws:
+        ws.send_json({
+            "type": "analytics",
+            "content": 123,  # Should be string
+            "analytics_type": ["invalid"]  # Should be string
+        })
+        with pytest.raises(WebSocketDisconnect):
+            ws.receive_json()
+
+@pytest.mark.timeout(10)
+@pytest.mark.asyncio
+async def test_websocket_timeout(mock_memory, mock_analytics_agent, world):
+    """Test handling of request timeouts."""
+    logger.info("Starting timeout websocket test")
+    client = TestClient(app)
+    
+    # Mock analytics agent that takes too long
+    class SlowAnalyticsAgent:
+        async def process_analytics(self, *args, **kwargs):
+            await asyncio.sleep(2)  # Longer than timeout
+            return {}
+    
+    app.dependency_overrides[get_analytics_agent] = lambda: SlowAnalyticsAgent()
+    
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect("/api/analytics/ws", headers={"x-api-key": TEST_API_KEY}) as ws:
+            ws.send_json({
+                "type": "analytics",
+                "content": "test",
+                "analytics_type": "test"
+            })
+            ws.receive_json()
+
+@pytest.mark.timeout(10)
+@pytest.mark.asyncio
 async def test_websocket_rate_limit(mock_memory, mock_analytics_agent, world):
     """Test rate limiting for WebSocket connections."""
     logger.info("Starting rate limit websocket test")
