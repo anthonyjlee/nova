@@ -1,487 +1,402 @@
-"""Swarm metrics agent implementation."""
+"""Swarm Metrics Agent for tracking swarm performance and behavior."""
 
 import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 import uuid
+import json
 
-from ...nova.core.orchestration import OrchestrationAgent as NovaOrchestrationAgent
-from ...nova.core.analytics import AnalyticsAgent, AnalyticsResult
 from ..tinytroupe_agent import TinyTroupeAgent
-from ...world.environment import NIAWorld
 from ...memory.two_layer import TwoLayerMemorySystem
-from ...core.types.memory_types import AgentResponse
-from ...swarm.pattern_store import SwarmPatternStore
-from ...swarm.graph_integration import SwarmGraphIntegration
+from ...core.neo4j.base_store import Neo4jBaseStore
 
 logger = logging.getLogger(__name__)
 
-class SwarmMetricsAgent(NovaOrchestrationAgent, TinyTroupeAgent):
+class SwarmMetricsAgent(TinyTroupeAgent):
     """Tracks swarm performance metrics."""
     
     def __init__(
         self,
-        name: str,
+        name: str = "swarm_metrics",
         memory_system: Optional[TwoLayerMemorySystem] = None,
-        world: Optional[NIAWorld] = None,
-        attributes: Optional[Dict] = None,
-        domain: Optional[str] = None
+        domain: str = "swarm_management",
+        **kwargs
     ):
-        """Initialize metrics agent."""
-        # Set domain before initialization
-        self.domain = domain or "professional"
-        
-        # Create and store memory system reference
-        if not memory_system:
-            memory_system = TwoLayerMemorySystem()
-            
-        self.memory_system = memory_system
-        
-        # Initialize NovaOrchestrationAgent first
-        NovaOrchestrationAgent.__init__(
-            self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=self.domain
-        )
-        
-        # Initialize TinyTroupeAgent
-        TinyTroupeAgent.__init__(
-            self,
-            name=name,
-            memory_system=memory_system,
-            world=world,
-            attributes=attributes,
-            agent_type="metrics"
-        )
-        
-        # Initialize metrics-specific components
-        self.pattern_store = SwarmPatternStore()
-        self.graph_integration = SwarmGraphIntegration(self.pattern_store)
-        
-        # Initialize metrics tracking
-        self.performance_metrics = {}  # pattern_id -> metrics
-        self.resource_metrics = {}  # resource_id -> metrics
-        self.execution_metrics = {}  # execution_id -> metrics
-        
-        # Initialize metrics-specific attributes
-        self._initialize_metrics_attributes()
-        
-    def _initialize_metrics_attributes(self):
-        """Initialize metrics-specific attributes."""
-        attributes = {
-            "occupation": "Swarm Performance Analyst",
-            "desires": [
-                "Track performance metrics",
-                "Analyze execution patterns",
-                "Monitor resource utilization",
-                "Detect performance issues",
-                "Generate performance insights",
-                "Optimize execution flows",
-                "Predict resource needs",
-                "Identify bottlenecks",
-                "Measure pattern efficiency",
-                "Provide optimization recommendations"
-            ],
-            "emotions": {
-                "baseline": "analytical",
-                "towards_metrics": "precise",
-                "towards_analysis": "focused",
-                "towards_monitoring": "vigilant",
-                "towards_optimization": "determined",
-                "towards_prediction": "insightful",
-                "towards_recommendations": "helpful"
-            },
-            "capabilities": [
-                "metrics_collection",
-                "performance_analysis",
-                "resource_monitoring",
-                "pattern_analysis",
-                "execution_tracking",
-                "bottleneck_detection",
-                "efficiency_measurement",
-                "trend_analysis",
-                "predictive_analytics",
-                "optimization_recommendations"
-            ]
-        }
-        self.define(**attributes)
+        """Initialize SwarmMetricsAgent."""
+        super().__init__(name=name, memory_system=memory_system, domain=domain, **kwargs)
+        self.store = self.memory_system.semantic.store if memory_system else None
     
     async def collect_metrics(
         self,
-        pattern_id: str,
-        time_window: Optional[int] = None  # hours
+        swarm_id: str,
+        metrics: Dict[str, Any]
     ) -> Dict[str, Any]:
-        """Collect swarm performance data."""
+        """Collect swarm performance data.
+        
+        Args:
+            swarm_id: ID of the swarm
+            metrics: Dictionary of performance metrics
+            
+        Returns:
+            Dict containing collection status
+        """
         try:
-            # Build time filter
-            time_filter = ""
-            parameters = {"pattern_id": pattern_id}
+            # Prepare metrics data
+            metrics_data = {
+                "id": str(uuid.uuid4()),
+                "swarm_id": swarm_id,
+                "metrics": metrics,
+                "timestamp": datetime.now().isoformat()
+            }
             
-            if time_window:
-                cutoff = (datetime.now() - timedelta(hours=time_window)).isoformat()
-                time_filter = "AND e.created_at >= $cutoff"
-                parameters["cutoff"] = cutoff
-            
-            # Get execution metrics
-            query = f"""
-            MATCH (p:SwarmPattern {{id: $pattern_id}})-[:HAS_EXECUTION]->(e:PatternExecution)
-            WHERE e.status IN ['completed', 'failed']
-            {time_filter}
-            RETURN e
-            ORDER BY e.created_at DESC
+            # Store in Neo4j
+            query = """
+            MATCH (s:Swarm {id: $swarm_id})
+            CREATE (m:SwarmMetrics {
+                id: $id,
+                metrics: $metrics,
+                timestamp: $timestamp
+            })
+            CREATE (s)-[:HAS_METRICS]->(m)
+            RETURN m
             """
             
-            result = await self.pattern_store.driver.execute_query(
+            await self.store.run_query(
                 query,
-                parameters=parameters
+                parameters=metrics_data
             )
             
-            if not result:
-                return {
-                    "pattern_id": pattern_id,
-                    "time_window": time_window,
-                    "executions": 0,
-                    "metrics": {}
-                }
-            
-            # Analyze executions
-            executions = []
-            aggregated_metrics = {
-                "success_rate": [],
-                "execution_time": [],
-                "task_metrics": {},
-                "resource_metrics": {}
-            }
-            
-            for record in result:
-                execution = dict(record[0])
-                executions.append(execution)
-                
-                # Calculate success rate
-                aggregated_metrics["success_rate"].append(
-                    1.0 if execution["status"] == "completed" else 0.0
-                )
-                
-                # Calculate execution time
-                start_time = datetime.fromisoformat(execution["created_at"])
-                end_time = datetime.fromisoformat(execution["completed_at"])
-                duration = (end_time - start_time).total_seconds()
-                aggregated_metrics["execution_time"].append(duration)
-                
-                # Aggregate task metrics
-                for task in execution["graph_state"]["nodes"].values():
-                    task_type = task["task_type"]
-                    if task_type not in aggregated_metrics["task_metrics"]:
-                        aggregated_metrics["task_metrics"][task_type] = {
-                            "success_rate": [],
-                            "execution_time": []
-                        }
-                    
-                    task_metrics = aggregated_metrics["task_metrics"][task_type]
-                    task_metrics["success_rate"].append(
-                        1.0 if task["status"] == "completed" else 0.0
-                    )
-                    
-                    if task["start_time"] and task["end_time"]:
-                        task_start = datetime.fromisoformat(task["start_time"])
-                        task_end = datetime.fromisoformat(task["end_time"])
-                        task_duration = (task_end - task_start).total_seconds()
-                        task_metrics["execution_time"].append(task_duration)
-                
-                # Aggregate resource metrics
-                if "metrics" in execution:
-                    for metric, value in execution["metrics"].items():
-                        if metric not in aggregated_metrics["resource_metrics"]:
-                            aggregated_metrics["resource_metrics"][metric] = []
-                        aggregated_metrics["resource_metrics"][metric].append(value)
-            
-            # Calculate final metrics
-            metrics = {
-                "success_rate": sum(aggregated_metrics["success_rate"]) / len(executions),
-                "avg_execution_time": sum(aggregated_metrics["execution_time"]) / len(executions),
-                "task_metrics": {
-                    task_type: {
-                        "success_rate": sum(metrics["success_rate"]) / len(metrics["success_rate"]),
-                        "avg_execution_time": sum(metrics["execution_time"]) / len(metrics["execution_time"])
-                    }
-                    for task_type, metrics in aggregated_metrics["task_metrics"].items()
-                    if metrics["success_rate"] and metrics["execution_time"]
-                },
-                "resource_metrics": {
-                    metric: sum(values) / len(values)
-                    for metric, values in aggregated_metrics["resource_metrics"].items()
-                }
-            }
+            # Store in vector store for temporal analysis
+            await self.memory_system.vector_store.store_vector(
+                content=metrics_data,
+                metadata={"type": "swarm_metrics"},
+                layer="episodic"
+            )
             
             return {
-                "pattern_id": pattern_id,
-                "time_window": time_window,
-                "executions": len(executions),
-                "metrics": metrics
+                "metrics_id": metrics_data["id"],
+                "collection_status": "success"
             }
+            
         except Exception as e:
             logger.error(f"Error collecting metrics: {str(e)}")
-            raise
+            return {
+                "metrics_id": None,
+                "collection_status": "failed",
+                "error": str(e)
+            }
     
     async def analyze_patterns(
         self,
-        pattern_type: Optional[str] = None,
-        min_executions: int = 5
-    ) -> List[Dict[str, Any]]:
-        """Analyze swarm behavior patterns."""
+        swarm_id: str,
+        time_window: Optional[timedelta] = None
+    ) -> Dict[str, Any]:
+        """Analyze swarm behavior patterns.
+        
+        Args:
+            swarm_id: ID of the swarm to analyze
+            time_window: Optional time window for analysis
+            
+        Returns:
+            Dict containing analysis results
+        """
         try:
-            # Get patterns with sufficient executions
-            conditions = ["count(e) >= $min_executions"]
-            parameters = {"min_executions": min_executions}
+            # Build time window condition
+            time_condition = ""
+            parameters = {"swarm_id": swarm_id}
             
-            if pattern_type:
-                conditions.append("p.type = $pattern_type")
-                parameters["pattern_type"] = pattern_type
+            if time_window:
+                cutoff = datetime.now() - time_window
+                time_condition = "AND m.timestamp >= $cutoff"
+                parameters["cutoff"] = cutoff.isoformat()
             
-            where_clause = " AND ".join(conditions)
-            
+            # Get metrics data
             query = f"""
-            MATCH (p:SwarmPattern)-[:HAS_EXECUTION]->(e:PatternExecution)
-            WHERE {where_clause}
-            WITH p, collect(e) as executions
-            RETURN p, executions
+            MATCH (s:Swarm {{id: $swarm_id}})-[:HAS_METRICS]->(m:SwarmMetrics)
+            WHERE true {time_condition}
+            RETURN m
+            ORDER BY m.timestamp DESC
             """
             
-            result = await self.pattern_store.driver.execute_query(
-                query,
-                parameters=parameters
-            )
+            result = await self.store.run_query(query, parameters=parameters)
+            metrics_data = [dict(row["m"]) for row in result]
             
-            patterns = []
-            for record in result:
-                pattern = dict(record[0])
-                executions = [dict(e) for e in record[1]]
-                
-                # Analyze pattern behavior
-                behavior = await self._analyze_pattern_behavior(pattern, executions)
-                
-                patterns.append({
-                    "pattern_id": pattern["id"],
-                    "pattern_type": pattern["type"],
-                    "num_executions": len(executions),
-                    "behavior": behavior
-                })
+            # Analyze patterns
+            patterns = {
+                "performance_trends": self._analyze_performance_trends(metrics_data),
+                "resource_utilization": self._analyze_resource_utilization(metrics_data),
+                "error_patterns": self._analyze_error_patterns(metrics_data),
+                "optimization_opportunities": self._identify_optimization_opportunities(metrics_data)
+            }
             
-            return patterns
+            return {
+                "analysis_status": "success",
+                "patterns": patterns,
+                "metrics_analyzed": len(metrics_data)
+            }
+            
         except Exception as e:
             logger.error(f"Error analyzing patterns: {str(e)}")
-            raise
+            return {
+                "analysis_status": "failed",
+                "error": str(e)
+            }
+    
+    def _analyze_performance_trends(
+        self,
+        metrics_data: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Analyze performance trends from metrics data."""
+        try:
+            trends = {
+                "response_time": [],
+                "throughput": [],
+                "success_rate": []
+            }
+            
+            for metric in metrics_data:
+                if "metrics" in metric:
+                    m = metric["metrics"]
+                    if "response_time" in m:
+                        trends["response_time"].append(m["response_time"])
+                    if "throughput" in m:
+                        trends["throughput"].append(m["throughput"])
+                    if "success_rate" in m:
+                        trends["success_rate"].append(m["success_rate"])
+            
+            # Calculate trend statistics
+            stats = {}
+            for key, values in trends.items():
+                if values:
+                    stats[key] = {
+                        "mean": sum(values) / len(values),
+                        "min": min(values),
+                        "max": max(values),
+                        "trend": "improving" if values[-1] > values[0] else "declining"
+                    }
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Error analyzing performance trends: {str(e)}")
+            return {}
+    
+    def _analyze_resource_utilization(
+        self,
+        metrics_data: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Analyze resource utilization patterns."""
+        try:
+            utilization = {
+                "memory": [],
+                "cpu": [],
+                "network": []
+            }
+            
+            for metric in metrics_data:
+                if "metrics" in metric:
+                    m = metric["metrics"]
+                    if "memory_usage" in m:
+                        utilization["memory"].append(m["memory_usage"])
+                    if "cpu_usage" in m:
+                        utilization["cpu"].append(m["cpu_usage"])
+                    if "network_usage" in m:
+                        utilization["network"].append(m["network_usage"])
+            
+            # Calculate utilization statistics
+            stats = {}
+            for key, values in utilization.items():
+                if values:
+                    stats[key] = {
+                        "average": sum(values) / len(values),
+                        "peak": max(values),
+                        "bottleneck": max(values) > 0.9  # Flag if utilization exceeds 90%
+                    }
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Error analyzing resource utilization: {str(e)}")
+            return {}
+    
+    def _analyze_error_patterns(
+        self,
+        metrics_data: List[Dict[str, Any]]
+    ) -> Dict[str, Any]:
+        """Analyze error patterns and frequencies."""
+        try:
+            error_counts = {}
+            total_operations = 0
+            
+            for metric in metrics_data:
+                if "metrics" in metric and "errors" in metric["metrics"]:
+                    errors = metric["metrics"]["errors"]
+                    for error in errors:
+                        error_type = error.get("type", "unknown")
+                        error_counts[error_type] = error_counts.get(error_type, 0) + 1
+                
+                if "metrics" in metric and "total_operations" in metric["metrics"]:
+                    total_operations += metric["metrics"]["total_operations"]
+            
+            # Calculate error statistics
+            if total_operations > 0:
+                error_stats = {
+                    "total_errors": sum(error_counts.values()),
+                    "error_rate": sum(error_counts.values()) / total_operations,
+                    "error_distribution": error_counts,
+                    "most_common_error": max(error_counts.items(), key=lambda x: x[1])[0] if error_counts else None
+                }
+            else:
+                error_stats = {
+                    "total_errors": 0,
+                    "error_rate": 0,
+                    "error_distribution": {},
+                    "most_common_error": None
+                }
+            
+            return error_stats
+            
+        except Exception as e:
+            logger.error(f"Error analyzing error patterns: {str(e)}")
+            return {}
+    
+    def _identify_optimization_opportunities(
+        self,
+        metrics_data: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Identify potential optimization opportunities."""
+        try:
+            opportunities = []
+            
+            # Analyze performance bottlenecks
+            perf_trends = self._analyze_performance_trends(metrics_data)
+            for metric, stats in perf_trends.items():
+                if stats.get("trend") == "declining":
+                    opportunities.append({
+                        "type": "performance",
+                        "metric": metric,
+                        "description": f"Declining {metric} trend detected",
+                        "priority": "high"
+                    })
+            
+            # Analyze resource bottlenecks
+            resource_stats = self._analyze_resource_utilization(metrics_data)
+            for resource, stats in resource_stats.items():
+                if stats.get("bottleneck"):
+                    opportunities.append({
+                        "type": "resource",
+                        "resource": resource,
+                        "description": f"High {resource} utilization detected",
+                        "priority": "medium"
+                    })
+            
+            # Analyze error patterns
+            error_stats = self._analyze_error_patterns(metrics_data)
+            if error_stats.get("error_rate", 0) > 0.1:  # Error rate > 10%
+                opportunities.append({
+                    "type": "reliability",
+                    "description": "High error rate detected",
+                    "error_type": error_stats.get("most_common_error"),
+                    "priority": "high"
+                })
+            
+            return opportunities
+            
+        except Exception as e:
+            logger.error(f"Error identifying optimization opportunities: {str(e)}")
+            return []
     
     async def generate_insights(
         self,
-        pattern_id: str,
-        analysis_type: str = "performance"
-    ) -> List[Dict[str, Any]]:
-        """Generate performance insights."""
+        swarm_id: str,
+        analysis_results: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """Generate performance insights.
+        
+        Args:
+            swarm_id: ID of the swarm
+            analysis_results: Results from pattern analysis
+            
+        Returns:
+            Dict containing insights
+        """
         try:
             insights = []
             
-            if analysis_type == "performance":
-                # Get recent metrics
-                metrics = await self.collect_metrics(
-                    pattern_id=pattern_id,
-                    time_window=24  # Last 24 hours
-                )
+            # Performance insights
+            if "patterns" in analysis_results:
+                patterns = analysis_results["patterns"]
                 
-                # Analyze success rate
-                success_rate = metrics["metrics"]["success_rate"]
-                if success_rate < 0.8:
-                    insights.append({
-                        "type": "warning",
-                        "category": "success_rate",
-                        "message": f"Low success rate ({success_rate:.2%})",
-                        "recommendation": "Review error patterns and task configurations"
-                    })
-                
-                # Analyze execution time
-                avg_time = metrics["metrics"]["avg_execution_time"]
-                if avg_time > 300:  # 5 minutes
-                    insights.append({
-                        "type": "optimization",
-                        "category": "execution_time",
-                        "message": f"High average execution time ({avg_time:.1f}s)",
-                        "recommendation": "Consider parallelizing tasks or optimizing configurations"
-                    })
-                
-                # Analyze task performance
-                for task_type, task_metrics in metrics["metrics"]["task_metrics"].items():
-                    if task_metrics["success_rate"] < 0.9:
-                        insights.append({
-                            "type": "warning",
-                            "category": "task_performance",
-                            "message": f"Low success rate for {task_type} tasks ({task_metrics['success_rate']:.2%})",
-                            "recommendation": f"Review {task_type} task implementation and error handling"
-                        })
-            
-            elif analysis_type == "resource":
-                # Get resource metrics
-                metrics = await self.collect_metrics(pattern_id=pattern_id)
-                
-                resource_metrics = metrics["metrics"]["resource_metrics"]
-                if "memory_usage" in resource_metrics:
-                    memory_usage = resource_metrics["memory_usage"]
-                    if memory_usage > 0.8:  # 80%
-                        insights.append({
-                            "type": "warning",
-                            "category": "resource_usage",
-                            "message": f"High memory usage ({memory_usage:.2%})",
-                            "recommendation": "Consider optimizing memory usage or scaling resources"
-                        })
-            
-            elif analysis_type == "pattern":
-                # Get pattern behavior analysis
-                pattern = await self.pattern_store.get_pattern(pattern_id)
-                executions = await self._get_pattern_executions(pattern_id)
-                
-                behavior = await self._analyze_pattern_behavior(pattern, executions)
-                
-                if behavior.get("bottlenecks"):
-                    insights.append({
-                        "type": "optimization",
-                        "category": "bottlenecks",
-                        "message": "Identified execution bottlenecks",
-                        "details": behavior["bottlenecks"],
-                        "recommendation": "Consider restructuring task dependencies"
-                    })
-                
-                if behavior.get("anti_patterns"):
-                    insights.append({
-                        "type": "warning",
-                        "category": "anti_patterns",
-                        "message": "Detected swarm anti-patterns",
-                        "details": behavior["anti_patterns"],
-                        "recommendation": "Review and refactor pattern implementation"
-                    })
-            
-            return insights
-        except Exception as e:
-            logger.error(f"Error generating insights: {str(e)}")
-            raise
-    
-    async def _analyze_pattern_behavior(
-        self,
-        pattern: Dict[str, Any],
-        executions: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
-        """Analyze pattern behavior from executions."""
-        try:
-            behavior = {
-                "bottlenecks": [],
-                "anti_patterns": [],
-                "execution_patterns": []
-            }
-            
-            # Analyze task dependencies
-            config = pattern.get("config", {})
-            tasks = config.get("tasks", [])
-            
-            dependency_map = {}
-            for task in tasks:
-                task_deps = set(task.get("dependencies", []))
-                dependency_map[task["id"]] = task_deps
-            
-            # Find potential bottlenecks
-            for task in tasks:
-                dependent_count = sum(
-                    1 for deps in dependency_map.values()
-                    if task["id"] in deps
-                )
-                if dependent_count > len(tasks) / 2:
-                    behavior["bottlenecks"].append({
-                        "task_id": task["id"],
-                        "dependent_count": dependent_count,
-                        "impact": "high" if dependent_count > len(tasks) * 0.8 else "medium"
-                    })
-            
-            # Detect anti-patterns
-            for execution in executions:
-                graph_state = execution.get("graph_state", {})
-                nodes = graph_state.get("nodes", {})
-                
-                # Check for long-running tasks
-                for node in nodes.values():
-                    if node.get("start_time") and node.get("end_time"):
-                        start = datetime.fromisoformat(node["start_time"])
-                        end = datetime.fromisoformat(node["end_time"])
-                        duration = (end - start).total_seconds()
-                        
-                        if duration > 600:  # 10 minutes
-                            behavior["anti_patterns"].append({
-                                "type": "long_running_task",
-                                "task_id": node["task_id"],
-                                "duration": duration
+                # Performance trend insights
+                if "performance_trends" in patterns:
+                    perf_trends = patterns["performance_trends"]
+                    for metric, stats in perf_trends.items():
+                        if stats.get("trend") == "declining":
+                            insights.append({
+                                "type": "performance_alert",
+                                "severity": "high",
+                                "description": f"Declining {metric} performance detected",
+                                "recommendation": f"Investigate causes of {metric} degradation"
                             })
                 
-                # Check for excessive dependencies
-                for node in nodes.values():
-                    if len(node.get("dependencies", [])) > 5:
-                        behavior["anti_patterns"].append({
-                            "type": "excessive_dependencies",
-                            "task_id": node["task_id"],
-                            "dependency_count": len(node["dependencies"])
+                # Resource utilization insights
+                if "resource_utilization" in patterns:
+                    resources = patterns["resource_utilization"]
+                    for resource, stats in resources.items():
+                        if stats.get("bottleneck"):
+                            insights.append({
+                                "type": "resource_alert",
+                                "severity": "medium",
+                                "description": f"High {resource} utilization",
+                                "recommendation": f"Consider scaling {resource} allocation"
+                            })
+                
+                # Error pattern insights
+                if "error_patterns" in patterns:
+                    error_stats = patterns["error_patterns"]
+                    if error_stats.get("error_rate", 0) > 0.1:
+                        insights.append({
+                            "type": "reliability_alert",
+                            "severity": "high",
+                            "description": "High error rate detected",
+                            "recommendation": "Investigate and address common error patterns"
                         })
             
-            # Identify execution patterns
-            status_sequences = []
-            for execution in executions:
-                sequence = []
-                graph_state = execution.get("graph_state", {})
-                nodes = graph_state.get("nodes", {})
-                
-                for node in sorted(
-                    nodes.values(),
-                    key=lambda x: x.get("start_time", "")
-                ):
-                    sequence.append(node["status"])
-                
-                status_sequences.append(sequence)
+            # Store insights
+            insight_data = {
+                "id": str(uuid.uuid4()),
+                "swarm_id": swarm_id,
+                "insights": insights,
+                "timestamp": datetime.now().isoformat()
+            }
             
-            # Find common sequences
-            sequence_counts = {}
-            for sequence in status_sequences:
-                key = tuple(sequence)
-                if key not in sequence_counts:
-                    sequence_counts[key] = 0
-                sequence_counts[key] += 1
-            
-            # Add common patterns
-            for sequence, count in sequence_counts.items():
-                if count > len(executions) * 0.2:  # 20% threshold
-                    behavior["execution_patterns"].append({
-                        "sequence": list(sequence),
-                        "frequency": count / len(executions)
-                    })
-            
-            return behavior
-        except Exception as e:
-            logger.error(f"Error analyzing pattern behavior: {str(e)}")
-            raise
-    
-    async def _get_pattern_executions(
-        self,
-        pattern_id: str
-    ) -> List[Dict[str, Any]]:
-        """Get pattern executions."""
-        try:
             query = """
-            MATCH (p:SwarmPattern {id: $pattern_id})-[:HAS_EXECUTION]->(e:PatternExecution)
-            RETURN e
-            ORDER BY e.created_at DESC
+            MATCH (s:Swarm {id: $swarm_id})
+            CREATE (i:SwarmInsights {
+                id: $id,
+                insights: $insights,
+                timestamp: $timestamp
+            })
+            CREATE (s)-[:HAS_INSIGHTS]->(i)
+            RETURN i
             """
             
-            result = await self.pattern_store.driver.execute_query(
+            await self.store.run_query(
                 query,
-                parameters={"pattern_id": pattern_id}
+                parameters=insight_data
             )
             
-            return [dict(record[0]) for record in result]
+            return {
+                "insight_id": insight_data["id"],
+                "insights": insights,
+                "generation_status": "success"
+            }
+            
         except Exception as e:
-            logger.error(f"Error getting pattern executions: {str(e)}")
-            raise
+            logger.error(f"Error generating insights: {str(e)}")
+            return {
+                "insight_id": None,
+                "insights": [],
+                "generation_status": "failed",
+                "error": str(e)
+            }

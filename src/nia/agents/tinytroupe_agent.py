@@ -23,7 +23,8 @@ class TinyTroupeAgent(TinyPerson, MemoryBaseAgent):
         memory_system: Optional[TwoLayerMemorySystem] = None,
         world: Optional[NIAWorld] = None,
         attributes: Optional[Dict] = None,
-        agent_type: str = "base"
+        agent_type: str = "base",
+        domain: str = "professional"
     ):
         """Initialize agent with both TinyTroupe and memory capabilities."""
         # Validate configuration

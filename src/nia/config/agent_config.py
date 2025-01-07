@@ -445,7 +445,25 @@ AGENT_RESPONSIBILITIES: Dict[str, str] = {
   * Follow protocols
   * Share insights
   * Handle tasks
-  * Maintain quality"""
+  * Maintain quality""",
+
+    "swarm_registry": """
+- Manage swarm pattern registration and storage
+- Validate swarm configurations and dependencies
+- Track swarm lifecycle events and status
+- Maintain pattern relationships and metadata
+- Support pattern search and retrieval
+- Handle pattern updates and versioning
+- Coordinate with memory system for:
+  * Pattern storage in Neo4j
+  * Vector embeddings for semantic search
+  * Event history tracking
+  * Performance metrics
+- Support swarm operations:
+  * Pattern template management
+  * Configuration validation
+  * Lifecycle tracking
+  * Registry maintenance"""
 }
 
 VALID_DOMAINS: Set[str] = {"personal", "professional"}

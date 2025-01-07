@@ -17,7 +17,9 @@ dependencies = [
     "colorama>=0.4.6",         # Terminal color support
     "qdrant-client>=1.7.0",    # Vector database client
     "tinytroupe @ file:///Users/alee5331/Documents/Projects/TinyTroupe",  # Local TinyTroupe package
-    "docker>=7.1.0"
+    "docker>=7.1.0",
+    "fastapi>=0.115.6",
+    "websockets>=14.1"
 ]
 requires-python = ">=3.10"
 readme = "README.md"
@@ -36,6 +38,9 @@ test = [
     "pytest-asyncio>=0.23.2",
     "pytest-cov>=4.1.0",
     "pytest-timeout>=2.1.0",
+    "pandas>=2.1.4",
+    "matplotlib>=3.8.2",
+    "seaborn>=0.13.0",
 ]
 lint = [
     "ruff>=0.1.6",

@@ -50,3 +50,9 @@ agent_responses.log
 *.sqlite3
 
 .codegpt
+
+# PDM
+.pdm-python/
+pdm.lock
+.pdm-cache/
+__pypackages__/

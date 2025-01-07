@@ -5,7 +5,11 @@ from fastapi.testclient import TestClient
 import json
 from datetime import datetime
 import websockets
+import asyncio
+import logging
 from contextlib import asynccontextmanager
+
+logger = logging.getLogger(__name__)
 
 from nia.nova.core.app import app
 from nia.nova.core.auth import API_KEYS
@@ -14,7 +18,12 @@ from nia.nova.core.endpoints import (
     get_analytics_agent,
     get_llm_interface,
     get_tiny_factory,
-    get_world
+    get_world,
+    get_graph_store,
+    get_agent_store,
+    get_profile_store,
+    get_coordination_agent,
+    get_orchestration_agent
 )
 from nia.nova.core.test_data import VALID_TASK
 from nia.memory.two_layer import TwoLayerMemorySystem
@@ -39,7 +48,10 @@ async def check_infrastructure():
     
     try:
         # Check Neo4j
-        driver = AsyncGraphDatabase.driver("bolt://localhost:7687")
+        driver = AsyncGraphDatabase.driver(
+            "bolt://localhost:7687",
+            auth=("neo4j", "password")
+        )
         await driver.verify_connectivity()
         
         # Check vector store
@@ -63,8 +75,8 @@ async def check_infrastructure():
 @pytest.fixture
 async def memory_system(request):
     """Create real memory system for testing."""
-    from nia.memory.vector.vector_store import VectorStore
-    from nia.memory.vector.embeddings import EmbeddingService
+    from nia.core.vector.vector_store import VectorStore
+    from nia.core.vector.embeddings import EmbeddingService
     
     # Create vector store with connection details
     embedding_service = EmbeddingService()
@@ -76,7 +88,8 @@ async def memory_system(request):
     
     memory = TwoLayerMemorySystem(
         neo4j_uri="bolt://localhost:7687",
-        vector_store=vector_store
+        vector_store=vector_store,
+        llm=None
     )
     
     async def cleanup():
@@ -112,19 +125,17 @@ async def memory_system(request):
 @pytest.fixture
 async def llm_interface():
     """Create mock LLM interface for testing."""
-    return LLMInterface(
-        chat_model="test-chat-model",
-        embedding_model="test-embedding-model"
-    )
+    return LLMInterface(use_mock=True)
 
 @pytest.fixture
-async def analytics_agent(memory_system, llm_interface):
+async def analytics_agent(memory_system, llm_interface, request):
     """Create analytics agent for testing."""
+    # Generate unique name based on test name
+    agent_name = f"test-analytics-agent-{request.node.name}"
     agent = AnalyticsAgent(
-        domain="test",
-        store=memory_system.semantic.store,
-        vector_store=memory_system.vector_store,
-        llm_interface=llm_interface
+        name=agent_name,
+        memory_system=memory_system,
+        domain="test"
     )
     return agent
 
@@ -156,7 +167,7 @@ class TestDemoFunctionality:
             # Store initial knowledge
             memory_request = {
                 "content": "The sky is blue because of Rayleigh scattering of sunlight.",
-                "type": "fact",
+                "type": "semantic",
                 "importance": 0.95,
                 "context": {"domain": "science"},
                 "llm_config": {
@@ -165,6 +176,8 @@ class TestDemoFunctionality:
                 }
             }
             
+            # Store initial knowledge
+            logger.info(f"Sending memory request: {memory_request}")
             response = client.post(
                 "/api/orchestration/memory/store",
                 headers={"X-API-Key": TEST_API_KEY},
@@ -172,12 +185,14 @@ class TestDemoFunctionality:
             )
             assert response.status_code == 200
             data = response.json()
+            logger.info(f"Received response: {data}")
             assert "memory_id" in data
             
             # Verify storage in both layers
-            stored_data = await memory_system.episodic.search(
-                query="sky blue Rayleigh scattering"
-            )
+            query = {"content": "sky blue Rayleigh scattering"}
+            logger.info(f"Querying episodic memory with: {query}")
+            stored_data = await memory_system.query_episodic(query)
+            logger.info(f"Query result: {stored_data}")
             assert len(stored_data) > 0
             
             semantic_data = await memory_system.semantic.search(
@@ -223,8 +238,8 @@ class TestDemoFunctionality:
             app.dependency_overrides.clear()
     
     @pytest.mark.asyncio
-    async def test_agent_coordination(self, memory_system, analytics_agent, llm_interface, world):
-        """Test agent coordination through WebSocket."""
+    async def test_agent_coordination_setup(self, memory_system, analytics_agent, llm_interface, world):
+        """Test agent coordination setup."""
         app.dependency_overrides.update({
             get_memory_system: lambda: memory_system,
             get_analytics_agent: lambda: analytics_agent,
@@ -235,52 +250,144 @@ class TestDemoFunctionality:
         try:
             client = TestClient(app)
             
-            # Create WebSocket URL
-            ws_url = f"ws://testserver/api/analytics/ws"
+            # Test analytics agent initialization
+            assert analytics_agent is not None
+            assert analytics_agent.memory_system is not None
+            assert analytics_agent.domain == "test"
             
-            # Use TestClient's websocket_connect as context manager
+            # Test WebSocket connection
+            ws_url = f"ws://testserver/api/analytics/ws"
             with client.websocket_connect(
                 ws_url,
                 headers={"X-API-Key": TEST_API_KEY}
             ) as websocket:
+                assert websocket is not None
+                
+        finally:
+            app.dependency_overrides.clear()
+            
+    @pytest.mark.asyncio
+    async def test_agent_coordination_messaging(self, memory_system, analytics_agent, llm_interface, world):
+        """Test agent coordination messaging."""
+        app.dependency_overrides.update({
+            get_memory_system: lambda: memory_system,
+            get_analytics_agent: lambda: analytics_agent,
+            get_llm_interface: lambda: llm_interface,
+            get_world: lambda: world
+        })
+        
+        try:
+            client = TestClient(app)
+            ws_url = f"ws://testserver/api/analytics/ws"
+            
+            with client.websocket_connect(
+                ws_url,
+                headers={"X-API-Key": TEST_API_KEY}
+            ) as websocket:
+                logger.info("WebSocket connected, preparing to send coordination request")
+                
+                request_data = {
+                    "type": "agent_coordination",
+                    "content": "Why is the sky blue?",
+                    "domain": "science",
+                    "llm_config": {
+                        "chat_model": "test-chat-model",
+                        "embedding_model": "test-embedding-model"
+                    }
+                }
+                logger.info(f"Request data prepared: {request_data}")
+                
+                # Send coordination request
+                await websocket.send_json(request_data)
+                logger.info("Coordination request sent successfully")
+                
+                # Wait for first response with timeout
                 try:
-                    # Send coordination request
-                    await websocket.send_json({
-                        "type": "agent_coordination",
-                        "content": "Why is the sky blue?",
-                        "domain": "science",
-                        "llm_config": {
-                            "chat_model": "test-chat-model",
-                            "embedding_model": "test-embedding-model"
-                        }
-                    })
-                    
-                    # Track agent updates
-                    updates_received = 0
-                    response_received = False
-                    
-                    while True:
-                        try:
-                            data = await websocket.receive_json()
-                            
-                            if data["type"] == "analytics_update":
-                                updates_received += 1
-                                assert "analytics" in data
-                                for agent, update in data["analytics"].items():
-                                    assert "message" in update
-                            
-                            elif data["type"] == "response":
-                                response_received = True
-                                assert "content" in data
-                                break
-                        except websockets.exceptions.ConnectionClosed:
-                            break
-                    
-                    assert updates_received > 0
-                    assert response_received
-                except Exception as e:
-                    print(f"WebSocket error: {str(e)}")
+                    data = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
+                    logger.info(f"Received response: {data}")
+                    assert data is not None
+                    assert "type" in data
+                except asyncio.TimeoutError:
+                    logger.error("Timeout waiting for first response")
                     raise
+                    
+        finally:
+            app.dependency_overrides.clear()
+            
+    @pytest.mark.asyncio
+    async def test_agent_coordination_updates(self, memory_system, analytics_agent, llm_interface, world):
+        """Test agent coordination updates."""
+        app.dependency_overrides.update({
+            get_memory_system: lambda: memory_system,
+            get_analytics_agent: lambda: analytics_agent,
+            get_llm_interface: lambda: llm_interface,
+            get_world: lambda: world
+        })
+        
+        try:
+            client = TestClient(app)
+            ws_url = f"ws://testserver/api/analytics/ws"
+            
+            with client.websocket_connect(
+                ws_url,
+                headers={"X-API-Key": TEST_API_KEY}
+            ) as websocket:
+                logger.info("WebSocket connected, preparing coordination request")
+                
+                request_data = {
+                    "type": "agent_coordination",
+                    "content": "Why is the sky blue?",
+                    "domain": "science",
+                    "llm_config": {
+                        "chat_model": "test-chat-model",
+                        "embedding_model": "test-embedding-model"
+                    }
+                }
+                logger.info(f"Request data prepared: {request_data}")
+                
+                # Send coordination request
+                try:
+                    await websocket.send_json(request_data)
+                    logger.info("Coordination request sent successfully")
+                except Exception as e:
+                    logger.error(f"Failed to send coordination request: {str(e)}")
+                    raise
+                
+                logger.info("Starting to track agent updates")
+                updates_received = 0
+                response_received = False
+                start_time = datetime.now()
+                timeout = 10.0  # 10 second timeout
+                logger.info(f"Timeout set to {timeout} seconds")
+                
+                while (datetime.now() - start_time).total_seconds() < timeout:
+                    try:
+                        logger.info("Waiting for response...")
+                        data = await asyncio.wait_for(websocket.receive_json(), timeout=1.0)
+                        logger.info(f"Received data: {data}")
+                        
+                        if data["type"] == "analytics_update":
+                            updates_received += 1
+                            assert "analytics" in data
+                            for agent, update in data["analytics"].items():
+                                assert "message" in update
+                                
+                        elif data["type"] == "response":
+                            response_received = True
+                            assert "content" in data
+                            break
+                            
+                    except asyncio.TimeoutError:
+                        continue
+                    except websockets.exceptions.ConnectionClosed:
+                        logger.error("WebSocket connection closed unexpectedly")
+                        break
+                        
+                logger.info(f"Updates received: {updates_received}")
+                logger.info(f"Response received: {response_received}")
+                assert updates_received > 0, "No updates were received"
+                assert response_received, "No final response was received"
+                
         finally:
             app.dependency_overrides.clear()
     

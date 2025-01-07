@@ -13,7 +13,11 @@ async def get_neo4j_driver(uri: str = "neo4j://0.0.0.0:7687", auth: Tuple[str, s
     global _drivers
     key = f"{uri}:{auth[0]}"
     if key not in _drivers:
-        _drivers[key] = AsyncGraphDatabase.driver(uri, auth=auth)
+        _drivers[key] = AsyncGraphDatabase.driver(
+            uri,
+            auth={"scheme": "basic", "principal": auth[0], "credentials": auth[1]},
+            max_connection_lifetime=3600
+        )
     return _drivers[key]
 
 async def reset_neo4j_driver(uri: str = "neo4j://0.0.0.0:7687", auth: Tuple[str, str] = ("neo4j", "password")):
@@ -56,3 +60,25 @@ class Neo4jBaseStore:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit."""
         await self.close()
+        
+    async def run_query(self, query: str, parameters: Optional[Dict[str, Any]] = None):
+        """Run Neo4j query.
+        
+        Args:
+            query: Cypher query string
+            parameters: Optional query parameters
+            
+        Returns:
+            Query result records
+        """
+        if not self.driver:
+            await self.connect()
+            
+        try:
+            async with self.driver.session() as session:
+                result = await session.run(query, parameters or {})
+                records = await result.data()
+                return records
+        except Exception as e:
+            logger.error(f"Error running query: {str(e)}")
+            raise

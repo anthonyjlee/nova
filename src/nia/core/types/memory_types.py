@@ -5,11 +5,14 @@ from typing import Dict, Optional, Any, List, Union, TypeVar, Protocol
 from pydantic import BaseModel, Field
 from datetime import datetime
 
+from typing import runtime_checkable
+
+@runtime_checkable
 class JSONSerializable(Protocol):
     """Protocol for JSON-serializable objects."""
     def dict(self) -> Dict[str, Any]: ...
 
-class MemoryType(Enum):
+class MemoryType(str, Enum):
     """Types of memories in the system."""
     EPISODIC = "episodic"
     SEMANTIC = "semantic"

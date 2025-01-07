@@ -1,0 +1,22 @@
+{
+  "memory": {
+    "status": "failed",
+    "stats": {}
+  },
+  "swarm": {
+    "status": "failed",
+    "stats": {}
+  },
+  "profile": {
+    "status": "failed",
+    "stats": {}
+  },
+  "graph": {
+    "status": "failed",
+    "stats": {}
+  },
+  "agent": {
+    "status": "failed",
+    "stats": {}
+  }
+}

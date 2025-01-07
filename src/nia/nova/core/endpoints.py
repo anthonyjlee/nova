@@ -7,14 +7,27 @@ import aiohttp
 import logging
 import uuid
 
-from nia.nova.core.analytics import AnalyticsAgent, AnalyticsResult
-from nia.nova.core.parsing import NovaParser
-from nia.nova.core.llm import LMStudioLLM
-from nia.agents.specialized.orchestration_agent import OrchestrationAgent
-from nia.agents.specialized.parsing_agent import ParsingAgent
 from nia.core.types.memory_types import AgentResponse
+from nia.nova.core.analytics import AnalyticsResult
 from nia.memory.two_layer import TwoLayerMemorySystem
-from nia.world.environment import NIAWorld
+from nia.nova.core.llm import LMStudioLLM
+
+from .dependencies import (
+    get_memory_system,
+    get_world,
+    get_llm,
+    get_parsing_agent,
+    get_coordination_agent,
+    get_llm_interface,
+    get_tiny_factory,
+    get_analytics_agent,
+    get_orchestration_agent,
+    get_graph_store,
+    get_agent_store,
+    get_profile_store,
+    CHAT_MODEL,
+    EMBEDDING_MODEL
+)
 
 from .auth import (
     check_rate_limit,
@@ -48,7 +61,22 @@ from .models import (
     FlowOptimizationResponse,
     AgentAssignmentRequest,
     AgentAssignmentResponse,
-    ParseRequest
+    ParseRequest,
+    ParseResponse,
+    AgentResponse,
+    ProfileResponse,
+    PreferenceResponse,
+    AgentCapabilitiesResponse,
+    AgentTypesResponse,
+    AgentSearchResponse,
+    AgentHistoryResponse,
+    AgentMetricsResponse,
+    AgentStatusResponse,
+    GraphPruneResponse,
+    GraphHealthResponse,
+    GraphOptimizeResponse,
+    GraphStatisticsResponse,
+    GraphBackupResponse
 )
 
 logger = logging.getLogger(__name__)
@@ -90,171 +118,58 @@ ws_router = APIRouter(
     tags=["analytics"]
 )
 
-# LM Studio configuration
-CHAT_MODEL = "llama-3.2-3b-instruct"
-EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v1.5@q8_0"
-
-# Service dependencies
-async def get_graph_store():
-    """Get graph store instance."""
-    from nia.memory.graph_store import GraphStore
-    store = GraphStore(
-        neo4j_uri="bolt://localhost:7687"
-    )
+@analytics_router.post("/parse", response_model=ParseResponse)
+@retry_on_error(max_retries=3)
+async def parse_query(
+    request: Dict[str, Any],
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("read")),
+    parsing_agent: Any = Depends(get_parsing_agent)
+) -> Dict:
+    """Parse user query."""
     try:
-        await store.connect()
-        yield store
-    finally:
-        await store.close()
-
-async def get_agent_store():
-    """Get agent store instance."""
-    from nia.memory.agent_store import AgentStore
-    store = AgentStore(
-        neo4j_uri="bolt://localhost:7687"
-    )
-    try:
-        await store.connect()
-        yield store
-    finally:
-        await store.close()
-
-async def get_profile_store():
-    """Get profile store instance."""
-    from nia.memory.profile_store import ProfileStore
-    store = ProfileStore(
-        neo4j_uri="bolt://localhost:7687"
-    )
-    try:
-        await store.connect()
-        yield store
-    finally:
-        await store.close()
-
-async def get_memory_system():
-    """Get memory system instance."""
-    memory_system = TwoLayerMemorySystem(
-        neo4j_uri="bolt://localhost:7687"
-    )
-    try:
-        # Initialize Neo4j connection
-        await memory_system.semantic.connect()
-        # Initialize vector store if needed
-        if hasattr(memory_system.episodic.store, 'connect'):
-            await memory_system.episodic.store.connect()
-        yield memory_system
-    finally:
-        # Cleanup connections
-        if hasattr(memory_system.semantic, 'close'):
-            await memory_system.semantic.close()
-        if hasattr(memory_system.episodic.store, 'close'):
-            await memory_system.episodic.store.close()
-
-async def get_llm():
-    """Get LLM instance."""
-    llm = LMStudioLLM(
-        chat_model=CHAT_MODEL,
-        embedding_model=EMBEDDING_MODEL
-    )
-    return llm
-
-async def get_world():
-    """Get world instance."""
-    return NIAWorld()
-
-async def get_parsing_agent(
-    memory_system: TwoLayerMemorySystem = Depends(get_memory_system),
-    world: NIAWorld = Depends(get_world),
-    llm: LMStudioLLM = Depends(get_llm)
-):
-    """Get parsing agent instance."""
-    # Generate unique name for each agent instance
-    agent_name = f"nova_parser_{uuid.uuid4().hex[:8]}"
-    agent = ParsingAgent(
-        name=agent_name,
-        memory_system=memory_system,
-        world=world,
-        domain="professional"
-    )
-    agent.llm = llm
-    return agent
-
-async def get_coordination_agent(
-    memory_system: TwoLayerMemorySystem = Depends(get_memory_system),
-    world: NIAWorld = Depends(get_world),
-    llm: LMStudioLLM = Depends(get_llm)
-):
-    """Get coordination agent instance."""
-    from nia.agents.specialized.coordination_agent import CoordinationAgent
-    
-    agent = CoordinationAgent(
-        name="nova_coordinator",
-        memory_system=memory_system,
-        world=world,
-        domain="professional"
-    )
-    agent.llm = llm
-    return agent
-
-async def get_llm_interface():
-    """Get LLM interface instance."""
-    return LMStudioLLM(
-        chat_model=CHAT_MODEL,
-        embedding_model=EMBEDDING_MODEL
-    )
-
-async def get_tiny_factory(
-    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
-):
-    """Get TinyFactory instance."""
-    from nia.agents.tinytroupe_agent import TinyFactory
-    return TinyFactory(memory_system=memory_system)
-
-async def get_analytics_agent(
-    memory_system: TwoLayerMemorySystem = Depends(get_memory_system),
-    llm: LMStudioLLM = Depends(get_llm)
-):
-    """Get analytics agent instance."""
-    # Get memory system from async generator
-    if hasattr(memory_system, '__aiter__'):
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+            
+        if "text" not in request:
+            raise ValidationError("Request must include 'text' field")
+            
+        # Initialize agent
+        await parsing_agent.initialize()
+        
         try:
-            memory_system = await anext(memory_system.__aiter__())
-        except StopAsyncIteration:
-            memory_system = None
-    
-    return AnalyticsAgent(
-        domain="professional",
-        llm=llm,
-        store=memory_system.semantic.store if memory_system else None,
-        vector_store=memory_system.episodic.store if memory_system else None
-    )
-
-async def get_orchestration_agent(
-    memory_system: TwoLayerMemorySystem = Depends(get_memory_system),
-    llm: LMStudioLLM = Depends(get_llm)
-):
-    """Get orchestration agent instance."""
-    # Get memory system from async generator
-    if hasattr(memory_system, '__aiter__'):
-        try:
-            memory_system = await anext(memory_system.__aiter__())
-        except StopAsyncIteration:
-            memory_system = None
-    
-    # Generate unique name for each agent instance
-    agent_name = f"nova_orchestrator_{uuid.uuid4().hex[:8]}"
-    agent = OrchestrationAgent(
-        name=agent_name,
-        memory_system=memory_system,
-        domain="professional"
-    )
-    agent.llm = llm
-    return agent
+            # Parse query
+            result = await parsing_agent.parse_and_store(
+                text=request["text"],
+                context={
+                    "domain": domain or request.get("domain", "professional"),
+                    "source": "api"
+                }
+            )
+        finally:
+            # Clean up agent
+            await parsing_agent.cleanup()
+        
+        return {
+            "parsed_content": {
+                "concepts": result.concepts,
+                "key_points": result.key_points,
+                "structure": result.structure
+            },
+            "confidence": result.confidence,
+            "metadata": result.metadata,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
 
 @ws_router.websocket("/ws")
 async def analytics_websocket(
     websocket: WebSocket,
-    analytics_agent: AnalyticsAgent = Depends(get_analytics_agent)
+    analytics_agent: Any = Depends(get_analytics_agent)
 ):
     """WebSocket endpoint for real-time analytics updates."""
     try:
@@ -363,6 +278,44 @@ async def analytics_websocket(
         if websocket.client_state.value != 3:  # Not closed
             await websocket.close()
 
+@orchestration_router.post("/memory/store", response_model=MemoryResponse)
+@retry_on_error(max_retries=3)
+async def store_memory(
+    request: Dict[str, Any],
+    memory_system: TwoLayerMemorySystem = Depends(get_memory_system),
+    llm_interface: LMStudioLLM = Depends(get_llm_interface)
+) -> Dict:
+    """Store memory in the system."""
+    try:
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+            
+        required_fields = ["content", "type"]
+        for field in required_fields:
+            if field not in request:
+                raise ValidationError(f"Request must include '{field}' field")
+        
+        # Store memory
+        memory_id = await memory_system.store(
+            content={"text": request["content"]},  # Wrap content in text field
+            memory_type=request["type"],
+            importance=request.get("importance", 0.5),
+            context=request.get("context", {}),
+            metadata=request.get("metadata", {})
+        )
+        
+        return {
+            "memory_id": str(memory_id),
+            "content": {"text": request["content"]},
+            "metadata": request.get("metadata", {}),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
 @orchestration_router.post("/resources/allocate", response_model=ResourceAllocationResponse)
 @validate_request(ResourceAllocationRequest)
 @retry_on_error(max_retries=3)
@@ -370,8 +323,8 @@ async def allocate_resources(
     allocation_request: ResourceAllocationRequest,
     domain: Optional[str] = None,
     _: None = Depends(get_permission("write")),
-    analytics_agent: AnalyticsAgent = Depends(get_analytics_agent),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
+    analytics_agent: Any = Depends(get_analytics_agent),
+    orchestration_agent: Any = Depends(get_orchestration_agent)
 ) -> Dict:
     """Allocate resources based on analytics predictions."""
     try:
@@ -409,7 +362,7 @@ async def get_flow_analytics(
     flow_id: Optional[str] = None,
     domain: Optional[str] = None,
     _: None = Depends(get_permission("read")),
-    analytics_agent: AnalyticsAgent = Depends(get_analytics_agent)
+    analytics_agent: Any = Depends(get_analytics_agent)
 ) -> Dict:
     """Get analytics for active flows."""
     try:
@@ -453,7 +406,7 @@ async def get_resource_analytics(
     resource_id: Optional[str] = None,
     domain: Optional[str] = None,
     _: None = Depends(get_permission("read")),
-    analytics_agent: AnalyticsAgent = Depends(get_analytics_agent)
+    analytics_agent: Any = Depends(get_analytics_agent)
 ) -> Dict:
     """Get analytics for resource utilization."""
     try:
@@ -491,14 +444,14 @@ async def get_resource_analytics(
             raise
         raise ServiceError(str(e))
 
-@orchestration_router.post("/agents/create")
+@orchestration_router.post("/agents/create", response_model=AgentResponse)
 @retry_on_error(max_retries=3)
 async def create_agent(
     request: Dict[str, Any],
     domain: Optional[str] = None,
     _: None = Depends(get_permission("write")),
     tiny_factory: Any = Depends(get_tiny_factory),
-    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
+    memory_system: Any = Depends(get_memory_system)
 ) -> Dict:
     """Create a new agent with specified type and capabilities."""
     try:
@@ -534,1036 +487,7 @@ async def create_agent(
             raise
         raise ServiceError(str(e))
 
-# Task retrieval and update endpoints for hierarchical pattern
-@orchestration_router.get("/swarms/hierarchical/{task_id}")
-@retry_on_error(max_retries=3)
-async def get_hierarchical_task(
-    task_id: str,
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("read")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
-) -> Dict:
-    """Get hierarchical swarm task details."""
-    try:
-        task_result = await orchestration_agent.get_task(
-            task_id=task_id,
-            domain=domain,
-            metadata={"domain": domain} if domain else None
-        )
-        
-        if task_result.swarm_pattern != "hierarchical":
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "code": "INVALID_PATTERN",
-                    "message": f"Task {task_id} is not a hierarchical swarm task"
-                }
-            )
-        
-        return {
-            "task_id": task_result.task_id,
-            "status": task_result.status,
-            "assigned_agents": task_result.assigned_agents,
-            "swarm_pattern": "hierarchical",
-            "orchestration": task_result.orchestration,
-            "confidence": task_result.confidence,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-@orchestration_router.put("/swarms/hierarchical/{task_id}")
-@retry_on_error(max_retries=3)
-@validate_request(TaskRequest)
-async def update_hierarchical_task(
-    task_id: str,
-    request: Dict[str, Any],
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("write")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
-) -> Dict:
-    """Update hierarchical swarm task."""
-    try:
-        # Validate request
-        if not isinstance(request, dict):
-            raise ValidationError("Request must be a JSON object")
-        
-        supervisor_id = request.get("supervisor_id")
-        if not supervisor_id:
-            raise ValidationError("hierarchical pattern requires supervisor_id")
-            
-        worker_ids = request.get("worker_ids", [])
-        if not worker_ids:
-            raise ValidationError("hierarchical pattern requires worker_ids")
-        
-        # Update task
-        task_result = await orchestration_agent.update_task(
-            task_id=task_id,
-            task_data={
-                **request,
-                "swarm_pattern": "hierarchical",
-                "assigned_agents": [supervisor_id] + worker_ids,
-                "supervisor_id": supervisor_id,
-                "worker_ids": worker_ids
-            },
-            domain=domain or request.get("domain", "professional"),
-            metadata={
-                "domain": domain,
-                "swarm_pattern": "hierarchical",
-                "supervisor_id": supervisor_id,
-                "worker_ids": worker_ids
-            } if domain else None
-        )
-        
-        return {
-            "task_id": task_result.task_id,
-            "status": "updated",
-            "assigned_agents": task_result.assigned_agents,
-            "swarm_pattern": "hierarchical",
-            "orchestration": task_result.orchestration,
-            "confidence": task_result.confidence,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-@orchestration_router.post("/swarms/hierarchical")
-@retry_on_error(max_retries=3)
-@validate_request(TaskRequest)
-async def create_hierarchical_task(
-    request: Dict[str, Any],
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("write")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent),
-    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
-) -> Dict:
-    """Create a hierarchical swarm task with supervisor and worker agents."""
-    try:
-        # Check domain access
-        if request.get("domain") and not request.get("cross_domain_approved"):
-            # Get agent domains
-            agent_domains = []
-            supervisor_id = request.get("supervisor_id")
-            worker_ids = request.get("worker_ids", [])
-            for agent_id in [supervisor_id] + worker_ids:
-                agent_data = await memory_system.semantic.search(
-                    query=f"id:{agent_id}"
-                )
-                if agent_data:
-                    agent_domains.append(agent_data[0].get("domain"))
-            
-            # Check if any agent is from a different domain
-            task_domain = request.get("domain")
-            if any(d != task_domain for d in agent_domains if d):
-                raise HTTPException(
-                    status_code=403,
-                    detail={
-                        "code": "DOMAIN_ACCESS_DENIED",
-                        "message": "Cross-domain operation requires approval"
-                    }
-                )
-        
-        # Validate request
-        if not isinstance(request, dict):
-            raise ValidationError("Request must be a JSON object")
-        
-        supervisor_id = request.get("supervisor_id")
-        if not supervisor_id:
-            raise ValidationError("hierarchical pattern requires supervisor_id")
-            
-        worker_ids = request.get("worker_ids", [])
-        if not worker_ids:
-            raise ValidationError("hierarchical pattern requires worker_ids")
-        
-        # Create task with hierarchical pattern
-        task_id = f"task_{uuid.uuid4().hex[:8]}"
-        task_result = await orchestration_agent.create_task(
-            task_id=task_id,
-            task_data={
-                **request,
-                "swarm_pattern": "hierarchical",
-                "assigned_agents": [supervisor_id] + worker_ids,
-                "supervisor_id": supervisor_id,
-                "worker_ids": worker_ids
-            },
-            domain=domain or request.get("domain", "professional"),
-            metadata={
-                "domain": domain,
-                "swarm_pattern": "hierarchical",
-                "supervisor_id": supervisor_id,
-                "worker_ids": worker_ids
-            } if domain else None
-        )
-        
-        return {
-            "task_id": task_result.task_id,
-            "status": task_result.status,
-            "assigned_agents": task_result.assigned_agents,
-            "swarm_pattern": "hierarchical",
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-# Task retrieval and update endpoints for voting pattern
-@orchestration_router.get("/swarms/voting/{task_id}")
-@retry_on_error(max_retries=3)
-async def get_voting_task(
-    task_id: str,
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("read")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
-) -> Dict:
-    """Get voting swarm task details."""
-    try:
-        task_result = await orchestration_agent.get_task(
-            task_id=task_id,
-            domain=domain,
-            metadata={"domain": domain} if domain else None
-        )
-        
-        if task_result.swarm_pattern != "MajorityVoting":
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "code": "INVALID_PATTERN",
-                    "message": f"Task {task_id} is not a voting swarm task"
-                }
-            )
-        
-        return {
-            "task_id": task_result.task_id,
-            "status": task_result.status,
-            "assigned_agents": task_result.assigned_agents,
-            "swarm_pattern": "MajorityVoting",
-            "orchestration": task_result.orchestration,
-            "confidence": task_result.confidence,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-@orchestration_router.put("/swarms/voting/{task_id}")
-@retry_on_error(max_retries=3)
-@validate_request(TaskRequest)
-async def update_voting_task(
-    task_id: str,
-    request: Dict[str, Any],
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("write")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
-) -> Dict:
-    """Update voting swarm task."""
-    try:
-        # Validate request
-        if not isinstance(request, dict):
-            raise ValidationError("Request must be a JSON object")
-        
-        voter_ids = request.get("voter_ids", [])
-        if not voter_ids:
-            raise ValidationError("voting pattern requires voter_ids")
-        
-        # Update task
-        task_result = await orchestration_agent.update_task(
-            task_id=task_id,
-            task_data={
-                **request,
-                "swarm_pattern": "MajorityVoting",
-                "assigned_agents": voter_ids,
-                "voter_ids": voter_ids,
-                "decision_threshold": request.get("decision_threshold", 0.5)
-            },
-            domain=domain or request.get("domain", "professional"),
-            metadata={
-                "domain": domain,
-                "swarm_pattern": "MajorityVoting",
-                "voter_ids": voter_ids,
-                "decision_threshold": request.get("decision_threshold", 0.5)
-            } if domain else None
-        )
-        
-        return {
-            "task_id": task_result.task_id,
-            "status": "updated",
-            "assigned_agents": task_result.assigned_agents,
-            "swarm_pattern": "MajorityVoting",
-            "orchestration": task_result.orchestration,
-            "confidence": task_result.confidence,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-@orchestration_router.post("/swarms/voting")
-@retry_on_error(max_retries=3)
-@validate_request(TaskRequest)
-async def create_voting_task(
-    request: Dict[str, Any],
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("write")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent),
-    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
-) -> Dict:
-    """Create a majority voting swarm task."""
-    try:
-        # Check domain access
-        if request.get("domain") and not request.get("cross_domain_approved"):
-            # Get agent domains
-            agent_domains = []
-            for agent_id in request.get("voter_ids", []):
-                agent_data = await memory_system.semantic.search(
-                    query=f"id:{agent_id}"
-                )
-                if agent_data:
-                    agent_domains.append(agent_data[0].get("domain"))
-            
-            # Check if any agent is from a different domain
-            task_domain = request.get("domain")
-            if any(d != task_domain for d in agent_domains if d):
-                raise HTTPException(
-                    status_code=403,
-                    detail={
-                        "code": "DOMAIN_ACCESS_DENIED",
-                        "message": "Cross-domain operation requires approval"
-                    }
-                )
-        
-        # Validate request
-        if not isinstance(request, dict):
-            raise ValidationError("Request must be a JSON object")
-        
-        voter_ids = request.get("voter_ids", [])
-        if not voter_ids:
-            raise ValidationError("voting pattern requires voter_ids")
-        
-        # Create task with voting pattern
-        task_id = f"task_{uuid.uuid4().hex[:8]}"
-        task_result = await orchestration_agent.create_task(
-            task_id=task_id,
-            task_data={
-                **request,
-                "swarm_pattern": "MajorityVoting",
-                "assigned_agents": voter_ids,
-                "voter_ids": voter_ids,
-                "decision_threshold": request.get("decision_threshold", 0.5)
-            },
-            domain=domain or request.get("domain", "professional"),
-            metadata={
-                "domain": domain,
-                "swarm_pattern": "MajorityVoting",
-                "voter_ids": voter_ids,
-                "decision_threshold": request.get("decision_threshold", 0.5)
-            } if domain else None
-        )
-        
-        return {
-            "task_id": task_result.task_id,
-            "status": task_result.status,
-            "assigned_agents": task_result.assigned_agents,
-            "swarm_pattern": "MajorityVoting",
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-# Task retrieval and update endpoints for round-robin pattern
-@orchestration_router.get("/swarms/round-robin/{task_id}")
-@retry_on_error(max_retries=3)
-async def get_round_robin_task(
-    task_id: str,
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("read")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
-) -> Dict:
-    """Get round-robin swarm task details."""
-    try:
-        task_result = await orchestration_agent.get_task(
-            task_id=task_id,
-            domain=domain,
-            metadata={"domain": domain} if domain else None
-        )
-        
-        if task_result.swarm_pattern != "RoundRobin":
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "code": "INVALID_PATTERN",
-                    "message": f"Task {task_id} is not a round-robin swarm task"
-                }
-            )
-        
-        return {
-            "task_id": task_result.task_id,
-            "status": task_result.status,
-            "assigned_agents": task_result.assigned_agents,
-            "swarm_pattern": "RoundRobin",
-            "orchestration": task_result.orchestration,
-            "confidence": task_result.confidence,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-@orchestration_router.put("/swarms/round-robin/{task_id}")
-@retry_on_error(max_retries=3)
-@validate_request(TaskRequest)
-async def update_round_robin_task(
-    task_id: str,
-    request: Dict[str, Any],
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("write")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
-) -> Dict:
-    """Update round-robin swarm task."""
-    try:
-        # Validate request
-        if not isinstance(request, dict):
-            raise ValidationError("Request must be a JSON object")
-        
-        agent_ids = request.get("agent_ids", [])
-        if not agent_ids:
-            raise ValidationError("round-robin pattern requires agent_ids")
-        
-        subtasks = request.get("subtasks", [])
-        if not subtasks:
-            raise ValidationError("round-robin pattern requires subtasks")
-        
-        # Update task
-        task_result = await orchestration_agent.update_task(
-            task_id=task_id,
-            task_data={
-                **request,
-                "swarm_pattern": "RoundRobin",
-                "assigned_agents": agent_ids,
-                "agent_ids": agent_ids,
-                "subtasks": subtasks
-            },
-            domain=domain or request.get("domain", "professional"),
-            metadata={
-                "domain": domain,
-                "swarm_pattern": "RoundRobin",
-                "agent_ids": agent_ids,
-                "subtasks": subtasks
-            } if domain else None
-        )
-        
-        return {
-            "task_id": task_result.task_id,
-            "status": "updated",
-            "assigned_agents": task_result.assigned_agents,
-            "swarm_pattern": "RoundRobin",
-            "orchestration": task_result.orchestration,
-            "confidence": task_result.confidence,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-@orchestration_router.post("/swarms/round-robin")
-@retry_on_error(max_retries=3)
-@validate_request(TaskRequest)
-async def create_round_robin_task(
-    request: Dict[str, Any],
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("write")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent),
-    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
-) -> Dict:
-    """Create a round-robin swarm task with cyclic task distribution."""
-    try:
-        # Check domain access
-        if request.get("domain") and not request.get("cross_domain_approved"):
-            # Get agent domains
-            agent_domains = []
-            for agent_id in request.get("agent_ids", []):
-                agent_data = await memory_system.semantic.search(
-                    query=f"id:{agent_id}"
-                )
-                if agent_data:
-                    agent_domains.append(agent_data[0].get("domain"))
-            
-            # Check if any agent is from a different domain
-            task_domain = request.get("domain")
-            if any(d != task_domain for d in agent_domains if d):
-                raise HTTPException(
-                    status_code=403,
-                    detail={
-                        "code": "DOMAIN_ACCESS_DENIED",
-                        "message": "Cross-domain operation requires approval"
-                    }
-                )
-        
-        # Validate request
-        if not isinstance(request, dict):
-            raise ValidationError("Request must be a JSON object")
-        
-        agent_ids = request.get("agent_ids", [])
-        if not agent_ids:
-            raise ValidationError("round-robin pattern requires agent_ids")
-        
-        subtasks = request.get("subtasks", [])
-        if not subtasks:
-            raise ValidationError("round-robin pattern requires subtasks")
-        
-        # Create task with round-robin pattern
-        task_id = f"task_{uuid.uuid4().hex[:8]}"
-        task_result = await orchestration_agent.create_task(
-            task_id=task_id,
-            task_data={
-                **request,
-                "swarm_pattern": "RoundRobin",
-                "assigned_agents": agent_ids,
-                "agent_ids": agent_ids,
-                "subtasks": subtasks
-            },
-            domain=domain or request.get("domain", "professional"),
-            metadata={
-                "domain": domain,
-                "swarm_pattern": "RoundRobin",
-                "agent_ids": agent_ids,
-                "subtasks": subtasks
-            } if domain else None
-        )
-        
-        return {
-            "task_id": task_result.task_id,
-            "status": task_result.status,
-            "assigned_agents": task_result.assigned_agents,
-            "swarm_pattern": "RoundRobin",
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-# Task retrieval and update endpoints for mesh pattern
-@orchestration_router.get("/swarms/mesh/{task_id}")
-@retry_on_error(max_retries=3)
-async def get_mesh_task(
-    task_id: str,
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("read")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
-) -> Dict:
-    """Get mesh swarm task details."""
-    try:
-        task_result = await orchestration_agent.get_task(
-            task_id=task_id,
-            domain=domain,
-            metadata={"domain": domain} if domain else None
-        )
-        
-        if task_result.swarm_pattern != "mesh":
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "code": "INVALID_PATTERN",
-                    "message": f"Task {task_id} is not a mesh swarm task"
-                }
-            )
-        
-        return {
-            "task_id": task_result.task_id,
-            "status": task_result.status,
-            "assigned_agents": task_result.assigned_agents,
-            "swarm_pattern": "mesh",
-            "orchestration": task_result.orchestration,
-            "confidence": task_result.confidence,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-@orchestration_router.put("/swarms/mesh/{task_id}")
-@retry_on_error(max_retries=3)
-@validate_request(TaskRequest)
-async def update_mesh_task(
-    task_id: str,
-    request: Dict[str, Any],
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("write")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
-) -> Dict:
-    """Update mesh swarm task."""
-    try:
-        # Validate request
-        if not isinstance(request, dict):
-            raise ValidationError("Request must be a JSON object")
-        
-        agent_ids = request.get("agent_ids", [])
-        if not agent_ids:
-            raise ValidationError("mesh pattern requires agent_ids")
-        
-        # Update task
-        task_result = await orchestration_agent.update_task(
-            task_id=task_id,
-            task_data={
-                **request,
-                "swarm_pattern": "mesh",
-                "assigned_agents": agent_ids
-            },
-            domain=domain or request.get("domain", "professional"),
-            metadata={
-                "domain": domain,
-                "swarm_pattern": "mesh",
-                "assigned_agents": agent_ids,
-                "communication_patterns": request.get("communication_patterns", [])
-            } if domain else None
-        )
-        
-        return {
-            "task_id": task_result.task_id,
-            "status": "updated",
-            "assigned_agents": task_result.assigned_agents,
-            "swarm_pattern": "mesh",
-            "orchestration": task_result.orchestration,
-            "confidence": task_result.confidence,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-@orchestration_router.post("/swarms/mesh")
-@retry_on_error(max_retries=3)
-@validate_request(TaskRequest)
-async def create_mesh_task(
-    request: Dict[str, Any],
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("write")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent),
-    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
-) -> Dict:
-    """Create a mesh swarm task with free-form agent communication."""
-    try:
-        # Check domain access
-        if request.get("domain") and not request.get("cross_domain_approved"):
-            # Get agent domains
-            agent_domains = []
-            for agent_id in request.get("agent_ids", []):
-                agent_data = await memory_system.semantic.search(
-                    query=f"id:{agent_id}"
-                )
-                if agent_data:
-                    agent_domains.append(agent_data[0].get("domain"))
-            
-            # Check if any agent is from a different domain
-            task_domain = request.get("domain")
-            if any(d != task_domain for d in agent_domains if d):
-                raise HTTPException(
-                    status_code=403,
-                    detail={
-                        "code": "DOMAIN_ACCESS_DENIED",
-                        "message": "Cross-domain operation requires approval"
-                    }
-                )
-        
-        # Validate request
-        if not isinstance(request, dict):
-            raise ValidationError("Request must be a JSON object")
-        
-        agent_ids = request.get("agent_ids", [])
-        if not agent_ids:
-            raise ValidationError("mesh pattern requires agent_ids")
-        
-        # Create task with mesh pattern
-        task_id = f"task_{uuid.uuid4().hex[:8]}"
-        task_result = await orchestration_agent.create_task(
-            task_id=task_id,
-            task_data={
-                **request,
-                "swarm_pattern": "mesh",
-                "assigned_agents": agent_ids
-            },
-            domain=domain or request.get("domain", "professional"),
-            metadata={
-                "domain": domain,
-                "swarm_pattern": "mesh",
-                "assigned_agents": agent_ids,
-                "communication_patterns": request.get("communication_patterns", [])
-            } if domain else None
-        )
-        
-        return {
-            "task_id": task_result.task_id,
-            "status": task_result.status,
-            "assigned_agents": task_result.assigned_agents,
-            "swarm_pattern": "mesh",
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-# Task retrieval and update endpoints for swarm patterns
-@orchestration_router.get("/swarms/parallel/{task_id}")
-@retry_on_error(max_retries=3)
-async def get_parallel_task(
-    task_id: str,
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("read")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
-) -> Dict:
-    """Get parallel swarm task details."""
-    try:
-        task_result = await orchestration_agent.get_task(
-            task_id=task_id,
-            domain=domain,
-            metadata={"domain": domain} if domain else None
-        )
-        
-        if task_result.swarm_pattern != "parallel":
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "code": "INVALID_PATTERN",
-                    "message": f"Task {task_id} is not a parallel swarm task"
-                }
-            )
-        
-        return {
-            "task_id": task_result.task_id,
-            "status": task_result.status,
-            "assigned_agents": task_result.assigned_agents,
-            "swarm_pattern": "parallel",
-            "orchestration": task_result.orchestration,
-            "confidence": task_result.confidence,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-@orchestration_router.put("/swarms/parallel/{task_id}")
-@retry_on_error(max_retries=3)
-@validate_request(TaskRequest)
-async def update_parallel_task(
-    task_id: str,
-    request: Dict[str, Any],
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("write")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
-) -> Dict:
-    """Update parallel swarm task."""
-    try:
-        # Validate request
-        if not isinstance(request, dict):
-            raise ValidationError("Request must be a JSON object")
-        
-        agent_ids = request.get("agent_ids", [])
-        if not agent_ids:
-            raise ValidationError("parallel pattern requires agent_ids")
-        
-        subtasks = request.get("subtasks", [])
-        if not subtasks:
-            raise ValidationError("parallel pattern requires subtasks")
-        
-        # Update task
-        task_result = await orchestration_agent.update_task(
-            task_id=task_id,
-            task_data={
-                **request,
-                "swarm_pattern": "parallel",
-                "assigned_agents": agent_ids
-            },
-            domain=domain or request.get("domain", "professional"),
-            metadata={
-                "domain": domain,
-                "swarm_pattern": "parallel",
-                "assigned_agents": agent_ids,
-                "subtasks": subtasks
-            } if domain else None
-        )
-        
-        return {
-            "task_id": task_result.task_id,
-            "status": "updated",
-            "assigned_agents": task_result.assigned_agents,
-            "swarm_pattern": "parallel",
-            "orchestration": task_result.orchestration,
-            "confidence": task_result.confidence,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-@orchestration_router.post("/swarms/parallel")
-@retry_on_error(max_retries=3)
-@validate_request(TaskRequest)
-async def create_parallel_task(
-    request: Dict[str, Any],
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("write")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent),
-    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
-) -> Dict:
-    """Create a parallel swarm task with independent agents."""
-    try:
-        # Check domain access
-        if request.get("domain") and not request.get("cross_domain_approved"):
-            # Get agent domains
-            agent_domains = []
-            for agent_id in request.get("agent_ids", []):
-                agent_data = await memory_system.semantic.search(
-                    query=f"id:{agent_id}"
-                )
-                if agent_data:
-                    agent_domains.append(agent_data[0].get("domain"))
-            
-            # Check if any agent is from a different domain
-            task_domain = request.get("domain")
-            if any(d != task_domain for d in agent_domains if d):
-                raise HTTPException(
-                    status_code=403,
-                    detail={
-                        "code": "DOMAIN_ACCESS_DENIED",
-                        "message": "Cross-domain operation requires approval"
-                    }
-                )
-        
-        # Validate request
-        if not isinstance(request, dict):
-            raise ValidationError("Request must be a JSON object")
-        
-        agent_ids = request.get("agent_ids", [])
-        if not agent_ids:
-            raise ValidationError("parallel pattern requires agent_ids")
-        
-        subtasks = request.get("subtasks", [])
-        if not subtasks:
-            raise ValidationError("parallel pattern requires subtasks")
-        
-        # Create task with parallel pattern
-        task_id = f"task_{uuid.uuid4().hex[:8]}"
-        task_result = await orchestration_agent.create_task(
-            task_id=task_id,
-            task_data={
-                **request,
-                "swarm_pattern": "parallel",
-                "assigned_agents": agent_ids
-            },
-            domain=domain or request.get("domain", "professional"),
-            metadata={
-                "domain": domain,
-                "swarm_pattern": "parallel",
-                "assigned_agents": agent_ids,
-                "subtasks": subtasks
-            } if domain else None
-        )
-        
-        return {
-            "task_id": task_result.task_id,
-            "status": task_result.status,
-            "assigned_agents": task_result.assigned_agents,
-            "swarm_pattern": "parallel",
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-# Task retrieval and update endpoints for sequential pattern
-@orchestration_router.get("/swarms/sequential/{task_id}")
-@retry_on_error(max_retries=3)
-async def get_sequential_task(
-    task_id: str,
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("read")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
-) -> Dict:
-    """Get sequential swarm task details."""
-    try:
-        task_result = await orchestration_agent.get_task(
-            task_id=task_id,
-            domain=domain,
-            metadata={"domain": domain} if domain else None
-        )
-        
-        if task_result.swarm_pattern != "sequential":
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "code": "INVALID_PATTERN",
-                    "message": f"Task {task_id} is not a sequential swarm task"
-                }
-            )
-        
-        return {
-            "task_id": task_result.task_id,
-            "status": task_result.status,
-            "assigned_agents": task_result.assigned_agents,
-            "swarm_pattern": "sequential",
-            "orchestration": task_result.orchestration,
-            "confidence": task_result.confidence,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-@orchestration_router.put("/swarms/sequential/{task_id}")
-@retry_on_error(max_retries=3)
-@validate_request(TaskRequest)
-async def update_sequential_task(
-    task_id: str,
-    request: Dict[str, Any],
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("write")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
-) -> Dict:
-    """Update sequential swarm task."""
-    try:
-        # Validate request
-        if not isinstance(request, dict):
-            raise ValidationError("Request must be a JSON object")
-        
-        agent_sequence = request.get("agent_sequence", [])
-        if not agent_sequence:
-            raise ValidationError("sequential pattern requires agent_sequence")
-        
-        # Extract agent IDs and types
-        agent_ids = [agent[0] for agent in agent_sequence]
-        agent_types = [agent[1] for agent in agent_sequence]
-        
-        # Update task
-        task_result = await orchestration_agent.update_task(
-            task_id=task_id,
-            task_data={
-                **request,
-                "swarm_pattern": "sequential",
-                "assigned_agents": agent_ids,
-                "agent_types": agent_types
-            },
-            domain=domain or request.get("domain", "professional"),
-            metadata={
-                "domain": domain,
-                "swarm_pattern": "sequential",
-                "assigned_agents": agent_ids,
-                "agent_types": agent_types,
-                "input_data": request.get("input_data")
-            } if domain else None
-        )
-        
-        return {
-            "task_id": task_result.task_id,
-            "status": "updated",
-            "assigned_agents": task_result.assigned_agents,
-            "swarm_pattern": "sequential",
-            "orchestration": task_result.orchestration,
-            "confidence": task_result.confidence,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-@orchestration_router.post("/swarms/sequential")
-@retry_on_error(max_retries=3)
-@validate_request(TaskRequest)
-async def create_sequential_task(
-    request: Dict[str, Any],
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("write")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent),
-    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
-) -> Dict:
-    """Create a sequential swarm task with ordered processing."""
-    try:
-        # Check domain access
-        if request.get("domain") and not request.get("cross_domain_approved"):
-            # Get agent domains
-            agent_domains = []
-            agent_sequence = request.get("agent_sequence", [])
-            for agent_id, _ in agent_sequence:
-                agent_data = await memory_system.semantic.search(
-                    query=f"id:{agent_id}"
-                )
-                if agent_data:
-                    agent_domains.append(agent_data[0].get("domain"))
-            
-            # Check if any agent is from a different domain
-            task_domain = request.get("domain")
-            if any(d != task_domain for d in agent_domains if d):
-                raise HTTPException(
-                    status_code=403,
-                    detail={
-                        "code": "DOMAIN_ACCESS_DENIED",
-                        "message": "Cross-domain operation requires approval"
-                    }
-                )
-        
-        # Validate request
-        if not isinstance(request, dict):
-            raise ValidationError("Request must be a JSON object")
-        
-        agent_sequence = request.get("agent_sequence", [])
-        if not agent_sequence:
-            raise ValidationError("sequential pattern requires agent_sequence")
-        
-        # Extract agent IDs and types
-        agent_ids = [agent[0] for agent in agent_sequence]
-        agent_types = [agent[1] for agent in agent_sequence]
-        
-        # Create task with sequential pattern
-        task_id = f"task_{uuid.uuid4().hex[:8]}"
-        task_result = await orchestration_agent.create_task(
-            task_id=task_id,
-            task_data={
-                **request,
-                "swarm_pattern": "sequential",
-                "assigned_agents": agent_ids,
-                "agent_types": agent_types
-            },
-            domain=domain or request.get("domain", "professional"),
-            metadata={
-                "domain": domain,
-                "swarm_pattern": "sequential",
-                "assigned_agents": agent_ids,
-                "agent_types": agent_types,
-                "input_data": request.get("input_data")
-            } if domain else None
-        )
-        
-        return {
-            "task_id": task_result.task_id,
-            "status": task_result.status,
-            "assigned_agents": task_result.assigned_agents,
-            "swarm_pattern": "sequential",
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-@user_router.post("/profile/questionnaire")
+@user_router.post("/profile/questionnaire", response_model=ProfileResponse)
 @retry_on_error(max_retries=3)
 async def submit_questionnaire(
     request: Dict[str, Any],
@@ -1602,7 +526,7 @@ async def submit_questionnaire(
             raise
         raise ServiceError(str(e))
 
-@user_router.get("/profile")
+@user_router.get("/profile", response_model=Dict[str, Any])
 @retry_on_error(max_retries=3)
 async def get_profile(
     _: None = Depends(get_permission("read")),
@@ -1629,7 +553,7 @@ async def get_profile(
             raise
         raise ServiceError(str(e))
 
-@user_router.put("/profile/preferences")
+@user_router.put("/profile/preferences", response_model=PreferenceResponse)
 @retry_on_error(max_retries=3)
 async def update_preferences(
     request: Dict[str, Any],
@@ -1658,7 +582,7 @@ async def update_preferences(
             raise
         raise ServiceError(str(e))
 
-@user_router.get("/profile/learning-style")
+@user_router.get("/profile/learning-style", response_model=Dict[str, Any])
 @retry_on_error(max_retries=3)
 async def get_learning_style(
     _: None = Depends(get_permission("read")),
@@ -1685,7 +609,7 @@ async def get_learning_style(
             raise
         raise ServiceError(str(e))
 
-@user_router.put("/profile/auto-approval")
+@user_router.put("/profile/auto-approval", response_model=PreferenceResponse)
 @retry_on_error(max_retries=3)
 async def update_auto_approval(
     request: Dict[str, Any],
@@ -1716,7 +640,7 @@ async def update_auto_approval(
             raise
         raise ServiceError(str(e))
 
-@agent_router.get("/{agent_id}/capabilities")
+@agent_router.get("/{agent_id}/capabilities", response_model=AgentCapabilitiesResponse)
 @retry_on_error(max_retries=3)
 async def get_agent_capabilities(
     agent_id: str,
@@ -1745,7 +669,7 @@ async def get_agent_capabilities(
             raise
         raise ServiceError(str(e))
 
-@agent_router.get("/types")
+@agent_router.get("/types", response_model=AgentTypesResponse)
 @retry_on_error(max_retries=3)
 async def get_agent_types(
     _: None = Depends(get_permission("read")),
@@ -1761,7 +685,7 @@ async def get_agent_types(
     except Exception as e:
         raise ServiceError(str(e))
 
-@agent_router.get("/search")
+@agent_router.get("/search", response_model=AgentSearchResponse)
 @retry_on_error(max_retries=3)
 async def search_agents(
     capability: Optional[str] = Query(None),
@@ -1782,7 +706,7 @@ async def search_agents(
     except Exception as e:
         raise ServiceError(str(e))
 
-@agent_router.get("/{agent_id}/history")
+@agent_router.get("/{agent_id}/history", response_model=AgentHistoryResponse)
 @retry_on_error(max_retries=3)
 async def get_agent_history(
     agent_id: str,
@@ -1811,7 +735,7 @@ async def get_agent_history(
             raise
         raise ServiceError(str(e))
 
-@agent_router.get("/{agent_id}/metrics")
+@agent_router.get("/{agent_id}/metrics", response_model=AgentMetricsResponse)
 @retry_on_error(max_retries=3)
 async def get_agent_metrics(
     agent_id: str,
@@ -1840,7 +764,7 @@ async def get_agent_metrics(
             raise
         raise ServiceError(str(e))
 
-@agent_router.post("/{agent_id}/activate")
+@agent_router.post("/{agent_id}/activate", response_model=AgentStatusResponse)
 @retry_on_error(max_retries=3)
 async def activate_agent(
     agent_id: str,
@@ -1858,7 +782,7 @@ async def activate_agent(
     except Exception as e:
         raise ServiceError(str(e))
 
-@agent_router.post("/{agent_id}/deactivate")
+@agent_router.post("/{agent_id}/deactivate", response_model=AgentStatusResponse)
 @retry_on_error(max_retries=3)
 async def deactivate_agent(
     agent_id: str,
@@ -1876,7 +800,7 @@ async def deactivate_agent(
     except Exception as e:
         raise ServiceError(str(e))
 
-@agent_router.get("/{agent_id}/status")
+@agent_router.get("/{agent_id}/status", response_model=AgentStatusResponse)
 @retry_on_error(max_retries=3)
 async def get_agent_status(
     agent_id: str,
@@ -1905,7 +829,7 @@ async def get_agent_status(
             raise
         raise ServiceError(str(e))
 
-@graph_router.post("/prune")
+@graph_router.post("/prune", response_model=GraphPruneResponse)
 @retry_on_error(max_retries=3)
 async def prune_graph(
     request: Dict[str, Any],
@@ -1937,7 +861,7 @@ async def prune_graph(
     except Exception as e:
         raise ServiceError(str(e))
 
-@graph_router.get("/health")
+@graph_router.get("/health", response_model=GraphHealthResponse)
 @retry_on_error(max_retries=3)
 async def check_graph_health(
     _: None = Depends(get_permission("read")),
@@ -1953,7 +877,7 @@ async def check_graph_health(
     except Exception as e:
         raise ServiceError(str(e))
 
-@graph_router.post("/optimize")
+@graph_router.post("/optimize", response_model=GraphOptimizeResponse)
 @retry_on_error(max_retries=3)
 async def optimize_graph(
     request: Dict[str, Any],
@@ -1982,7 +906,7 @@ async def optimize_graph(
     except Exception as e:
         raise ServiceError(str(e))
 
-@graph_router.get("/statistics")
+@graph_router.get("/statistics", response_model=GraphStatisticsResponse)
 @retry_on_error(max_retries=3)
 async def get_graph_statistics(
     _: None = Depends(get_permission("read")),
@@ -1998,7 +922,7 @@ async def get_graph_statistics(
     except Exception as e:
         raise ServiceError(str(e))
 
-@graph_router.post("/backup")
+@graph_router.post("/backup", response_model=GraphBackupResponse)
 @retry_on_error(max_retries=3)
 async def create_graph_backup(
     request: Dict[str, Any],
@@ -2027,247 +951,4 @@ async def create_graph_backup(
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
-        raise ServiceError(str(e))
-
-@orchestration_router.post("/tasks", deprecated=True)
-@retry_on_error(max_retries=3)
-async def create_task(
-    request: Dict[str, Any],
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("write")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent),
-    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
-) -> Dict:
-    """[Deprecated] Create a new task with specified pattern and agents.
-    
-    This endpoint is deprecated. Please use the pattern-specific endpoints:
-    - /swarms/hierarchical for supervisor/worker pattern
-    - /swarms/voting for majority voting pattern
-    - /swarms/round-robin for cyclic task distribution
-    - /swarms/mesh for free-form communication
-    - /swarms/parallel for independent task processing
-    - /swarms/sequential for ordered task processing
-    """
-    try:
-        # Validate request
-        if not isinstance(request, dict):
-            raise ValidationError("Request must be a JSON object")
-        
-        # Process task creation with validation
-        swarm_pattern = request.get("swarm_pattern") or request.get("swarm_type")
-        
-        # Handle different agent assignment fields based on pattern
-        assigned_agents = []
-        if swarm_pattern == "MajorityVoting":
-            assigned_agents = request.get("voter_ids", [])
-        elif swarm_pattern == "RoundRobin":
-            assigned_agents = request.get("agent_ids", [])
-        elif swarm_pattern == "hierarchical":
-            # For hierarchical pattern, combine supervisor and workers
-            supervisor_id = request.get("supervisor_id")
-            worker_ids = request.get("worker_ids", [])
-            if not supervisor_id:
-                raise ValidationError("hierarchical pattern requires supervisor_id")
-            if not worker_ids:
-                raise ValidationError("hierarchical pattern requires worker_ids")
-            assigned_agents = [supervisor_id] + worker_ids
-        else:
-            assigned_agents = request.get("assigned_agents", [])
-            if swarm_pattern and not assigned_agents:
-                raise ValidationError("swarm_pattern requires assigned_agents")
-            
-        task_id = f"task_{uuid.uuid4().hex[:8]}"
-        task_result = await orchestration_agent.create_task(
-            task_id=task_id,
-            task_data={
-                **request,
-                "assigned_agents": assigned_agents,  # Normalize agent assignments
-                "supervisor_id": request.get("supervisor_id") if swarm_pattern == "hierarchical" else None,
-                "worker_ids": request.get("worker_ids") if swarm_pattern == "hierarchical" else None,
-                "voter_ids": request.get("voter_ids") if swarm_pattern == "MajorityVoting" else None,
-                "agent_ids": request.get("agent_ids") if swarm_pattern == "RoundRobin" else None
-            },
-            domain=domain or request.get("domain", "professional"),
-            metadata={
-                "domain": domain,
-                "swarm_pattern": swarm_pattern,
-                "assigned_agents": assigned_agents
-            } if domain else None
-        )
-        
-        return {
-            "task_id": task_result.task_id,
-            "status": task_result.status,
-            "assigned_agents": task_result.assigned_agents,
-            "swarm_pattern": swarm_pattern,  # Use normalized pattern
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-@orchestration_router.post("/swarms/decide")
-@retry_on_error(max_retries=3)
-async def decide_swarm_pattern(
-    request: Dict[str, Any],
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("read")),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
-) -> Dict:
-    """Decide optimal swarm pattern for a given task."""
-    try:
-        # Validate request
-        if not isinstance(request, dict):
-            raise ValidationError("Request must be a JSON object")
-        
-        if "task" not in request:
-            raise ValidationError("Request must include 'task' field")
-        
-        # Generate task ID for decision
-        task_id = f"task_{uuid.uuid4().hex[:8]}"
-        
-        # Get swarm pattern decision
-        decision = await orchestration_agent.decide_swarm_pattern(
-            task_id=task_id,
-            task=request["task"],
-            domain=domain or request.get("domain", "professional"),
-            metadata={
-                "domain": domain,
-                "task_type": request["task"].get("type"),
-                "requirements": request["task"].get("requirements", {})
-            } if domain else None
-        )
-        
-        return {
-            "task_id": decision.task_id,
-            "selected_pattern": decision.pattern,
-            "reasoning": decision.reasoning,
-            "confidence": decision.confidence,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-@analytics_router.get("/agents", response_model=AnalyticsResponse)
-@retry_on_error(max_retries=3)
-async def get_agent_analytics(
-    agent_id: Optional[str] = None,
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("read")),
-    analytics_agent: AnalyticsAgent = Depends(get_analytics_agent)
-) -> Dict:
-    """Get analytics for agent performance."""
-    try:
-        content = {
-            "type": "agent_analytics",
-            "agent_id": agent_id,
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        try:
-            result = await analytics_agent.process_analytics(
-                content=content,
-                analytics_type="behavioral",
-                metadata={"domain": domain} if domain else None
-            )
-        except ResourceNotFoundError as e:
-            raise HTTPException(
-                status_code=404,
-                detail={
-                    "code": "NOT_FOUND",
-                    "message": str(e)
-                }
-            )
-        except Exception as e:
-            raise ServiceError(str(e))
-        
-        return {
-            "analytics": result.analytics,
-            "insights": result.insights,
-            "confidence": result.confidence,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
-        raise ServiceError(str(e))
-
-@orchestration_router.post("/flows/{flow_id}/optimize", response_model=FlowOptimizationResponse)
-@retry_on_error(max_retries=3)
-async def optimize_flow(
-    flow_id: str,
-    request: Dict[str, Any],
-    domain: Optional[str] = None,
-    _: None = Depends(get_permission("write")),
-    analytics_agent: AnalyticsAgent = Depends(get_analytics_agent),
-    orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent)
-) -> Dict:
-    """Optimize flow based on analytics insights."""
-    try:
-        # Validate request format
-        if not isinstance(request, dict):
-            raise ValidationError("Request must be a JSON object")
-        
-        if "parameters" not in request:
-            raise ValidationError("Request must include 'parameters' field")
-            
-        if "constraints" not in request:
-            raise ValidationError("Request must include 'constraints' field")
-            
-        # Get flow analytics
-        try:
-            analytics_result = await analytics_agent.process_analytics(
-                content={
-                    "type": "flow_analytics",
-                    "flow_id": flow_id,
-                    "parameters": request.get("parameters", {}),
-                    "constraints": request.get("constraints", {}),
-                    "timestamp": datetime.now().isoformat()
-                },
-                analytics_type="predictive",
-                metadata={"domain": domain} if domain else None
-            )
-        except ResourceNotFoundError as e:
-            raise HTTPException(
-                status_code=404,
-                detail={
-                    "code": "NOT_FOUND",
-                    "message": str(e)
-                }
-            )
-        except Exception as e:
-            raise ServiceError(str(e))
-        
-        # Use insights to optimize flow
-        optimizations = []
-        for insight in analytics_result.insights:
-            if insight.get("type") == "optimization":
-                optimizations.append({
-                    "type": insight.get("optimization_type"),
-                    "description": insight.get("description"),
-                    "confidence": insight.get("confidence", 0.0)
-                })
-        
-        # Process flow optimization
-        flow_result = await orchestration_agent.process_flow(
-            flow_id=flow_id,
-            optimizations=optimizations,
-            parameters=request.get("parameters", {}),
-            constraints=request.get("constraints", {}),
-            metadata={"domain": domain} if domain else None
-        )
-        
-        return {
-            "flow_id": flow_id,
-            "optimizations": optimizations,
-            "analytics": analytics_result.analytics,
-            "confidence": analytics_result.confidence,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
         raise ServiceError(str(e))

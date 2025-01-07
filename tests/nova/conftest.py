@@ -97,10 +97,21 @@ async def setup_test_environment(event_loop):
     async def mock_response_coro():
         return mock_response
 
+    async def mock_get_embedding(*args, **kwargs):
+        # Return mock embedding vector of correct dimension
+        return [0.1] * 384  # 384 is the expected embedding dimension
+
+    async def mock_get_embeddings(*args, **kwargs):
+        # Return mock embedding vectors for batch
+        texts = args[1] if len(args) > 1 else kwargs.get('texts', [])
+        return [[0.1] * 384 for _ in texts]
+
     try:
         # Apply patches
         with patch("nia.nova.core.llm.LMStudioLLM.analyze", new=AsyncMock(side_effect=mock_analyze)), \
-             patch("nia.nova.core.llm.LMStudioLLM.get_structured_completion", new=AsyncMock(side_effect=mock_get_structured_completion)):
+             patch("nia.nova.core.llm.LMStudioLLM.get_structured_completion", new=AsyncMock(side_effect=mock_get_structured_completion)), \
+             patch("nia.core.vector.embeddings.EmbeddingService.get_embedding", new=AsyncMock(side_effect=mock_get_embedding)), \
+             patch("nia.core.vector.embeddings.EmbeddingService.get_embeddings", new=AsyncMock(side_effect=mock_get_embeddings)):
             yield
     finally:
         # Clean up tasks with timeout

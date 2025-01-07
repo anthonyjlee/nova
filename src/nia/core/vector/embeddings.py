@@ -1,6 +1,4 @@
-"""
-Embedding service using local LLM.
-"""
+"""Embedding service using local LLM."""
 
 import logging
 import aiohttp

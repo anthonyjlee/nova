@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 
 from nia.core.vector.vector_store import VectorStore, serialize_for_vector_store
@@ -281,6 +281,7 @@ class TwoLayerMemorySystem:
         self.consolidation_manager = None  # Will be set by ConsolidationManager
         self._initialized = False
         self.llm = llm  # Store LLM interface
+        self.vector_store = vector_store  # Expose vector_store for external use
         
     async def initialize(self):
         """Initialize connections to Neo4j and vector store."""
@@ -417,9 +418,16 @@ class TwoLayerMemorySystem:
         try:
             results = await self.episodic.store.search_vectors(
                 content=query.get("content", ""),
-                filter=query.get("filter", {})
+                layer="episodic",
+                limit=query.get("limit", 5),
+                score_threshold=query.get("score_threshold", 0.7)
             )
-            return [EpisodicMemory(**r) for r in results]
+            memories = []
+            for r in results:
+                if isinstance(r["content"], dict):
+                    r["content"] = r["content"].get("text", str(r["content"]))
+                memories.append(EpisodicMemory(**r))
+            return memories
         except Exception as e:
             logger.error(f"Failed to query episodic memories: {str(e)}")
             return []
@@ -446,3 +454,45 @@ class TwoLayerMemorySystem:
         except Exception as e:
             logger.error(f"Failed to get memory {memory_id}: {str(e)}")
             return None
+            
+    async def store(
+        self,
+        memory_id: Optional[str] = None,
+        content: Any = None,
+        memory_type: Optional[str] = None,
+        importance: float = 0.5,
+        context: Optional[Dict] = None,
+        metadata: Optional[Dict] = None,
+        data: Optional[Dict] = None
+    ) -> bool:
+        """Store data in memory system.
+        
+        Args:
+            memory_id: Optional memory ID to use
+            content: Content to store
+            memory_type: Optional memory type
+            importance: Importance score (0-1)
+            context: Optional context dictionary
+            metadata: Optional metadata dictionary
+            data: Optional legacy data dictionary
+            
+        Returns:
+            bool: True if storage was successful
+        """
+        try:
+            # Create Memory object
+            memory = Memory(
+                id=memory_id,
+                content=content or (data["content"] if data else ""),
+                type=MemoryType(memory_type) if memory_type else MemoryType.EPISODIC,
+                importance=importance,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                context=context or (data.get("context", {}) if data else {})
+            )
+            
+            # Store in episodic memory
+            await self.episodic.store_memory(memory)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to store data: {str(e)}")
+            return False
