@@ -5,9 +5,30 @@ from fastapi.testclient import TestClient
 import json
 from datetime import datetime
 import logging
+import asyncio
 from pydantic import BaseModel, Field
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 logger = logging.getLogger(__name__)
+
+# Vector store operation settings
+VECTOR_STORE_TIMEOUT = 30  # seconds
+VECTOR_STORE_MAX_RETRIES = 3
+VECTOR_STORE_RETRY_MIN_WAIT = 1  # seconds
+VECTOR_STORE_RETRY_MAX_WAIT = 10  # seconds
+
+@retry(
+    stop=stop_after_attempt(VECTOR_STORE_MAX_RETRIES),
+    wait=wait_exponential(multiplier=VECTOR_STORE_RETRY_MIN_WAIT, max=VECTOR_STORE_RETRY_MAX_WAIT)
+)
+async def vector_store_operation(operation):
+    """Execute vector store operation with retry logic."""
+    try:
+        async with asyncio.timeout(VECTOR_STORE_TIMEOUT):
+            return await operation
+    except asyncio.TimeoutError:
+        logger.error(f"Vector store operation timed out after {VECTOR_STORE_TIMEOUT}s")
+        raise
 
 from nia.nova.core.app import app
 from nia.nova.core.auth import API_KEYS
@@ -64,11 +85,13 @@ class TestAgentCoordination:
                 }
             }
 
-            # Process request through analytics agent
-            result = await mock_agent.process_analytics(
-                content=request_data["content"],
-                domain=request_data["domain"],
-                llm_config=request_data["llm_config"]
+            # Process request through analytics agent with retry
+            result = await vector_store_operation(
+                mock_agent.process_analytics(
+                    content=request_data["content"],
+                    domain=request_data["domain"],
+                    llm_config=request_data["llm_config"]
+                )
             )
 
             # Verify result structure
@@ -125,15 +148,19 @@ class TestAgentCoordination:
                 }
             }
 
-            # Process request and store in memory
-            result = await mock_agent.process_analytics(
-                content=request_data["content"],
-                domain=request_data["domain"],
-                llm_config=request_data["llm_config"]
+            # Process request and store in memory with retry
+            result = await vector_store_operation(
+                mock_agent.process_analytics(
+                    content=request_data["content"],
+                    domain=request_data["domain"],
+                    llm_config=request_data["llm_config"]
+                )
             )
 
-            # Verify memory storage
-            stored_data = await memory.semantic.search(f"domain:{request_data['domain']}")
+            # Verify memory storage with retry
+            stored_data = await vector_store_operation(
+                memory.semantic.search(f"domain:{request_data['domain']}")
+            )
             assert len(stored_data) > 0
 
             # Verify stored content
@@ -141,6 +168,13 @@ class TestAgentCoordination:
             assert stored_item["domain"] == request_data["domain"]
             assert "content" in stored_item
             assert "analytics" in stored_item
+
+            # Cleanup test data
+            await vector_store_operation(
+                memory.semantic.delete_nodes(
+                    query=f"domain:{request_data['domain']}"
+                )
+            )
 
         finally:
             app.dependency_overrides.clear()
@@ -183,11 +217,13 @@ class TestAgentCoordination:
                 }
             }
 
-            # Process request through LLM
-            result = await mock_agent.process_analytics(
-                content=request_data["content"],
-                domain=request_data["domain"],
-                llm_config=request_data["llm_config"]
+            # Process request through LLM with retry
+            result = await vector_store_operation(
+                mock_agent.process_analytics(
+                    content=request_data["content"],
+                    domain=request_data["domain"],
+                    llm_config=request_data["llm_config"]
+                )
             )
 
             # Verify LLM processing
@@ -201,5 +237,11 @@ class TestAgentCoordination:
                 assert "type" in insight
                 assert "description" in insight
 
+            # Cleanup test data
+            await vector_store_operation(
+                memory.semantic.delete_nodes(
+                    query=f"domain:{request_data['domain']}"
+                )
+            )
         finally:
             app.dependency_overrides.clear()
