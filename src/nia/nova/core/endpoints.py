@@ -296,19 +296,86 @@ async def store_memory(
             if field not in request:
                 raise ValidationError(f"Request must include '{field}' field")
         
+        # Initialize memory system
+        await memory_system.initialize()
+        
         # Store memory
+        content_dict = {"text": request["content"]}  # Wrap content in dict
         memory_id = await memory_system.store(
-            content={"text": request["content"]},  # Wrap content in text field
+            content=content_dict,
             memory_type=request["type"],
             importance=request.get("importance", 0.5),
             context=request.get("context", {}),
             metadata=request.get("metadata", {})
         )
         
-        return {
+        # Format response as dictionary
+        response = {
             "memory_id": str(memory_id),
-            "content": {"text": request["content"]},
+            "status": "stored",
+            "content": content_dict,
             "metadata": request.get("metadata", {}),
+            "timestamp": datetime.now().isoformat()
+        }
+        return response
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@orchestration_router.post("/memory/query", response_model=Dict[str, Any])
+@retry_on_error(max_retries=3)
+async def query_memory(
+    request: Dict[str, Any],
+    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
+) -> Dict:
+    """Query memories from the system."""
+    try:
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+            
+        if "query" not in request:
+            raise ValidationError("Request must include 'query' field")
+        
+        # Initialize memory system
+        await memory_system.initialize()
+        
+        # Query memories
+        query_dict = {
+            "text": request["query"],
+            "type": request.get("type", "episodic")  # Use specified type or default to episodic
+        }
+        memories = await memory_system.query_episodic(query_dict)
+        
+        return {
+            "memories": memories,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@orchestration_router.post("/memory/consolidate", response_model=Dict[str, Any])
+@retry_on_error(max_retries=3)
+async def consolidate_memory(
+    request: Dict[str, Any],
+    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
+) -> Dict:
+    """Consolidate memories in the system."""
+    try:
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        # Initialize memory system
+        await memory_system.initialize()
+        
+        # Consolidate memories
+        await memory_system.consolidate_memories()
+        return {
+            "consolidated_count": 1,  # Placeholder since we don't get a count back
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:

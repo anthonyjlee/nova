@@ -41,7 +41,7 @@ class DialogueContext(BaseModel):
 class Memory(BaseModel):
     """Base memory model."""
     id: Optional[str] = None
-    content: str
+    content: Union[str, Dict[str, Any]]  # Allow both string and dict content
     type: MemoryType
     importance: float = 1.0
     timestamp: datetime = Field(default_factory=datetime.now)

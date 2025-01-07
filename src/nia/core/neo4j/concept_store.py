@@ -36,31 +36,30 @@ class ConceptStore(Neo4jBaseStore):
         validation = ValidationHandler.process_validation(validation, is_consolidation)
 
         async def store_operation():
-            async with self.driver.session() as session:
-                # Build base query
-                base_query = """
-                MERGE (c:Concept {name: $name})
-                SET c.type = $type,
-                    c.description = $description,
-                    c.is_consolidation = $is_consolidation
-                """
-                params = {
-                    "name": name,
-                    "type": type,
-                    "description": description,
-                    "is_consolidation": is_consolidation
-                }
+            # Build base query
+            base_query = """
+            MERGE (c:Concept {name: $name})
+            SET c.type = $type,
+                c.description = $description,
+                c.is_consolidation = $is_consolidation
+            """
+            params = {
+                "name": name,
+                "type": type,
+                "description": description,
+                "is_consolidation": is_consolidation
+            }
 
-                # Add validation fields to query
-                query = ValidationHandler.build_validation_query(
-                    validation, is_consolidation, params, base_query
-                )
-                await session.run(query, params)
+            # Add validation fields to query
+            query = ValidationHandler.build_validation_query(
+                validation, is_consolidation, params, base_query
+            )
+            await self.run_query(query, params)
 
-                # Handle related concepts
-                if related:
-                    await self._create_related_concepts(session, related)
-                    await self._create_relationships(session, name, related)
+            # Handle related concepts
+            if related:
+                await self._create_related_concepts(related)
+                await self._create_relationships(name, related)
 
         try:
             await self._execute_with_retry(store_operation)
@@ -68,49 +67,46 @@ class ConceptStore(Neo4jBaseStore):
             logger.error(f"Error storing concept {name}: {str(e)}")
             raise
 
-    async def _create_related_concepts(self, session, related: List[str]) -> None:
+    async def _create_related_concepts(self, related: List[str]) -> None:
         """Create related concepts that don't exist."""
         for rel in related:
-            await session.run(
+            await self.run_query(
                 """
                 MERGE (c:Concept {name: $name})
                 ON CREATE SET c.type = 'pending',
                             c.description = 'Pending concept',
                             c.is_consolidation = false
                 """,
-                name=rel
+                {"name": rel}
             )
 
-    async def _create_relationships(self, session, name: str, related: List[str]) -> None:
+    async def _create_relationships(self, name: str, related: List[str]) -> None:
         """Create relationships between concepts."""
-        await session.run(
+        await self.run_query(
             """
             MATCH (c:Concept {name: $name})
             UNWIND $related as rel_name
             MATCH (r:Concept {name: rel_name})
             MERGE (c)-[:RELATED_TO]->(r)
             """,
-            name=name,
-            related=related
+            {"name": name, "related": related}
         )
 
     async def get_concept(self, name: str) -> Optional[Dict]:
         """Get concept by name with retry logic."""
         async def get_operation():
-            async with self.driver.session() as session:
-                result = await session.run(
-                    """
-                    MATCH (c:Concept {name: $name})
-                    OPTIONAL MATCH (c)-[:RELATED_TO]->(r:Concept)
-                    RETURN c, collect(r.name) as related
-                    """,
-                    name=name
-                )
-                
-                record = await result.single()
-                if record:
-                    return self._process_concept_record(record)
-                return None
+            result = await self.run_query(
+                """
+                MATCH (c:Concept {name: $name})
+                OPTIONAL MATCH (c)-[:RELATED_TO]->(r:Concept)
+                RETURN c, collect(r.name) as related
+                """,
+                {"name": name}
+            )
+            
+            if result and len(result) > 0:
+                return self._process_concept_record(result[0])
+            return None
 
         try:
             return await self._execute_with_retry(get_operation)
@@ -140,20 +136,16 @@ class ConceptStore(Neo4jBaseStore):
     async def get_concepts_by_type(self, type: str) -> List[Dict]:
         """Get all concepts of a specific type."""
         async def get_operation():
-            async with self.driver.session() as session:
-                result = await session.run(
-                    """
-                    MATCH (c:Concept {type: $type})
-                    OPTIONAL MATCH (c)-[:RELATED_TO]->(r:Concept)
-                    RETURN c, collect(r.name) as related
-                    """,
-                    type=type
-                )
-                
-                return [
-                    self._process_concept_record(record)
-                    async for record in result
-                ]
+            result = await self.run_query(
+                """
+                MATCH (c:Concept {type: $type})
+                OPTIONAL MATCH (c)-[:RELATED_TO]->(r:Concept)
+                RETURN c, collect(r.name) as related
+                """,
+                {"type": type}
+            )
+            
+            return [self._process_concept_record(record) for record in result]
 
         try:
             return await self._execute_with_retry(get_operation)
@@ -164,20 +156,16 @@ class ConceptStore(Neo4jBaseStore):
     async def get_related_concepts(self, name: str) -> List[Dict]:
         """Get all concepts related to the given concept."""
         async def get_operation():
-            async with self.driver.session() as session:
-                result = await session.run(
-                    """
-                    MATCH (c:Concept {name: $name})-[:RELATED_TO]->(r:Concept)
-                    OPTIONAL MATCH (r)-[:RELATED_TO]->(r2:Concept)
-                    RETURN r as c, collect(r2.name) as related
-                    """,
-                    name=name
-                )
-                
-                return [
-                    self._process_concept_record(record)
-                    async for record in result
-                ]
+            result = await self.run_query(
+                """
+                MATCH (c:Concept {name: $name})-[:RELATED_TO]->(r:Concept)
+                OPTIONAL MATCH (r)-[:RELATED_TO]->(r2:Concept)
+                RETURN r as c, collect(r2.name) as related
+                """,
+                {"name": name}
+            )
+            
+            return [self._process_concept_record(record) for record in result]
 
         try:
             return await self._execute_with_retry(get_operation)
@@ -188,23 +176,19 @@ class ConceptStore(Neo4jBaseStore):
     async def search_concepts(self, query: str) -> List[Dict]:
         """Search concepts using full-text search."""
         async def search_operation():
-            async with self.driver.session() as session:
-                result = await session.run(
-                    """
-                    MATCH (c:Concept)
-                    WHERE c.name = $query OR c.description = $query OR
-                          toLower(c.name) CONTAINS toLower($query) OR 
-                          toLower(c.description) CONTAINS toLower($query)
-                    OPTIONAL MATCH (c)-[:RELATED_TO]->(r:Concept)
-                    RETURN c, collect(r.name) as related
-                    """,
-                    {"query": query}
-                )
-                
-                return [
-                    self._process_concept_record(record)
-                    async for record in result
-                ]
+            result = await self.run_query(
+                """
+                MATCH (c:Concept)
+                WHERE c.name = $query OR c.description = $query OR
+                      toLower(c.name) CONTAINS toLower($query) OR 
+                      toLower(c.description) CONTAINS toLower($query)
+                OPTIONAL MATCH (c)-[:RELATED_TO]->(r:Concept)
+                RETURN c, collect(r.name) as related
+                """,
+                {"query": query}
+            )
+            
+            return [self._process_concept_record(record) for record in result]
 
         try:
             return await self._execute_with_retry(search_operation)
@@ -259,10 +243,8 @@ class ConceptStore(Neo4jBaseStore):
     async def count_concepts(self) -> int:
         """Count total number of concepts in the database."""
         async def count_operation():
-            async with self.driver.session() as session:
-                result = await session.run("MATCH (n:Concept) RETURN count(n) as count")
-                record = await result.single()
-                return record["count"] if record else 0
+            result = await self.run_query("MATCH (n:Concept) RETURN count(n) as count")
+            return result[0]["count"] if result else 0
 
         try:
             return await self._execute_with_retry(count_operation)
@@ -273,16 +255,14 @@ class ConceptStore(Neo4jBaseStore):
     async def count_concepts_by_label(self) -> Dict[str, int]:
         """Count concepts grouped by label/type."""
         async def count_operation():
-            async with self.driver.session() as session:
-                result = await session.run("""
-                    MATCH (n:Concept)
-                    WITH n.type as type, count(n) as count
-                    RETURN collect({type: type, count: count}) as counts
-                """)
-                record = await result.single()
-                if record and record["counts"]:
-                    return {item["type"]: item["count"] for item in record["counts"]}
-                return {}
+            result = await self.run_query("""
+                MATCH (n:Concept)
+                WITH n.type as type, count(n) as count
+                RETURN collect({type: type, count: count}) as counts
+            """)
+            if result and result[0]["counts"]:
+                return {item["type"]: item["count"] for item in result[0]["counts"]}
+            return {}
 
         try:
             return await self._execute_with_retry(count_operation)
@@ -293,10 +273,8 @@ class ConceptStore(Neo4jBaseStore):
     async def count_relationships(self) -> int:
         """Count total number of relationships in the database."""
         async def count_operation():
-            async with self.driver.session() as session:
-                result = await session.run("MATCH ()-[r:RELATED_TO]->() RETURN count(r) as count")
-                record = await result.single()
-                return record["count"] if record else 0
+            result = await self.run_query("MATCH ()-[r:RELATED_TO]->() RETURN count(r) as count")
+            return result[0]["count"] if result else 0
 
         try:
             return await self._execute_with_retry(count_operation)
@@ -307,8 +285,7 @@ class ConceptStore(Neo4jBaseStore):
     async def clear_relationships(self) -> None:
         """Clear all relationships from the database."""
         async def clear_operation():
-            async with self.driver.session() as session:
-                await session.run("MATCH ()-[r:RELATED_TO]->() DELETE r")
+            await self.run_query("MATCH ()-[r:RELATED_TO]->() DELETE r")
 
         try:
             await self._execute_with_retry(clear_operation)
@@ -319,8 +296,7 @@ class ConceptStore(Neo4jBaseStore):
     async def clear_memories(self) -> None:
         """Clear all memories from the database."""
         async def clear_operation():
-            async with self.driver.session() as session:
-                await session.run("MATCH (n:Memory) DETACH DELETE n")
+            await self.run_query("MATCH (n:Memory) DETACH DELETE n")
 
         try:
             await self._execute_with_retry(clear_operation)
@@ -331,8 +307,7 @@ class ConceptStore(Neo4jBaseStore):
     async def clear_concepts(self) -> None:
         """Clear all concepts from the database."""
         async def clear_operation():
-            async with self.driver.session() as session:
-                await session.run("MATCH (n:Concept) DETACH DELETE n")
+            await self.run_query("MATCH (n:Concept) DETACH DELETE n")
 
         try:
             await self._execute_with_retry(clear_operation)

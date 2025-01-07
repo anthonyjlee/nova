@@ -147,6 +147,7 @@ class GraphBackupResponse(BaseModel):
 
 class MemoryResponse(BaseModel):
     memory_id: str
+    status: str
     content: Dict[str, Any]
     metadata: Dict[str, Any]
     timestamp: str
