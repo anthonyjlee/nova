@@ -8,7 +8,7 @@ from ...nova.core.analysis import AnalysisAgent as NovaAnalysisAgent
 from ..tinytroupe_agent import TinyTroupeAgent
 from ...world.environment import NIAWorld
 from ...memory.two_layer import TwoLayerMemorySystem
-from ...memory.memory_types import AgentResponse
+from ...core.types.memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 

@@ -136,12 +136,14 @@ async def get_analytics_agent(
         except StopAsyncIteration:
             memory_system = None
     
-    return AnalyticsAgent(
+    agent = AnalyticsAgent(
         domain="professional",
         llm=llm,
-        store=memory_system.semantic.store if memory_system else None,
+        store=memory_system.semantic if memory_system else None,
         vector_store=memory_system.episodic.store if memory_system else None
     )
+    
+    return agent
 
 async def get_orchestration_agent(
     memory_system: TwoLayerMemorySystem = Depends(get_memory_system),

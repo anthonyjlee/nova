@@ -1,6 +1,7 @@
 """FastAPI endpoints for Nova's analytics and orchestration."""
 
-from fastapi import APIRouter, HTTPException, WebSocket, Depends, Header, Request, Response, Query, File, UploadFile
+from fastapi import FastAPI, APIRouter, HTTPException, WebSocket, Depends, Header, Request, Response, Query, File, UploadFile
+from starlette.websockets import WebSocketDisconnect
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import aiohttp
@@ -153,8 +154,8 @@ async def parse_query(
         
         return {
             "parsed_content": {
-                "concepts": result.concepts,
-                "key_points": result.key_points,
+                "concepts": [c["statement"] if isinstance(c, dict) else str(c) for c in result.concepts],
+                "key_points": [k["statement"] if isinstance(k, dict) else str(k) for k in result.key_points],
                 "structure": result.structure
             },
             "confidence": result.confidence,
@@ -172,17 +173,25 @@ async def analytics_websocket(
     analytics_agent: Any = Depends(get_analytics_agent)
 ):
     """WebSocket endpoint for real-time analytics updates."""
+    # Accept the connection first
+    await websocket.accept()
+    
     try:
         # Validate API key using dependency
         api_key = await get_ws_api_key(websocket)
         if not api_key:
-            await websocket.close(code=4001, reason="Invalid API key")
+            await websocket.close(code=4000, reason="Invalid API key")
             return
-        
-        try:
-            await websocket.accept()
-        except Exception as e:
-            logger.error(f"Failed to accept WebSocket connection: {str(e)}")
+            
+        # Get analytics agent from async generator if needed
+        if hasattr(analytics_agent, '__aiter__'):
+            try:
+                analytics_agent = await anext(analytics_agent.__aiter__())
+            except StopAsyncIteration:
+                analytics_agent = None
+                
+        if not analytics_agent:
+            await websocket.close(code=4000, reason="Failed to initialize analytics agent")
             return
         
         while True:
@@ -191,7 +200,13 @@ async def analytics_websocket(
                 
                 try:
                     # Handle different message types
-                    if data.get("type") == "swarm_monitor":
+                    if data.get("type") == "ping":
+                        # Handle ping message
+                        await websocket.send_json({
+                            "type": "pong",
+                            "timestamp": datetime.now().isoformat()
+                        })
+                    elif data.get("type") == "swarm_monitor":
                         # Monitor swarm activity for specific task
                         task_id = data.get("task_id")
                         if not task_id:
@@ -214,6 +229,39 @@ async def analytics_websocket(
                                 "type": "swarm_update",
                                 "event_type": event["type"],
                                 **event["data"],
+                                "timestamp": datetime.now().isoformat()
+                            })
+                    elif data.get("type") == "agent_coordination":
+                        # Handle agent coordination request
+                        result = await analytics_agent.process_analytics(
+                            content={
+                                "type": "coordination",
+                                "query": data.get("content"),
+                                "domain": data.get("domain", "general"),
+                                "llm_config": data.get("llm_config", {}),
+                                "timestamp": datetime.now().isoformat()
+                            },
+                            analytics_type="behavioral",
+                            metadata={"domain": data.get("domain")}
+                        )
+                        
+                        # Send agent updates
+                        if isinstance(result.analytics, dict):
+                            for agent, update in result.analytics.items():
+                                await websocket.send_json({
+                                    "type": "analytics_update",
+                                    "analytics": {agent: update},
+                                    "timestamp": datetime.now().isoformat()
+                                })
+                        
+                        # Send final response
+                        if result.insights:
+                            insight = result.insights[0] if isinstance(result.insights, list) else result.insights
+                            content = insight.get("description", str(insight)) if isinstance(insight, dict) else str(insight)
+                            await websocket.send_json({
+                                "type": "response",
+                                "content": content,
+                                "confidence": result.confidence,
                                 "timestamp": datetime.now().isoformat()
                             })
                     else:
@@ -265,18 +313,30 @@ async def analytics_websocket(
                         "message": str(e)
                     }
                 })
+    except WebSocketDisconnect:
+        # Client disconnected, no need to send error
+        pass
     except Exception as e:
-        if websocket.client_state.value != 3:  # Not closed
-            await websocket.send_json({
-                "type": "error",
-                "error": {
-                    "code": "ERROR",
-                    "message": str(e)
-                }
-            })
+        # Only try to send error if connection is still open
+        if websocket.client_state.value != 3:
+            try:
+                await websocket.send_json({
+                    "type": "error",
+                    "error": {
+                        "code": "ERROR",
+                        "message": str(e)
+                    }
+                })
+            except:
+                # If sending error fails, just log it
+                logger.error(f"Error in websocket: {str(e)}")
     finally:
-        if websocket.client_state.value != 3:  # Not closed
-            await websocket.close()
+        # Only try to close if connection is still open
+        if websocket.client_state.value != 3:
+            try:
+                await websocket.close()
+            except:
+                pass
 
 @orchestration_router.post("/memory/store", response_model=MemoryResponse)
 @retry_on_error(max_retries=3)
@@ -1019,3 +1079,18 @@ async def create_graph_backup(
         }
     except Exception as e:
         raise ServiceError(str(e))
+
+# Create FastAPI app
+app = FastAPI(
+    title="Nova API",
+    description="API for Nova's analytics and orchestration",
+    version="0.1.0"
+)
+
+# Include routers
+app.include_router(graph_router)
+app.include_router(agent_router)
+app.include_router(user_router)
+app.include_router(analytics_router)
+app.include_router(orchestration_router)
+app.include_router(ws_router)

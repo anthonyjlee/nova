@@ -152,6 +152,8 @@ class LLMInterface:
     async def _make_llm_request(self, messages: List[Dict[str, str]]) -> str:
         """Make request to LMStudio API."""
         from openai import AsyncOpenAI
+        import outlines
+        from .schema import response_schema
         
         try:
             # Initialize OpenAI client for LMStudio
@@ -192,30 +194,30 @@ class LLMInterface:
             # Use first available model for chat completions
             model_id = models.data[0].id
             
-            # Make completion request
-            completion = await client.chat.completions.create(
-                model=model_id,
-                messages=messages,
-                temperature=0.7,
-                max_tokens=10000,  # Increased token limit
-                timeout=30.0  # Added timeout for longer responses
-            )
+            # Create outlines guide with our schema
+            guide = outlines.Guide(response_schema)
             
-            self.logger.debug(f"LLM Response: {completion}")
-            
-            if not completion.choices:
-                raise Exception("No choices in LMStudio response")
-            
-            content = completion.choices[0].message.content
-            self.logger.debug(f"Raw LLM Content: {content}")
-            
-            # Clean up and parse content
-            content = content.strip()
-            if content.startswith("```json"):
-                content = content[7:]
-            if content.endswith("```"):
-                content = content[:-3]
-            content = content.strip()
+            # Make completion request using outlines
+            async def get_completion():
+                completion = await client.chat.completions.create(
+                    model=model_id,
+                    messages=messages,
+                    temperature=0.7,
+                    max_tokens=10000,  # Increased token limit
+                    timeout=30.0  # Added timeout for longer responses
+                )
+                return completion.choices[0].message.content
+                
+            # Use outlines to get structured output
+            try:
+                result = guide.run(get_completion)
+                self.logger.debug(f"Structured Output: {result}")
+                return json.dumps(result)
+            except Exception as e:
+                self.logger.error(f"Error using outlines: {str(e)}")
+                # Fallback to basic parsing if outlines fails
+                completion = await get_completion()
+                content = completion.strip()
             
             # Handle empty or invalid content
             if not content or content == "null":

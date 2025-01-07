@@ -2,7 +2,8 @@
 
 import aiohttp
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Union
+from .models import AnalysisResponse, AnalyticsResponse, LLMErrorResponse
 
 class LMStudioLLM:
     """LM Studio integration for language model capabilities."""
@@ -21,58 +22,33 @@ class LMStudioLLM:
     async def get_structured_completion(
         self,
         prompt: str,
+        response_model: Any,
         agent_type: Optional[str] = None,
         metadata: Optional[Dict] = None,
         max_tokens: int = 1000
-    ) -> Dict:
-        """Get structured completion from LM Studio."""
+    ) -> Union[AnalysisResponse, AnalyticsResponse, LLMErrorResponse]:
+        """Get structured completion from LM Studio using outlines."""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.api_base}/chat/completions",
-                    json={
-                        "model": self.chat_model,
-                        "messages": [
-                            {"role": "system", "content": "You are a helpful assistant that analyzes text and extracts structured information."},
-                            {"role": "user", "content": prompt}
-                        ],
-                        "max_tokens": max_tokens,
-                        "temperature": 0.3
-                    }
-                ) as response:
-                    if response.status != 200:
-                        raise Exception(f"LM Studio API error: {response.status}")
-                        
-                    result = await response.json()
-                    content = result["choices"][0]["message"]["content"]
-                    try:
-                        parsed = json.loads(content)
-                        # Add confidence if not present
-                        if isinstance(parsed, dict):
-                            if "confidence" not in parsed:
-                                parsed["confidence"] = 0.8
-                            if "concepts" in parsed:
-                                for concept in parsed["concepts"]:
-                                    if "confidence" not in concept:
-                                        concept["confidence"] = 0.8
-                        return parsed
-                    except json.JSONDecodeError:
-                        # Return structured format even for non-JSON responses
-                        return {
-                            "response": content,
-                            "confidence": 0.8,
-                            "concepts": [{
-                                "name": "LLM Analysis",
-                                "type": agent_type or "analysis",
-                                "description": content,
-                                "confidence": 0.8
-                            }],
-                            "key_points": [content],
-                            "implications": ["Analysis complete"],
-                            "uncertainties": [],
-                            "insights": [{"type": "analysis", "description": content, "confidence": 0.8}],
-                            "metadata": metadata or {}
-                        }
+            from openai import OpenAI
+            import outlines
+            
+            # Create OpenAI client for LMStudio
+            client = OpenAI(
+                base_url=self.api_base,
+                api_key="lm-studio"  # LMStudio accepts any non-empty string
+            )
+            
+            # Create generator with response model
+            generator = outlines.generate.json(client, response_model)
+            
+            # Generate structured response
+            result = generator(prompt)
+            
+            # Add metadata if provided
+            if metadata and isinstance(result, dict):
+                result["metadata"] = metadata
+                
+            return result
         except Exception as e:
             raise Exception(f"LM Studio error: {str(e)}")
 
@@ -81,116 +57,70 @@ class LMStudioLLM:
         content: Dict[str, Any],
         template: str = "parsing_analysis",
         max_tokens: int = 1000
-    ) -> Dict:
-        """Analyze content using LM Studio."""
+    ) -> Union[AnalysisResponse, AnalyticsResponse, LLMErrorResponse]:
+        """Analyze content using LM Studio and outlines."""
         try:
-            # Prepare prompt based on template
-            prompt = self._prepare_prompt(content, template)
+            from openai import OpenAI
+            import outlines
+            from pydantic import BaseModel, Field
+            from typing import List
             
-            # Call LM Studio API
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"{self.api_base}/chat/completions",
-                    json={
-                        "model": self.chat_model,
-                        "messages": [
-                            {"role": "system", "content": "You are a helpful assistant that analyzes text and extracts structured information."},
-                            {"role": "user", "content": prompt}
-                        ],
-                        "max_tokens": max_tokens,
-                        "temperature": 0.3
-                    }
-                ) as response:
-                    if response.status != 200:
-                        raise Exception(f"LM Studio API error: {response.status}")
-                        
-                    result = await response.json()
-                    
-                    # Extract and parse response
-                    response_text = result["choices"][0]["message"]["content"]
-                    try:
-                        parsed = json.loads(response_text)
-                        
-                        # Handle analytics response
-                        if template == "analytics_processing":
-                            if not isinstance(parsed.get("analytics"), dict):
-                                parsed["analytics"] = {}
-                            if not isinstance(parsed.get("insights"), list):
-                                parsed["insights"] = []
-                            return parsed
-                        # Handle parsing response
-                        else:
-                            if not isinstance(parsed.get("concepts"), list):
-                                parsed["concepts"] = []
-                            if not isinstance(parsed.get("key_points"), list):
-                                parsed["key_points"] = []
-                            if not isinstance(parsed.get("structure"), dict):
-                                parsed["structure"] = {}
-                            return parsed
-                    except json.JSONDecodeError:
-                        # Attempt to extract structured data from unstructured response
-                        concepts = []
-                        key_points = []
-                        
-                        # Look for concept-like statements
-                        lines = response_text.split("\n")
-                        for line in lines:
-                            line = line.strip()
-                            if line.startswith("- "):
-                                if "concept:" in line.lower():
-                                    concepts.append({
-                                        "statement": line.split(":", 1)[1].strip(),
-                                        "type": "extracted_concept",
-                                        "confidence": 0.5
-                                    })
-                                elif "key point:" in line.lower():
-                                    key_points.append({
-                                        "statement": line.split(":", 1)[1].strip(),
-                                        "type": "extracted_key_point",
-                                        "confidence": 0.5
-                                    })
-                                    
-                        return {
-                            "concepts": concepts,
-                            "key_points": key_points,
-                            "structure": {
-                                "extraction_method": "fallback_parsing",
-                                "original_text": response_text
-                            }
-                        }
-                        
+            # Extract text from content
+            text = content.get("text", "")
+            if isinstance(text, dict):
+                text = str(text)
+            
+            from .models import LLMAnalyticsResult, LLMAnalysisResult
+            
+            # Select response model based on template
+            response_model = LLMAnalyticsResult if template == "analytics_processing" else LLMAnalysisResult
+            
+            # Create OpenAI client for LMStudio
+            client = OpenAI(
+                base_url=self.api_base,
+                api_key="lm-studio"  # LMStudio accepts any non-empty string
+            )
+            
+            # Create generator with response model
+            generator = outlines.generate.json(client, response_model)
+            
+            # Prepare prompt based on template
+            prompt = self._prepare_prompt({"text": text, "metadata": content.get("metadata", {})}, template)
+            
+            # Generate structured response
+            result = generator(prompt)
+            
+            # Add metadata if provided
+            if content.get("metadata"):
+                result_dict = result.model_dump()
+                result_dict["metadata"] = content["metadata"]
+                return result_dict
+                
+            return result.model_dump()
+            
         except Exception as e:
-            raise Exception(f"Analysis error: {str(e)}")
+            # Return error response
+            return {
+                "response": "Error analyzing content",
+                "concepts": [{
+                    "name": "Error",
+                    "type": "error",
+                    "description": str(e),
+                    "confidence": 0.0
+                }],
+                "key_points": ["Error occurred during analysis"],
+                "implications": ["Analysis failed"],
+                "uncertainties": ["Error cause"],
+                "reasoning": ["Error handling"]
+            }
             
     def _prepare_prompt(self, content: Dict[str, Any], template: str) -> str:
         """Prepare prompt based on template."""
         if template == "analytics_processing":
             return f"""Analyze the following content and generate analytics insights. Return the result as a JSON object with the following structure:
 {{
-    "analytics": {{
-        "key_metrics": [
-            {{
-                "name": "metric name",
-                "value": metric_value,
-                "confidence": confidence_score
-            }}
-        ],
-        "trends": [
-            {{
-                "name": "trend name",
-                "description": "trend description",
-                "confidence": confidence_score
-            }}
-        ]
-    }},
-    "insights": [
-        {{
-            "type": "insight type",
-            "description": "insight description",
-            "confidence": confidence_score,
-            "recommendations": ["list of recommendations"]
-        }}
-    ]
+    "response": "Your analysis here",
+    "confidence": confidence_score
 }}
 
 Content to analyze:
@@ -201,39 +131,27 @@ Domain: {content["metadata"].get("domain", "general")}
         elif template == "parsing_analysis":
             return f"""Analyze the following text and extract structured information. Return the result as a JSON object with the following structure:
 {{
+    "response": "Your analysis here",
     "concepts": [
         {{
-            "statement": "concept statement",
+            "name": "concept name",
             "type": "concept type",
-            "confidence": confidence_score,
-            "description": "optional description"
+            "description": "concept description",
+            "related": ["related concept 1", "related concept 2"]
         }}
     ],
-    "key_points": [
-        {{
-            "statement": "key point statement",
-            "type": "key point type",
-            "confidence": confidence_score,
-            "importance": importance_score
-        }}
-    ],
-    "structure": {{
-        "sections": ["list of sections"],
-        "relationships": ["list of relationships"],
-        "domain_factors": {{"factor": "value"}},
-        "complexity_factors": [
-            {{
-                "factor": "factor name",
-                "weight": weight_score
-            }}
-        ]
-    }}
+    "key_points": ["key point 1", "key point 2"],
+    "implications": ["implication 1", "implication 2"],
+    "uncertainties": ["uncertainty 1", "uncertainty 2"],
+    "reasoning": ["reasoning step 1", "reasoning step 2"]
 }}
 
 Text to analyze:
 {content["text"]}
 
 Domain: {content["metadata"].get("domain", "general")}
+
+Important: Your response must be a complete, well-formed JSON object following exactly this structure.
 """
         else:
             raise ValueError(f"Unknown template: {template}")

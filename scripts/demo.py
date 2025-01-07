@@ -93,18 +93,18 @@ def check_qdrant_health(retries=30, delay=2):
     return False
 
 # Import core agents
-from nia.memory.agents.meta_agent import MetaAgent
-from nia.memory.agents.parsing_agent import ParsingAgent
-from nia.memory.agents.belief_agent import BeliefAgent
-from nia.memory.agents.desire_agent import DesireAgent
-from nia.memory.agents.emotion_agent import EmotionAgent
-from nia.memory.agents.reflection_agent import ReflectionAgent
+from nia.agents.specialized.meta_agent import MetaAgent
+from nia.agents.specialized.parsing_agent import ParsingAgent
+from nia.agents.specialized.belief_agent import BeliefAgent
+from nia.agents.specialized.desire_agent import DesireAgent
+from nia.agents.specialized.emotion_agent import EmotionAgent
+from nia.agents.specialized.reflection_agent import ReflectionAgent
 
 async def check_api_health(retries=30, delay=2):
     """Check if FastAPI server is running"""
     for i in range(retries):
         try:
-            response = requests.get(f"{API_BASE}/health")
+            response = requests.get("http://localhost:8000")
             if response.status_code == 200:
                 return True
         except requests.exceptions.RequestException:
@@ -136,64 +136,13 @@ def print_agent_message(agent_name: str, message: str, is_thinking: bool = False
 async def verify_system():
     """Verify system health and test coverage"""
     
-    # 1. Check Docker
-    print(f"\n{Fore.CYAN}Checking Docker Status:{Style.RESET_ALL}")
-    if not check_docker_running():
-        print(f"{Fore.RED}Error: Docker is not running!{Style.RESET_ALL}")
-        print("Please start Docker and try again")
+    # Check FastAPI server
+    print(f"\n{Fore.CYAN}Checking FastAPI Server:{Style.RESET_ALL}")
+    if not await check_api_health():
+        print(f"{Fore.RED}Error: FastAPI server is not running!{Style.RESET_ALL}")
+        print("Please start the server with scripts/run_server.py")
         return False
-    print(f"{Fore.GREEN}✓ Docker is running{Style.RESET_ALL}")
-    
-    # 2. Check Docker services
-    print(f"\n{Fore.CYAN}Checking Docker Services:{Style.RESET_ALL}")
-    if not check_docker_compose_services():
-        print(f"{Fore.YELLOW}Starting required Docker services...{Style.RESET_ALL}")
-        if not start_docker_services():
-            print(f"{Fore.RED}Error: Failed to start Docker services!{Style.RESET_ALL}")
-            return False
-        print(f"\n{Fore.YELLOW}Waiting for Neo4j to be ready (this may take a minute)...{Style.RESET_ALL}")
-        attempts = 0
-        while not check_neo4j_health() and attempts < 30:
-            print(".", end="", flush=True)
-            time.sleep(2)
-            attempts += 1
-        print("\n")
-        
-        print(f"{Fore.YELLOW}Waiting for Qdrant to be ready...{Style.RESET_ALL}")
-        attempts = 0
-        while not check_qdrant_health() and attempts < 30:
-            print(".", end="", flush=True)
-            time.sleep(2)
-            attempts += 1
-        print("\n")
-    print(f"{Fore.GREEN}✓ Docker services are running{Style.RESET_ALL}")
-    
-    # 3. Check core services
-    print(f"\n{Fore.CYAN}Verifying All Services:{Style.RESET_ALL}")
-    print("This may take a moment as services initialize...")
-    services_status = {
-        "LM Studio": check_lmstudio_health(),
-        "FastAPI": await check_api_health(),
-        "Neo4j": check_neo4j_health(),
-        "Qdrant": check_qdrant_health()
-    }
-    
-    all_healthy = all(services_status.values())
-    
-    if not all_healthy:
-        print(f"\n{Fore.RED}Service Health Check Failed:{Style.RESET_ALL}")
-        for service, status in services_status.items():
-            status_color = Fore.GREEN if status else Fore.RED
-            status_text = "Healthy" if status else "Unhealthy"
-            print(f"- {service}: {status_color}{status_text}{Style.RESET_ALL}")
-        
-        if not services_status["LM Studio"]:
-            print(f"\n{Fore.YELLOW}Please:{Style.RESET_ALL}")
-            print("1. Open LM Studio")
-            print("2. Load a model")
-            print("3. Start the local server")
-        
-        return False
+    print(f"{Fore.GREEN}✓ FastAPI server is running{Style.RESET_ALL}")
     
     print(f"\n{Fore.GREEN}Core Services:{Style.RESET_ALL}")
     print("✓ LM Studio - Local LLM Server")
@@ -263,7 +212,7 @@ async def demo_core_functionality():
     
     memory_request = {
         "content": "The sky is blue because of Rayleigh scattering of sunlight.",
-        "type": "fact",
+        "type": "semantic",
         "importance": 0.95,
         "context": {"domain": "science"},
         "llm_config": llm_config
@@ -272,7 +221,8 @@ async def demo_core_functionality():
     print_agent_message("Nova", "Storing fact in memory system...", True)
     response = requests.post(
         f"{API_BASE}/orchestration/memory/store",
-        json=memory_request
+        json=memory_request,
+        headers={"X-API-Key": "test-key"}
     )
     print_agent_message("Nova", "Memory system initialized with initial knowledge.")
 
@@ -289,14 +239,19 @@ async def demo_core_functionality():
     print_agent_message("Parser", "Analyzing question structure...", True)
     response = requests.post(
         f"{API_BASE}/analytics/parse",
-        json=parse_request
+        json=parse_request,
+        headers={"X-API-Key": "test-key"}
     )
     parse_result = response.json()
     
     # Coordinate agents for response using WebSocket
     print_agent_message("Nova", "Coordinating agent response...", True)
     
-    async with websockets.connect(f"{WS_BASE}/analytics/ws") as websocket:
+    headers = {"X-API-Key": "test-key"}
+    async with websockets.connect(
+        f"{WS_BASE}/analytics/ws",
+        additional_headers=headers
+    ) as websocket:
         await websocket.send(json.dumps({
             "type": "agent_coordination",
             "content": test_input,
@@ -320,7 +275,8 @@ async def demo_core_functionality():
     
     analytics_response = requests.get(
         f"{API_BASE}/analytics/flows",
-        params={"domain": "science"}
+        params={"domain": "science"},
+        headers={"X-API-Key": "test-key"}
     )
     analytics = analytics_response.json()
     
@@ -369,7 +325,8 @@ async def demo_core_functionality():
             json={
                 "task": task,
                 "domain": "test"
-            }
+            },
+            headers={"X-API-Key": "test-key"}
         )
         decision_data = decision_response.json()
         print_agent_message("Nova", f"For {task['type']}: Selected {decision_data['selected_pattern']} pattern")
@@ -391,7 +348,8 @@ async def demo_core_functionality():
     # Create swarms through Nova's orchestration
     response = requests.post(
         f"{API_BASE}/orchestration/swarms",
-        json=swarm_request
+        json=swarm_request,
+        headers={"X-API-Key": "test-key"}
     )
     swarm_data = response.json()
     
@@ -403,7 +361,11 @@ async def demo_core_functionality():
     # Demonstrate swarm coordination
     print_agent_message("Nova", "\nDemonstrating swarm coordination...")
     
-    async with websockets.connect(f"{WS_BASE}/analytics/ws") as websocket:
+    headers = {"X-API-Key": "test-key"}
+    async with websockets.connect(
+        f"{WS_BASE}/analytics/ws",
+        additional_headers=headers
+    ) as websocket:
         try:
             # Monitor swarm activity
             await websocket.send(json.dumps({
@@ -444,7 +406,8 @@ async def demo_core_functionality():
             # Cleanup swarms
             cleanup_response = requests.delete(
                 f"{API_BASE}/orchestration/swarms",
-                json={"swarm_ids": [info["swarm_id"] for info in swarm_data["swarms"].values()]}
+                json={"swarm_ids": [info["swarm_id"] for info in swarm_data["swarms"].values()]},
+                headers={"X-API-Key": "test-key"}
             )
             if cleanup_response.status_code != 200:
                 print_agent_message("Nova", "Warning: Some swarms may not have been cleaned up properly")
@@ -467,7 +430,8 @@ async def demo_core_functionality():
     try:
         response = requests.post(
             f"{API_BASE}/orchestration/coordinate",
-            json=coordination_request
+            json=coordination_request,
+            headers={"X-API-Key": "test-key"}
         )
         if response.status_code == 200:
             result = response.json()

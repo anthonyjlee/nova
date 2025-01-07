@@ -24,12 +24,19 @@ class AnalyticsResult:
         if isinstance(analytics, dict) and "choices" in analytics:
             try:
                 content = analytics["choices"][0]["message"]["content"]
+                # Try to parse content as JSON if it's a string
                 if isinstance(content, str):
-                    import json
-                    parsed = json.loads(content)
-                    self.analytics = parsed.get("analytics", {})
-                    self.insights = parsed.get("insights", [])
+                    try:
+                        import json
+                        parsed = json.loads(content)
+                        self.analytics = parsed.get("analytics", {})
+                        self.insights = parsed.get("insights", [])
+                    except json.JSONDecodeError:
+                        # If parsing fails, create a basic response
+                        self.analytics = {"message": content}
+                        self.insights = [{"type": "response", "description": content}]
                 else:
+                    # If already a dict, use it directly
                     self.analytics = content.get("analytics", {})
                     self.insights = content.get("insights", [])
             except:

@@ -8,7 +8,7 @@ from ...nova.core.meta import MetaAgent as NovaMetaAgent
 from ..tinytroupe_agent import TinyTroupeAgent
 from ...world.environment import NIAWorld
 from ...memory.two_layer import TwoLayerMemorySystem
-from ...memory.memory_types import AgentResponse, DialogueContext
+from ...core.types.memory_types import AgentResponse, DialogueContext
 
 logger = logging.getLogger(__name__)
 

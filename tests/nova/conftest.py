@@ -21,6 +21,12 @@ def event_loop():
     loop.close()
 
 from tinytroupe.agent import TinyPerson
+from nia.core.interfaces.llm_interface import LLMInterface
+
+@pytest.fixture
+async def llm_interface():
+    """Create mock LLM interface for testing."""
+    return LLMInterface(use_mock=True)
 
 @pytest.fixture(autouse=True)
 async def setup_test_environment(event_loop):
@@ -231,9 +237,8 @@ async def memory_system(request):
     # Initialize connections
     await memory.initialize()
     
-    # Create test collections with unique names for isolation
-    if hasattr(memory.episodic.store, 'ensure_collection'):
-        await memory.episodic.store.ensure_collection("test_demo_episodic")
+    # Initialize memory system
+    await memory.initialize()
     
     # Clean up on test completion
     async def cleanup():

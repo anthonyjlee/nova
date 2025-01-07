@@ -42,7 +42,7 @@ class ParsingAgent(NovaParser, TinyTroupeAgent):
         NovaParser.__init__(
             self,
             llm=None,  # Will be set later through LMStudio
-            store=memory_system.semantic.store if memory_system else None,
+            store=memory_system.semantic if memory_system else None,
             vector_store=memory_system.episodic.store if memory_system else None,
             domain=self.domain
         )
@@ -171,7 +171,15 @@ class ParsingAgent(NovaParser, TinyTroupeAgent):
             
             # Get analysis from LLM
             if self._memory_system and self._memory_system.llm:
-                raw_analysis = await self._memory_system.llm.analyze(content)
+                # Ensure content is properly formatted for LLM
+                if isinstance(content, str):
+                    llm_content = {"text": content}
+                elif isinstance(content, dict):
+                    llm_content = content
+                else:
+                    llm_content = {"text": str(content)}
+                    
+                raw_analysis = await self._memory_system.llm.analyze(llm_content)
                 
                 # Parse the raw analysis using multi-LLM strategies
                 analysis = self._multi_llm_parse(raw_analysis, self.llm_type)
@@ -658,29 +666,56 @@ class ParsingAgent(NovaParser, TinyTroupeAgent):
                 structure={"error": str(e)}
             )
             
-    def _multi_llm_parse(self, raw_analysis: Dict[str, Any], llm_type: str) -> Dict[str, Any]:
+    def _multi_llm_parse(self, raw_analysis: Any, llm_type: str) -> Dict[str, Any]:
         """Parse raw LLM output using different strategies based on LLM type."""
-        # For raw analysis from LLM, just return it
-        if isinstance(raw_analysis, dict):
-            return self._map_parsed_to_result(raw_analysis)
+        try:
+            # If raw_analysis is a string, try to parse it as JSON
+            if isinstance(raw_analysis, str):
+                try:
+                    parsed = json.loads(raw_analysis)
+                    if isinstance(parsed, dict):
+                        return parsed
+                except json.JSONDecodeError:
+                    # If JSON parsing fails, create a basic structure
+                    return {
+                        "response": raw_analysis,
+                        "concepts": [{
+                            "name": "Text Content",
+                            "type": "text",
+                            "description": raw_analysis,
+                            "related": []
+                        }],
+                        "key_points": [raw_analysis],
+                        "implications": [],
+                        "uncertainties": [],
+                        "reasoning": [],
+                        "confidence": 0.5
+                    }
+
+            # If raw_analysis is already a dict, use it directly
+            if isinstance(raw_analysis, dict):
+                return raw_analysis
+
+            # For any other type, convert to string and create basic structure
+            return {
+                "response": str(raw_analysis),
+                "concepts": [{
+                    "name": "Unknown Content",
+                    "type": "unknown",
+                    "description": str(raw_analysis),
+                    "related": []
+                }],
+                "key_points": [str(raw_analysis)],
+                "implications": [],
+                "uncertainties": [],
+                "reasoning": [],
+                "confidence": 0.3
+            }
+
+        except Exception as e:
+            logger.error(f"Error in parsing: {str(e)}")
+            return self._fallback_parse(str(raw_analysis))
             
-        # For text output, try parsing as JSON
-        if isinstance(raw_analysis, str):
-            # Strategy 1: Strict JSON
-            if llm_type in ["openai", "cohere"]:
-                parsed = self._try_strict_json(raw_analysis)
-                if parsed:
-                    return self._map_parsed_to_result(parsed)
-                    
-            # Strategy 2: Loose JSON
-            if llm_type in ["anthropic", "generic"]:
-                parsed = self._try_loose_json(raw_analysis)
-                if parsed:
-                    return self._map_parsed_to_result(parsed)
-                    
-        # Fallback: Minimal parse
-        return self._fallback_parse(str(raw_analysis))
-        
     def _try_strict_json(self, text: str) -> Optional[Dict[str, Any]]:
         """Attempt strict JSON parse from start to finish."""
         text = text.strip()
@@ -693,11 +728,26 @@ class ParsingAgent(NovaParser, TinyTroupeAgent):
             
     def _try_loose_json(self, text: str) -> Optional[Dict[str, Any]]:
         """Find and parse JSON block from text that might contain other content."""
-        # Find first { and last } with balanced brackets
         text = text.strip()
         if not text:
             return None
             
+        # First try to extract JSON from code block
+        import re
+        json_match = re.search(r'```(?:json)?\n(.*?)\n```', text, re.DOTALL)
+        if json_match:
+            try:
+                json_str = json_match.group(1).strip()
+                # Sometimes the JSON might be indented, so remove any common leading whitespace
+                lines = json_str.splitlines()
+                if len(lines) > 1:
+                    min_indent = min(len(line) - len(line.lstrip()) for line in lines[1:] if line.strip())
+                    json_str = lines[0] + '\n' + '\n'.join(line[min_indent:] for line in lines[1:])
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                logger.warning("Failed to parse JSON from code block")
+                
+        # If no code block or parsing failed, try finding JSON with balanced brackets
         start = text.find('{')
         if start == -1:
             return None
@@ -705,21 +755,43 @@ class ParsingAgent(NovaParser, TinyTroupeAgent):
         # Track bracket balance
         balance = 0
         end = -1
+        in_string = False
+        escape_next = False
         
         for i in range(start, len(text)):
-            if text[i] == '{':
-                balance += 1
-            elif text[i] == '}':
-                balance -= 1
-                if balance == 0:
-                    end = i + 1
-                    break
+            char = text[i]
+            
+            if escape_next:
+                escape_next = False
+                continue
+                
+            if char == '\\':
+                escape_next = True
+                continue
+                
+            if char == '"' and not escape_next:
+                in_string = not in_string
+                continue
+                
+            if not in_string:
+                if char == '{':
+                    balance += 1
+                elif char == '}':
+                    balance -= 1
+                    if balance == 0:
+                        end = i + 1
+                        break
                     
         if end == -1:
             return None
             
         try:
             json_block = text[start:end]
+            # Remove any common leading whitespace
+            lines = json_block.splitlines()
+            if len(lines) > 1:
+                min_indent = min(len(line) - len(line.lstrip()) for line in lines[1:] if line.strip())
+                json_block = lines[0] + '\n' + '\n'.join(line[min_indent:] for line in lines[1:])
             data = json.loads(json_block)
             return data
         except json.JSONDecodeError:
@@ -746,10 +818,56 @@ class ParsingAgent(NovaParser, TinyTroupeAgent):
     def _map_parsed_to_result(self, parsed_data: Dict[str, Any], fallback: bool = False) -> Dict[str, Any]:
         """Map parsed dictionary to standard format, handling field variations."""
         # Handle different field names that LLMs might use
-        concepts = parsed_data.get("concepts") or parsed_data.get("ideas") or []
-        key_points = parsed_data.get("key_points") or parsed_data.get("main_points") or []
+        raw_concepts = parsed_data.get("concepts") or parsed_data.get("ideas") or []
+        raw_key_points = parsed_data.get("key_points") or parsed_data.get("main_points") or []
         confidence = parsed_data.get("confidence", 0.5)
         structure = parsed_data.get("structure") or {}
+        
+        # Extract statements from concepts and key points
+        concepts = []
+        for concept in raw_concepts:
+            if isinstance(concept, str):
+                concepts.append({
+                    "statement": concept,
+                    "type": "analysis",
+                    "confidence": 0.8
+                })
+            elif isinstance(concept, dict):
+                concepts.append({
+                    "statement": concept.get("statement", concept.get("description", str(concept))),
+                    "type": concept.get("type", "analysis"),
+                    "confidence": concept.get("confidence", 0.8)
+                })
+            else:
+                concepts.append({
+                    "statement": str(concept),
+                    "type": "analysis",
+                    "confidence": 0.8
+                })
+                
+        key_points = []
+        for point in raw_key_points:
+            if isinstance(point, str):
+                key_points.append({
+                    "statement": point,
+                    "type": "analysis",
+                    "confidence": 0.8,
+                    "importance": 1.0
+                })
+            elif isinstance(point, dict):
+                key_points.append({
+                    "statement": point.get("statement", point.get("description", str(point))),
+                    "type": point.get("type", "analysis"),
+                    "confidence": point.get("confidence", 0.8),
+                    "importance": point.get("importance", 1.0)
+                })
+            else:
+                key_points.append({
+                    "statement": str(point),
+                    "type": "analysis",
+                    "confidence": 0.8,
+                    "importance": 1.0
+                })
         
         # If fallback parse, reduce confidence
         if fallback:
@@ -789,72 +907,3 @@ class ParsingAgent(NovaParser, TinyTroupeAgent):
             if self._memory_system:
                 await self._memory_system.cleanup()
             self._initialized = False
-            
-    @property
-    def memory_system(self):
-        """Get memory system."""
-        return self._memory_system
-        
-    async def get_domain_access(self, domain: str) -> bool:
-        """Check if agent has access to specified domain."""
-        if self._memory_system and hasattr(self._memory_system, "semantic"):
-            try:
-                return await self._memory_system.semantic.store.get_domain_access(
-                    self.name,
-                    domain
-                )
-            except Exception:
-                return False
-        return False
-        
-    async def validate_domain_access(self, domain: str):
-        """Validate access to a domain before processing."""
-        has_access = await self.get_domain_access(domain)
-        if has_access:
-            await self.record_reflection(
-                "Domain access validated successfully in professional domain",
-                domain=self.domain
-            )
-            await self.record_reflection(
-                "High security compliance confirmed in professional domain",
-                domain=self.domain
-            )
-            await self.record_reflection(
-                "Strong permission validation achieved in professional domain",
-                domain=self.domain
-            )
-            await self.record_reflection(
-                "Full access scope verified in professional domain",
-                domain=self.domain
-            )
-        else:
-            await self.record_reflection(
-                "Domain access denied for restricted domain",
-                domain=self.domain
-            )
-            await self.record_reflection(
-                "Security compliance enforced for unauthorized access attempt",
-                domain=self.domain
-            )
-            await self.record_reflection(
-                "High security risk prevented in professional domain",
-                domain=self.domain
-            )
-            await self.record_reflection(
-                "Access scope violation blocked in professional domain",
-                domain=self.domain
-            )
-            raise PermissionError(
-                f"ParsingAgent {self.name} does not have access to domain: {domain}"
-            )
-            
-    async def record_reflection(self, content: str, domain: Optional[str] = None):
-        """Record a reflection with domain awareness."""
-        if self._memory_system and hasattr(self._memory_system, "semantic"):
-            try:
-                await self._memory_system.semantic.store.record_reflection(
-                    content,
-                    domain=domain or self.domain
-                )
-            except Exception as e:
-                logger.error(f"Error recording reflection: {str(e)}")
