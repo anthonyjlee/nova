@@ -21,7 +21,8 @@ dependencies = [
     "fastapi>=0.115.6",
     "websockets>=14.1",
     "outlines>=0.1.11",
-    "transformers>=4.47.1"
+    "transformers>=4.47.1",
+    "tenacity>=8.2.3"           # Retry logic with exponential backoff
 ]
 requires-python = ">=3.10"
 readme = "README.md"
