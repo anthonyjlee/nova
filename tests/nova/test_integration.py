@@ -72,7 +72,7 @@ async def check_infrastructure():
                 neo4j_container.start()
                 await asyncio.sleep(10)  # Wait for Neo4j to start
         except docker.errors.NotFound:
-            pytest.skip("Neo4j container not found. Please run docker-compose up -d neo4j")
+            pytest.skip("Neo4j container not found. Please run 'docker compose -f scripts/docker/compose/docker-compose.yml up -d neo4j'")
         
         # Check Neo4j connection
         await wait_for_neo4j()
@@ -84,7 +84,7 @@ async def check_infrastructure():
                 qdrant_container.start()
                 await asyncio.sleep(5)  # Wait for Qdrant to start
         except docker.errors.NotFound:
-            pytest.skip("Qdrant container not found. Please run docker-compose up -d qdrant")
+            pytest.skip("Qdrant container not found. Please run 'docker compose -f scripts/docker/compose/docker-compose.yml up -d qdrant'")
         
         # Check vector store connection
         import aiohttp
