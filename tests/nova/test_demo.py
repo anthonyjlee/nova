@@ -19,7 +19,7 @@ from nia.nova.core.endpoints import (
 from nia.nova.core.test_data import VALID_TASK
 from nia.memory.two_layer import TwoLayerMemorySystem
 from nia.agents.specialized.analytics_agent import AnalyticsAgent
-from nia.memory.llm_interface import LLMInterface
+from nia.core.interfaces.llm_interface import LLMInterface
 from nia.agents.tinytroupe_agent import TinyFactory
 
 # Test API key
@@ -407,8 +407,625 @@ class TestDemoFunctionality:
             app.dependency_overrides.clear()
     
     @pytest.mark.asyncio
+    async def test_user_profile(self, memory_system, analytics_agent, llm_interface, world):
+        """Test user profile endpoints."""
+        app.dependency_overrides.update({
+            get_memory_system: lambda: memory_system,
+            get_analytics_agent: lambda: analytics_agent,
+            get_llm_interface: lambda: llm_interface,
+            get_world: lambda: world
+        })
+        
+        try:
+            client = TestClient(app)
+            
+            # Test questionnaire submission
+            questionnaire_data = {
+                "personality": {
+                    "openness": 0.8,
+                    "conscientiousness": 0.7,
+                    "extraversion": 0.6,
+                    "agreeableness": 0.75,
+                    "neuroticism": 0.4
+                },
+                "learning_style": {
+                    "visual": 0.8,
+                    "auditory": 0.6,
+                    "kinesthetic": 0.7
+                },
+                "communication_preferences": {
+                    "detail_level": "high",
+                    "feedback_frequency": "frequent",
+                    "interaction_style": "collaborative"
+                }
+            }
+            
+            response = client.post(
+                "/api/users/profile/questionnaire",
+                headers={"X-API-Key": TEST_API_KEY},
+                json=questionnaire_data
+            )
+            assert response.status_code == 200
+            profile_id = response.json()["profile_id"]
+            
+            # Test profile data retrieval
+            profile_response = client.get(
+                "/api/users/profile",
+                headers={"X-API-Key": TEST_API_KEY}
+            )
+            assert profile_response.status_code == 200
+            profile_data = profile_response.json()
+            assert profile_data["personality"]["openness"] == 0.8
+            assert profile_data["learning_style"]["visual"] == 0.8
+            
+            # Test preference updates
+            preference_updates = {
+                "auto_approval": {
+                    "task_creation": True,
+                    "memory_operations": False
+                },
+                "ui_preferences": {
+                    "theme": "dark",
+                    "message_density": "compact"
+                }
+            }
+            
+            pref_response = client.put(
+                "/api/users/profile/preferences",
+                headers={"X-API-Key": TEST_API_KEY},
+                json=preference_updates
+            )
+            assert pref_response.status_code == 200
+            
+            # Test learning style retrieval
+            style_response = client.get(
+                "/api/users/profile/learning-style",
+                headers={"X-API-Key": TEST_API_KEY}
+            )
+            assert style_response.status_code == 200
+            style_data = style_response.json()
+            assert "visual" in style_data
+            assert "auditory" in style_data
+            assert "kinesthetic" in style_data
+            
+            # Test auto-approval settings update
+            approval_settings = {
+                "task_creation": True,
+                "memory_operations": False,
+                "swarm_creation": True
+            }
+            
+            approval_response = client.put(
+                "/api/users/profile/auto-approval",
+                headers={"X-API-Key": TEST_API_KEY},
+                json=approval_settings
+            )
+            assert approval_response.status_code == 200
+            
+            # Verify updated settings
+            profile_response = client.get(
+                "/api/users/profile",
+                headers={"X-API-Key": TEST_API_KEY}
+            )
+            assert profile_response.status_code == 200
+            updated_data = profile_response.json()
+            assert updated_data["preferences"]["auto_approval"]["task_creation"] == True
+            assert updated_data["preferences"]["auto_approval"]["memory_operations"] == False
+            
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_agent_identity(self, memory_system, analytics_agent, llm_interface, tiny_factory, world):
+        """Test agent identity endpoints."""
+        app.dependency_overrides.update({
+            get_memory_system: lambda: memory_system,
+            get_analytics_agent: lambda: analytics_agent,
+            get_llm_interface: lambda: llm_interface,
+            get_tiny_factory: lambda: tiny_factory,
+            get_world: lambda: world
+        })
+        
+        try:
+            client = TestClient(app)
+            
+            # Test agent capabilities retrieval
+            capabilities_response = client.get(
+                "/api/agents/test-agent/capabilities",
+                headers={"X-API-Key": TEST_API_KEY}
+            )
+            assert capabilities_response.status_code == 200
+            capabilities_data = capabilities_response.json()
+            assert "capabilities" in capabilities_data
+            assert isinstance(capabilities_data["capabilities"], list)
+            
+            # Test agent type listing
+            types_response = client.get(
+                "/api/agents/types",
+                headers={"X-API-Key": TEST_API_KEY}
+            )
+            assert types_response.status_code == 200
+            types_data = types_response.json()
+            assert "agent_types" in types_data
+            assert isinstance(types_data["agent_types"], list)
+            
+            # Test agent search by capability
+            search_response = client.get(
+                "/api/agents/search",
+                headers={"X-API-Key": TEST_API_KEY},
+                params={"capability": "task_execution"}
+            )
+            assert search_response.status_code == 200
+            search_data = search_response.json()
+            assert "agents" in search_data
+            assert isinstance(search_data["agents"], list)
+            
+            # Test agent history retrieval
+            history_response = client.get(
+                "/api/agents/test-agent/history",
+                headers={"X-API-Key": TEST_API_KEY}
+            )
+            assert history_response.status_code == 200
+            history_data = history_response.json()
+            assert "interactions" in history_data
+            assert isinstance(history_data["interactions"], list)
+            
+            # Test agent metrics retrieval
+            metrics_response = client.get(
+                "/api/agents/test-agent/metrics",
+                headers={"X-API-Key": TEST_API_KEY}
+            )
+            assert metrics_response.status_code == 200
+            metrics_data = metrics_response.json()
+            assert "performance_metrics" in metrics_data
+            assert "task_completion_rate" in metrics_data["performance_metrics"]
+            assert "average_response_time" in metrics_data["performance_metrics"]
+            assert "memory_utilization" in metrics_data["performance_metrics"]
+            
+            # Test agent activation/deactivation
+            activate_response = client.post(
+                "/api/agents/test-agent/activate",
+                headers={"X-API-Key": TEST_API_KEY}
+            )
+            assert activate_response.status_code == 200
+            
+            deactivate_response = client.post(
+                "/api/agents/test-agent/deactivate",
+                headers={"X-API-Key": TEST_API_KEY}
+            )
+            assert deactivate_response.status_code == 200
+            
+            # Test agent status retrieval
+            status_response = client.get(
+                "/api/agents/test-agent/status",
+                headers={"X-API-Key": TEST_API_KEY}
+            )
+            assert status_response.status_code == 200
+            status_data = status_response.json()
+            assert "status" in status_data
+            assert status_data["status"] == "inactive"
+            
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_knowledge_graph(self, memory_system, analytics_agent, llm_interface, world):
+        """Test knowledge graph endpoints."""
+        app.dependency_overrides.update({
+            get_memory_system: lambda: memory_system,
+            get_analytics_agent: lambda: analytics_agent,
+            get_llm_interface: lambda: llm_interface,
+            get_world: lambda: world
+        })
+        
+        try:
+            client = TestClient(app)
+            
+            # Test graph pruning
+            prune_response = client.post(
+                "/api/graph/prune",
+                headers={"X-API-Key": TEST_API_KEY},
+                json={
+                    "min_relevance_score": 0.5,
+                    "max_age_days": 30,
+                    "exclude_domains": ["critical", "system"]
+                }
+            )
+            assert prune_response.status_code == 200
+            prune_data = prune_response.json()
+            assert "nodes_removed" in prune_data
+            assert "edges_removed" in prune_data
+            
+            # Test graph health check
+            health_response = client.get(
+                "/api/graph/health",
+                headers={"X-API-Key": TEST_API_KEY}
+            )
+            assert health_response.status_code == 200
+            health_data = health_response.json()
+            assert "node_count" in health_data
+            assert "edge_count" in health_data
+            assert "orphaned_nodes" in health_data
+            assert "invalid_edges" in health_data
+            assert "consistency_score" in health_data
+            
+            # Test graph structure optimization
+            optimize_response = client.post(
+                "/api/graph/optimize",
+                headers={"X-API-Key": TEST_API_KEY},
+                json={
+                    "target_metrics": ["query_performance", "storage_efficiency"],
+                    "optimization_level": "aggressive"
+                }
+            )
+            assert optimize_response.status_code == 200
+            optimize_data = optimize_response.json()
+            assert "performance_improvement" in optimize_data
+            assert "space_saved" in optimize_data
+            
+            # Test graph statistics
+            stats_response = client.get(
+                "/api/graph/statistics",
+                headers={"X-API-Key": TEST_API_KEY}
+            )
+            assert stats_response.status_code == 200
+            stats_data = stats_response.json()
+            assert "node_distribution" in stats_data
+            assert "edge_types" in stats_data
+            assert "domain_stats" in stats_data
+            assert "query_performance" in stats_data
+            assert "memory_usage" in stats_data
+            
+            # Test graph backup creation
+            backup_response = client.post(
+                "/api/graph/backup",
+                headers={"X-API-Key": TEST_API_KEY},
+                json={
+                    "include_domains": ["all"],
+                    "backup_format": "cypher",
+                    "compression": True
+                }
+            )
+            assert backup_response.status_code == 200
+            backup_data = backup_response.json()
+            assert "backup_id" in backup_data
+            assert "timestamp" in backup_data
+            assert "file_size" in backup_data
+            assert "node_count" in backup_data
+            assert "edge_count" in backup_data
+            
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
+    async def test_advanced_swarms(self, memory_system, analytics_agent, llm_interface, tiny_factory, world):
+        """Test advanced swarm operations."""
+        app.dependency_overrides.update({
+            get_memory_system: lambda: memory_system,
+            get_analytics_agent: lambda: analytics_agent,
+            get_llm_interface: lambda: llm_interface,
+            get_tiny_factory: lambda: tiny_factory,
+            get_world: lambda: world
+        })
+        
+        try:
+            client = TestClient(app)
+            
+            # Test graph workflow
+            workflow_response = client.post(
+                "/api/swarms/graph-workflow",
+                headers={"X-API-Key": TEST_API_KEY},
+                json={
+                    "nodes": [
+                        {"id": "task1", "type": "data_collection"},
+                        {"id": "task2", "type": "analysis"},
+                        {"id": "task3", "type": "validation"}
+                    ],
+                    "edges": [
+                        {"from": "task1", "to": "task2"},
+                        {"from": "task2", "to": "task3"}
+                    ],
+                    "execution_config": {
+                        "parallel_tasks": True,
+                        "error_handling": "retry"
+                    }
+                }
+            )
+            assert workflow_response.status_code == 200
+            workflow_data = workflow_response.json()
+            assert "workflow_id" in workflow_data
+            assert "execution_status" in workflow_data
+            
+            # Test majority voting
+            voting_response = client.post(
+                "/api/swarms/majority-vote",
+                headers={"X-API-Key": TEST_API_KEY},
+                json={
+                    "question": "What is the optimal approach?",
+                    "options": ["approach_a", "approach_b", "approach_c"],
+                    "voting_config": {
+                        "min_votes": 3,
+                        "threshold": 0.6,
+                        "timeout": 30
+                    }
+                }
+            )
+            assert voting_response.status_code == 200
+            voting_data = voting_response.json()
+            assert "selected_option" in voting_data
+            assert "vote_distribution" in voting_data
+            assert "confidence_score" in voting_data
+            
+            # Test round robin
+            round_robin_response = client.post(
+                "/api/swarms/round-robin",
+                headers={"X-API-Key": TEST_API_KEY},
+                json={
+                    "tasks": [
+                        {"id": "task1", "type": "analysis"},
+                        {"id": "task2", "type": "validation"},
+                        {"id": "task3", "type": "synthesis"}
+                    ],
+                    "agent_pool": ["agent1", "agent2", "agent3"],
+                    "scheduling_config": {
+                        "time_slice": 5,
+                        "fair_distribution": True
+                    }
+                }
+            )
+            assert round_robin_response.status_code == 200
+            round_robin_data = round_robin_response.json()
+            assert "schedule" in round_robin_data
+            assert "agent_assignments" in round_robin_data
+            
+            # Test group chat
+            group_chat_response = client.post(
+                "/api/swarms/group-chat",
+                headers={"X-API-Key": TEST_API_KEY},
+                json={
+                    "participants": ["agent1", "agent2", "agent3"],
+                    "topic": "Solution Design",
+                    "chat_config": {
+                        "max_rounds": 5,
+                        "consensus_required": True
+                    }
+                }
+            )
+            assert group_chat_response.status_code == 200
+            group_chat_data = group_chat_response.json()
+            assert "chat_id" in group_chat_data
+            assert "discussion_summary" in group_chat_data
+            assert "consensus_reached" in group_chat_data
+            
+            # Test agent registry
+            registry_response = client.post(
+                "/api/swarms/registry",
+                headers={"X-API-Key": TEST_API_KEY},
+                json={
+                    "agent": {
+                        "id": "new_agent",
+                        "type": "specialized",
+                        "capabilities": ["analysis", "validation"],
+                        "resources": {
+                            "memory_limit": "2GB",
+                            "cpu_share": 0.5
+                        }
+                    }
+                }
+            )
+            assert registry_response.status_code == 200
+            registry_data = registry_response.json()
+            assert "agent_id" in registry_data
+            assert "registration_status" in registry_data
+            
+            # Verify agent registration
+            verify_response = client.get(
+                "/api/swarms/registry/new_agent",
+                headers={"X-API-Key": TEST_API_KEY}
+            )
+            assert verify_response.status_code == 200
+            verify_data = verify_response.json()
+            assert verify_data["type"] == "specialized"
+            assert "analysis" in verify_data["capabilities"]
+            assert "validation" in verify_data["capabilities"]
+            
+        finally:
+            app.dependency_overrides.clear()
+
+    @pytest.mark.asyncio
     async def test_error_handling(self, memory_system, analytics_agent, llm_interface, tiny_factory, world):
         """Test error handling in demo script."""
+        app.dependency_overrides.update({
+            get_memory_system: lambda: memory_system,
+            get_analytics_agent: lambda: analytics_agent,
+            get_llm_interface: lambda: llm_interface,
+            get_tiny_factory: lambda: tiny_factory,
+            get_world: lambda: world
+        })
+        
+        try:
+            client = TestClient(app)
+            
+            # Test invalid swarm creation
+            invalid_swarm_response = client.post(
+                "/api/orchestration/swarms",
+                headers={"X-API-Key": TEST_API_KEY},
+                json={
+                    "type": "swarm_creation",
+                    "domain": "test",
+                    "swarm_requirements": {
+                        "patterns": ["invalid_pattern"],
+                        "capabilities": []
+                    }
+                }
+            )
+            assert invalid_swarm_response.status_code == 400
+            
+            # Test WebSocket error handling
+            # Create WebSocket URL
+            ws_url = f"ws://testserver/api/analytics/ws"
+            
+            # Use TestClient's websocket_connect as context manager
+            with client.websocket_connect(
+                ws_url,
+                headers={"X-API-Key": TEST_API_KEY}
+            ) as websocket:
+                try:
+                    # Send invalid message
+                    await websocket.send_json({
+                        "type": "invalid_type",
+                        "content": "test"
+                    })
+                    
+                    response = await websocket.receive_json()
+                    assert response["type"] == "error"
+                    assert "message" in response
+                except websockets.exceptions.ConnectionClosed:
+                    pytest.fail("WebSocket connection closed unexpectedly")
+                except Exception as e:
+                    print(f"WebSocket error: {str(e)}")
+                    raise
+            
+            # Test cleanup with invalid swarm ID
+            invalid_cleanup_response = client.delete(
+                "/api/orchestration/swarms",
+                headers={"X-API-Key": TEST_API_KEY},
+                json={"swarm_ids": ["invalid_id"]}
+            )
+            assert invalid_cleanup_response.status_code == 404
+        finally:
+            app.dependency_overrides.clear()
+            
+    @pytest.mark.asyncio
+    async def test_graph_visualization(self, memory_system, analytics_agent, llm_interface, tiny_factory, world):
+        """Test graph visualization endpoints."""
+        app.dependency_overrides.update({
+            get_memory_system: lambda: memory_system,
+            get_analytics_agent: lambda: analytics_agent,
+            get_llm_interface: lambda: llm_interface,
+            get_tiny_factory: lambda: tiny_factory,
+            get_world: lambda: world
+        })
+        
+        try:
+            client = TestClient(app)
+            
+            # Create test pattern
+            pattern_response = client.post(
+                "/api/swarms/registry",
+                headers={"X-API-Key": TEST_API_KEY},
+                json={
+                    "pattern_type": "hierarchical",
+                    "config": {
+                        "tasks": [
+                            {
+                                "id": "supervisor",
+                                "type": "supervisor",
+                                "config": {}
+                            },
+                            {
+                                "id": "worker1",
+                                "type": "worker",
+                                "config": {},
+                                "dependencies": ["supervisor"]
+                            },
+                            {
+                                "id": "worker2",
+                                "type": "worker",
+                                "config": {},
+                                "dependencies": ["supervisor"]
+                            }
+                        ]
+                    }
+                }
+            )
+            assert pattern_response.status_code == 200
+            pattern_data = pattern_response.json()
+            pattern_id = pattern_data["pattern_id"]
+            
+            # Execute pattern
+            execution_response = client.post(
+                f"/api/swarms/execute/{pattern_id}",
+                headers={"X-API-Key": TEST_API_KEY},
+                json={}
+            )
+            assert execution_response.status_code == 200
+            execution_data = execution_response.json()
+            execution_id = execution_data["execution_id"]
+            
+            # Test DAG visualization
+            dag_response = client.get(
+                f"/api/visualization/dag/{execution_id}",
+                headers={"X-API-Key": TEST_API_KEY}
+            )
+            assert dag_response.status_code == 200
+            dag_data = dag_response.json()
+            assert "visualization" in dag_data
+            assert dag_data["visualization"]["type"] == "dag"
+            
+            # Test pattern visualization
+            pattern_viz_response = client.get(
+                f"/api/visualization/pattern/{pattern_id}",
+                headers={"X-API-Key": TEST_API_KEY}
+            )
+            assert pattern_viz_response.status_code == 200
+            pattern_viz_data = pattern_viz_response.json()
+            assert "visualization" in pattern_viz_data
+            assert pattern_viz_data["visualization"]["type"] == "pattern"
+            
+            # Test integrated visualization
+            integrated_response = client.get(
+                f"/api/visualization/integrated/{pattern_id}/{execution_id}",
+                headers={"X-API-Key": TEST_API_KEY}
+            )
+            assert integrated_response.status_code == 200
+            integrated_data = integrated_response.json()
+            assert "visualization" in integrated_data
+            assert integrated_data["visualization"]["type"] == "integrated"
+            
+            # Test pattern list visualization
+            list_response = client.get(
+                "/api/visualization/patterns",
+                headers={"X-API-Key": TEST_API_KEY},
+                params={"pattern_type": "hierarchical", "limit": 5}
+            )
+            assert list_response.status_code == 200
+            list_data = list_response.json()
+            assert "visualization" in list_data
+            assert list_data["patterns"] > 0
+            
+            # Test execution history visualization
+            history_response = client.get(
+                f"/api/visualization/executions/{pattern_id}",
+                headers={"X-API-Key": TEST_API_KEY},
+                params={"limit": 5}
+            )
+            assert history_response.status_code == 200
+            history_data = history_response.json()
+            assert "visualization" in history_data
+            assert history_data["executions"] > 0
+            
+            # Test error handling
+            invalid_dag_response = client.get(
+                "/api/visualization/dag/invalid_id",
+                headers={"X-API-Key": TEST_API_KEY}
+            )
+            assert invalid_dag_response.status_code == 404
+            
+            invalid_pattern_response = client.get(
+                "/api/visualization/pattern/invalid_id",
+                headers={"X-API-Key": TEST_API_KEY}
+            )
+            assert invalid_pattern_response.status_code == 404
+            
+            invalid_integrated_response = client.get(
+                "/api/visualization/integrated/invalid_pattern/invalid_execution",
+                headers={"X-API-Key": TEST_API_KEY}
+            )
+            assert invalid_integrated_response.status_code == 404
+            
+        finally:
+            app.dependency_overrides.clear()
         app.dependency_overrides.update({
             get_memory_system: lambda: memory_system,
             get_analytics_agent: lambda: analytics_agent,

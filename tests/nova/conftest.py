@@ -119,8 +119,8 @@ async def setup_test_environment(event_loop):
 @pytest.fixture(autouse=True)
 async def reset_connections():
     """Reset database connections before each test."""
-    from nia.memory.neo4j import reset_neo4j_driver
-    from nia.memory.vector import reset_vector_store
+    from nia.core.neo4j import reset_neo4j_driver
+    from nia.core.vector import reset_vector_store
     
     try:
         await reset_neo4j_driver()

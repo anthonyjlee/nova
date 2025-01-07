@@ -5,7 +5,7 @@ from datetime import datetime
 import uuid
 
 from ...memory.two_layer import TwoLayerMemorySystem
-from ...memory.types.memory_types import Memory
+from ...core.types.memory_types import Memory
 
 class TaskManagement:
     """Mixin class for task management capabilities."""

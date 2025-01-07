@@ -1,72 +1,113 @@
-"""Memory system type definitions."""
+"""Memory type definitions for NIA."""
 
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any
+from enum import Enum
+from typing import Dict, Optional, Any, List, Union, TypeVar, Protocol
+from pydantic import BaseModel, Field
 from datetime import datetime
 
-@dataclass
-class AgentResponse:
-    """Response from an agent's processing."""
-    content: str
-    confidence: float = 0.0
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    validation: Dict[str, Any] = field(default_factory=dict)
-    related: List[str] = field(default_factory=list)
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+class JSONSerializable(Protocol):
+    """Protocol for JSON-serializable objects."""
+    def dict(self) -> Dict[str, Any]: ...
 
-@dataclass
-class DialogueContext:
-    """Context for a dialogue interaction."""
-    conversation_id: str
-    turn_number: int
-    speaker: str
-    content: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+class MemoryType(Enum):
+    """Types of memories in the system."""
+    EPISODIC = "episodic"
+    SEMANTIC = "semantic"
+    PROCEDURAL = "procedural"
+    EMOTIONAL = "emotional"
 
-@dataclass
-class MemoryEntry:
-    """Base class for memory entries."""
-    id: str
+class AgentResponse(BaseModel):
+    """Response from an agent."""
     content: str
+    confidence: float = 1.0
+    metadata: Dict[str, Any] = {}
+
+class DialogueMessage(BaseModel):
+    """A message in a dialogue."""
+    content: str
+    sender: str
+    timestamp: datetime = Field(default_factory=datetime.now)
+    metadata: Dict[str, Any] = {}
+
+class DialogueContext(BaseModel):
+    """Context for a dialogue."""
+    messages: List[DialogueMessage] = []
+    participants: List[str] = []
+    metadata: Dict[str, Any] = {}
+
+class Memory(BaseModel):
+    """Base memory model."""
+    id: Optional[str] = None
+    content: str
+    type: MemoryType
+    importance: float = 1.0
+    timestamp: datetime = Field(default_factory=datetime.now)
+    context: Dict[str, Any] = {}
+    consolidated: bool = False
+
+class EpisodicMemory(Memory):
+    """Episodic memory model."""
+    type: MemoryType = MemoryType.EPISODIC
+    location: Optional[str] = None
+    participants: Optional[List[str]] = None
+    emotions: Optional[Dict[str, float]] = None
+    related_memories: Optional[List[str]] = None
+
+class SemanticMemory(Memory):
+    """Semantic memory model."""
+    type: MemoryType = MemoryType.SEMANTIC
+    concepts: List[str] = []
+    relationships: List[Dict[str, str]] = []
+    confidence: float = 1.0
+
+class ProceduralMemory(Memory):
+    """Procedural memory model."""
+    type: MemoryType = MemoryType.PROCEDURAL
+    steps: List[str] = []
+    prerequisites: List[str] = []
+    success_criteria: List[str] = []
+
+class Concept(BaseModel):
+    """A concept in the knowledge graph."""
+    name: str
     type: str
-    domain: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    timestamp: str = field(default_factory=lambda: datetime.now().isoformat())
+    description: str
+    attributes: Dict[str, Any] = {}
+    validation: Optional[Dict[str, Any]] = None
 
-@dataclass
-class EpisodicMemory(MemoryEntry):
-    """Episodic memory entry."""
-    vector: Optional[List[float]] = None
-    context: Optional[DialogueContext] = None
-
-@dataclass
-class SemanticMemory(MemoryEntry):
-    """Semantic memory entry."""
-    confidence: float = 0.0
-    source: Optional[str] = None
-    validation: Dict[str, Any] = field(default_factory=dict)
-    related: List[str] = field(default_factory=list)
-
-@dataclass
-class ConsolidationPattern:
-    """Pattern for memory consolidation."""
+class Relationship(BaseModel):
+    """A relationship between concepts."""
+    source: str
+    target: str
     type: str
+    attributes: Dict[str, Any] = {}
+    confidence: float = 1.0
+
+class Belief(BaseModel):
+    """A belief about concepts."""
+    subject: str
+    predicate: str
+    object: str
+    confidence: float = 1.0
+    evidence: List[str] = []
+
+class MemoryQuery(BaseModel):
+    """Query for searching memories."""
+    content: Optional[str] = None
+    type: Optional[MemoryType] = None
+    time_range: Optional[tuple[datetime, datetime]] = None
+    filter: Dict[str, Any] = {}
+    limit: int = 10
+
+class ConsolidationRule(BaseModel):
+    """Rule for memory consolidation."""
     pattern: str
-    confidence_threshold: float = 0.7
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    conditions: Dict[str, Any] = {}
+    actions: List[str] = []
+    priority: int = 0
 
-@dataclass
-class ValidationResult:
-    """Result of memory validation."""
-    is_valid: bool
-    confidence: float
-    issues: List[str] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-
-@dataclass
-class MemoryQueryResult:
-    """Result of a memory query."""
-    entries: List[MemoryEntry]
-    confidence: float
-    metadata: Dict[str, Any] = field(default_factory=dict)
+class MemoryBatch(BaseModel):
+    """Batch of memories for processing."""
+    memories: List[Memory]
+    metadata: Dict[str, Any] = {}
+    batch_id: Optional[str] = None

@@ -5,7 +5,7 @@ import logging
 import re
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from datetime import datetime
-from .types.memory_types import AgentResponse
+from ..types.memory_types import AgentResponse
 
 if TYPE_CHECKING:
     from ..nova.core.parsing import NovaParser

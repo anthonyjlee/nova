@@ -1,6 +1,6 @@
 """FastAPI endpoints for Nova's analytics and orchestration."""
 
-from fastapi import APIRouter, HTTPException, WebSocket, Depends, Header, Request
+from fastapi import APIRouter, HTTPException, WebSocket, Depends, Header, Request, Response, Query, File, UploadFile
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import aiohttp
@@ -54,6 +54,24 @@ from .models import (
 logger = logging.getLogger(__name__)
 
 # Create routers with dependencies
+graph_router = APIRouter(
+    prefix="/api/graph",
+    tags=["graph"],
+    dependencies=[Depends(check_rate_limit)]
+)
+
+agent_router = APIRouter(
+    prefix="/api/agents",
+    tags=["agents"],
+    dependencies=[Depends(check_rate_limit)]
+)
+
+user_router = APIRouter(
+    prefix="/api/users",
+    tags=["users"],
+    dependencies=[Depends(check_rate_limit)]
+)
+
 analytics_router = APIRouter(
     prefix="/api/analytics",
     tags=["analytics"],
@@ -77,6 +95,42 @@ CHAT_MODEL = "llama-3.2-3b-instruct"
 EMBEDDING_MODEL = "text-embedding-nomic-embed-text-v1.5@q8_0"
 
 # Service dependencies
+async def get_graph_store():
+    """Get graph store instance."""
+    from nia.memory.graph_store import GraphStore
+    store = GraphStore(
+        neo4j_uri="bolt://localhost:7687"
+    )
+    try:
+        await store.connect()
+        yield store
+    finally:
+        await store.close()
+
+async def get_agent_store():
+    """Get agent store instance."""
+    from nia.memory.agent_store import AgentStore
+    store = AgentStore(
+        neo4j_uri="bolt://localhost:7687"
+    )
+    try:
+        await store.connect()
+        yield store
+    finally:
+        await store.close()
+
+async def get_profile_store():
+    """Get profile store instance."""
+    from nia.memory.profile_store import ProfileStore
+    store = ProfileStore(
+        neo4j_uri="bolt://localhost:7687"
+    )
+    try:
+        await store.connect()
+        yield store
+    finally:
+        await store.close()
+
 async def get_memory_system():
     """Get memory system instance."""
     memory_system = TwoLayerMemorySystem(
@@ -1507,6 +1561,472 @@ async def create_sequential_task(
     except Exception as e:
         if isinstance(e, HTTPException):
             raise
+        raise ServiceError(str(e))
+
+@user_router.post("/profile/questionnaire")
+@retry_on_error(max_retries=3)
+async def submit_questionnaire(
+    request: Dict[str, Any],
+    _: None = Depends(get_permission("write")),
+    profile_store: Any = Depends(get_profile_store)
+) -> Dict:
+    """Submit user psychometric questionnaire."""
+    try:
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        required_sections = ["personality", "learning_style", "communication_preferences"]
+        for section in required_sections:
+            if section not in request:
+                raise ValidationError(f"Request must include '{section}' section")
+        
+        # Store profile data
+        profile_id = f"profile_{uuid.uuid4().hex[:8]}"
+        await profile_store.store_profile(
+            profile_id=profile_id,
+            profile_data={
+                **request,
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat()
+            }
+        )
+        
+        return {
+            "profile_id": profile_id,
+            "status": "created",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@user_router.get("/profile")
+@retry_on_error(max_retries=3)
+async def get_profile(
+    _: None = Depends(get_permission("read")),
+    profile_store: Any = Depends(get_profile_store)
+) -> Dict:
+    """Get user profile data."""
+    try:
+        profile_data = await profile_store.get_profile()
+        if not profile_data:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "NOT_FOUND",
+                    "message": "Profile not found"
+                }
+            )
+        
+        return {
+            **profile_data,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@user_router.put("/profile/preferences")
+@retry_on_error(max_retries=3)
+async def update_preferences(
+    request: Dict[str, Any],
+    _: None = Depends(get_permission("write")),
+    profile_store: Any = Depends(get_profile_store)
+) -> Dict:
+    """Update user preferences."""
+    try:
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        # Update preferences
+        await profile_store.update_preferences(
+            preferences=request,
+            updated_at=datetime.now().isoformat()
+        )
+        
+        return {
+            "status": "updated",
+            "preferences": request,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@user_router.get("/profile/learning-style")
+@retry_on_error(max_retries=3)
+async def get_learning_style(
+    _: None = Depends(get_permission("read")),
+    profile_store: Any = Depends(get_profile_store)
+) -> Dict:
+    """Get user learning style."""
+    try:
+        profile_data = await profile_store.get_profile()
+        if not profile_data or "learning_style" not in profile_data:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "NOT_FOUND",
+                    "message": "Learning style not found"
+                }
+            )
+        
+        return {
+            **profile_data["learning_style"],
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@user_router.put("/profile/auto-approval")
+@retry_on_error(max_retries=3)
+async def update_auto_approval(
+    request: Dict[str, Any],
+    _: None = Depends(get_permission("write")),
+    profile_store: Any = Depends(get_profile_store)
+) -> Dict:
+    """Update auto-approval settings."""
+    try:
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        # Update auto-approval settings
+        await profile_store.update_preferences(
+            preferences={
+                "auto_approval": request
+            },
+            updated_at=datetime.now().isoformat()
+        )
+        
+        return {
+            "status": "updated",
+            "auto_approval": request,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@agent_router.get("/{agent_id}/capabilities")
+@retry_on_error(max_retries=3)
+async def get_agent_capabilities(
+    agent_id: str,
+    _: None = Depends(get_permission("read")),
+    agent_store: Any = Depends(get_agent_store)
+) -> Dict:
+    """Get agent capabilities."""
+    try:
+        capabilities = await agent_store.get_capabilities(agent_id)
+        if not capabilities:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "NOT_FOUND",
+                    "message": f"Agent {agent_id} not found"
+                }
+            )
+        
+        return {
+            "agent_id": agent_id,
+            "capabilities": capabilities,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@agent_router.get("/types")
+@retry_on_error(max_retries=3)
+async def get_agent_types(
+    _: None = Depends(get_permission("read")),
+    agent_store: Any = Depends(get_agent_store)
+) -> Dict:
+    """Get available agent types."""
+    try:
+        types = await agent_store.get_types()
+        return {
+            "agent_types": types,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@agent_router.get("/search")
+@retry_on_error(max_retries=3)
+async def search_agents(
+    capability: Optional[str] = Query(None),
+    domain: Optional[str] = Query(None),
+    _: None = Depends(get_permission("read")),
+    agent_store: Any = Depends(get_agent_store)
+) -> Dict:
+    """Search for agents by capability and domain."""
+    try:
+        agents = await agent_store.search_agents(
+            capability=capability,
+            domain=domain
+        )
+        return {
+            "agents": agents,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@agent_router.get("/{agent_id}/history")
+@retry_on_error(max_retries=3)
+async def get_agent_history(
+    agent_id: str,
+    _: None = Depends(get_permission("read")),
+    agent_store: Any = Depends(get_agent_store)
+) -> Dict:
+    """Get agent interaction history."""
+    try:
+        history = await agent_store.get_history(agent_id)
+        if not history:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "NOT_FOUND",
+                    "message": f"Agent {agent_id} not found"
+                }
+            )
+        
+        return {
+            "agent_id": agent_id,
+            "interactions": history,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@agent_router.get("/{agent_id}/metrics")
+@retry_on_error(max_retries=3)
+async def get_agent_metrics(
+    agent_id: str,
+    _: None = Depends(get_permission("read")),
+    agent_store: Any = Depends(get_agent_store)
+) -> Dict:
+    """Get agent performance metrics."""
+    try:
+        metrics = await agent_store.get_metrics(agent_id)
+        if not metrics:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "NOT_FOUND",
+                    "message": f"Agent {agent_id} not found"
+                }
+            )
+        
+        return {
+            "agent_id": agent_id,
+            "performance_metrics": metrics,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@agent_router.post("/{agent_id}/activate")
+@retry_on_error(max_retries=3)
+async def activate_agent(
+    agent_id: str,
+    _: None = Depends(get_permission("write")),
+    agent_store: Any = Depends(get_agent_store)
+) -> Dict:
+    """Activate an agent."""
+    try:
+        await agent_store.set_status(agent_id, "active")
+        return {
+            "agent_id": agent_id,
+            "status": "active",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@agent_router.post("/{agent_id}/deactivate")
+@retry_on_error(max_retries=3)
+async def deactivate_agent(
+    agent_id: str,
+    _: None = Depends(get_permission("write")),
+    agent_store: Any = Depends(get_agent_store)
+) -> Dict:
+    """Deactivate an agent."""
+    try:
+        await agent_store.set_status(agent_id, "inactive")
+        return {
+            "agent_id": agent_id,
+            "status": "inactive",
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@agent_router.get("/{agent_id}/status")
+@retry_on_error(max_retries=3)
+async def get_agent_status(
+    agent_id: str,
+    _: None = Depends(get_permission("read")),
+    agent_store: Any = Depends(get_agent_store)
+) -> Dict:
+    """Get agent status."""
+    try:
+        status = await agent_store.get_status(agent_id)
+        if status is None:
+            raise HTTPException(
+                status_code=404,
+                detail={
+                    "code": "NOT_FOUND",
+                    "message": f"Agent {agent_id} not found"
+                }
+            )
+        
+        return {
+            "agent_id": agent_id,
+            "status": status,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
+@graph_router.post("/prune")
+@retry_on_error(max_retries=3)
+async def prune_graph(
+    request: Dict[str, Any],
+    _: None = Depends(get_permission("write")),
+    graph_store: Any = Depends(get_graph_store)
+) -> Dict:
+    """Prune knowledge graph based on criteria."""
+    try:
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        min_relevance = request.get("min_relevance_score", 0.5)
+        max_age_days = request.get("max_age_days", 30)
+        exclude_domains = request.get("exclude_domains", [])
+        
+        # Perform pruning
+        result = await graph_store.prune_graph(
+            min_relevance=min_relevance,
+            max_age_days=max_age_days,
+            exclude_domains=exclude_domains
+        )
+        
+        return {
+            "nodes_removed": result["nodes_removed"],
+            "edges_removed": result["edges_removed"],
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@graph_router.get("/health")
+@retry_on_error(max_retries=3)
+async def check_graph_health(
+    _: None = Depends(get_permission("read")),
+    graph_store: Any = Depends(get_graph_store)
+) -> Dict:
+    """Check knowledge graph health."""
+    try:
+        health_data = await graph_store.check_health()
+        return {
+            **health_data,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@graph_router.post("/optimize")
+@retry_on_error(max_retries=3)
+async def optimize_graph(
+    request: Dict[str, Any],
+    _: None = Depends(get_permission("write")),
+    graph_store: Any = Depends(get_graph_store)
+) -> Dict:
+    """Optimize graph structure."""
+    try:
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        target_metrics = request.get("target_metrics", ["query_performance"])
+        optimization_level = request.get("optimization_level", "moderate")
+        
+        # Perform optimization
+        result = await graph_store.optimize_structure(
+            target_metrics=target_metrics,
+            optimization_level=optimization_level
+        )
+        
+        return {
+            **result,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@graph_router.get("/statistics")
+@retry_on_error(max_retries=3)
+async def get_graph_statistics(
+    _: None = Depends(get_permission("read")),
+    graph_store: Any = Depends(get_graph_store)
+) -> Dict:
+    """Get knowledge graph statistics."""
+    try:
+        stats = await graph_store.get_statistics()
+        return {
+            **stats,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@graph_router.post("/backup")
+@retry_on_error(max_retries=3)
+async def create_graph_backup(
+    request: Dict[str, Any],
+    _: None = Depends(get_permission("write")),
+    graph_store: Any = Depends(get_graph_store)
+) -> Dict:
+    """Create graph backup."""
+    try:
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        include_domains = request.get("include_domains", ["all"])
+        backup_format = request.get("backup_format", "cypher")
+        compression = request.get("compression", True)
+        
+        # Create backup
+        result = await graph_store.create_backup(
+            include_domains=include_domains,
+            backup_format=backup_format,
+            compression=compression
+        )
+        
+        return {
+            **result,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
         raise ServiceError(str(e))
 
 @orchestration_router.post("/tasks", deprecated=True)

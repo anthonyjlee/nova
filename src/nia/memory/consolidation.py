@@ -4,8 +4,8 @@ import logging
 from typing import Dict, List, Optional
 from datetime import datetime, timedelta
 
-from .types.memory_types import Memory, Concept, Relationship
-from .neo4j.concept_store import ConceptStore
+from ..core.types.memory_types import Memory, Concept, Relationship
+from ..core.neo4j.concept_store import ConceptStore
 
 logger = logging.getLogger(__name__)
 
