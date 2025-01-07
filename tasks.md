@@ -313,10 +313,22 @@
   * Added request validation
   * Updated response formatting
   * [ ] Memory System Integration:
-    - Address data type mismatches in episodic memory
+    - Fix vector store timeouts in tests
     - Improve error handling for memory operations
     - Add comprehensive logging for debugging
     - Fix Neo4j connection issues in tests
+
+- [ ] Test Coverage Improvements:
+  * Fix fixture initialization issues
+  * Add proper cleanup handling
+  * Improve test isolation
+  * Add missing test scenarios
+  * Implement remaining swarm pattern tests
+  * Add cross-domain operation tests
+  * Test error handling scenarios
+  * Verify pattern optimization
+  * Add end-to-end swarm tests
+  * Test cross-component interactions
 
 - [ ] Frontend Development:
   * Begin SvelteKit setup
@@ -324,6 +336,8 @@
   * Add WebSocket integration
 
 ### Blockers
-None - Performance testing infrastructure is now in place
+1. Test fixture issues need resolution
+2. Vector store timeouts need fixing
+3. Missing test coverage for critical paths
 
 Note: This task list will be updated daily to reflect current progress and priorities.
