@@ -8,9 +8,9 @@ from datetime import datetime
 from ..types.memory_types import AgentResponse
 
 if TYPE_CHECKING:
-    from ..nova.core.parsing import NovaParser
-    from .neo4j.neo4j_store import Neo4jMemoryStore
-    from .vector.vector_store import VectorStore
+    from nia.nova.core.parsing import NovaParser
+    from nia.core.neo4j.neo4j_store import Neo4jMemoryStore
+    from nia.core.vector.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +71,7 @@ class LLMInterface:
         vector_store: 'VectorStore'
     ) -> None:
         """Initialize parsing agent."""
-        from ..nova.core.parsing import NovaParser
+        from nia.nova.core.parsing import NovaParser
         self.parser = NovaParser(self, store, vector_store)
         
     def set_parser(self, parser: 'NovaParser'):
