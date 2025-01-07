@@ -1,32 +1,6 @@
 # NIA (Nova Intelligence Architecture)
 
-```
-╭──────────────── Project Status Update (2025-01-07) ────────────────╮
-│                                                                    │
-│ 🎯 Recent Achievements:                                           │
-│ ✓ Integrated outlines with LMStudio for structured JSON           │
-│ ✓ Split test_demo.py into focused test files                      │
-│ ✓ Implemented all major system components                         │
-│                                                                    │
-│ 🚧 Current Focus:                                                 │
-│ ⚠️ Fixing test fixture issues                                     │
-│ ⚠️ Resolving vector store timeouts                               │
-│ ⚠️ Improving test coverage                                       │
-│                                                                    │
-│ 📊 Implementation Progress:                                       │
-│ ▰▰▰▰▰▰▰▰▱▱ 80% Complete                                         │
-│ - Core Components: 100%                                           │
-│ - Memory System: 100%                                             │
-│ - Agent System: 100%                                              │
-│ - Test Coverage: 60%                                              │
-│ - Frontend: 0%                                                    │
-│                                                                    │
-│ 🎯 Next Steps:                                                    │
-│ 1. Fix remaining test issues                                      │
-│ 2. Complete test coverage                                         │
-│ 3. Begin frontend development                                     │
-╰────────────────────────────────────────────────────────────────────╯
-```
+> **Project Status (2025-01-07)**: Core components complete, fixing agent coordination tests before starting frontend development.
 
 
 NIA is a sophisticated multi-agent system built on TinyTroupe that combines metacognition (Nova) with domain-specific tasks. The system features:
@@ -925,39 +899,113 @@ response = requests.post(
 ## Getting Started
 
 ### Prerequisites
-- Python 3.8+
-- Node.js 14+
-- Neo4j 4.4+
-- Vector store (FAISS/Qdrant)
+- Python 3.9+
+- Docker Desktop
+- LMStudio (for LLM inference)
 
-### Installation
-1. Clone the repository
-2. Install backend dependencies:
+### Installation & Setup
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/NIA.git
+   cd NIA
+   ```
+
+2. Install Python dependencies:
    ```bash
    pip install -r requirements.txt
    ```
-3. Install frontend dependencies:
-   ```bash
-   cd frontend
-   npm install
-   ```
-4. Configure environment variables:
+
+3. Configure environment:
    ```bash
    cp .env.example .env
    # Edit .env with your settings
    ```
-5. Start the services:
+
+4. Start all services:
    ```bash
-   # Start Neo4j
-   docker-compose up -d neo4j
-   
-   # Start the FastAPI server
-   python scripts/run_server.py
-   
-   # Start the frontend
-   cd frontend
-   npm run dev
+   # Start all required services (Neo4j, Qdrant, FastAPI)
+   python scripts/manage.py start
+
+   # Check service status
+   python scripts/manage.py status
+
+   # Stop all services when done
+   python scripts/manage.py stop
    ```
+
+   Note: You'll need to manually:
+   1. Launch LMStudio application
+   2. Load your preferred model
+   3. Start the local server (default: http://localhost:1234)
+
+### Development Setup
+
+1. Running Tests:
+   ```bash
+   # Run all tests
+   pytest
+   
+   # Run specific test categories
+   pytest tests/nova/test_websocket.py  # WebSocket tests
+   pytest tests/nova/test_memory_api.py  # Memory API tests
+   pytest tests/nova/test_agent_coordination.py  # Agent coordination tests
+   ```
+
+2. Development Tools:
+   - LMStudio: Local LLM inference (http://localhost:1234)
+   - Neo4j Browser: Graph database interface (http://localhost:7474)
+   - Qdrant Dashboard: Vector store management (http://localhost:6333/dashboard)
+
+### Service Dependencies
+
+1. **Neo4j (Graph Database)**
+   - Purpose: Semantic memory storage
+   - Port: 7474 (HTTP), 7687 (Bolt)
+   - Status Check: http://localhost:7474
+
+2. **Qdrant (Vector Store)**
+   - Purpose: Ephemeral memory & embeddings
+   - Port: 6333
+   - Status Check: http://localhost:6333/dashboard
+
+3. **LMStudio (LLM Server)**
+   - Purpose: Local LLM inference
+   - Port: 1234
+   - Status Check: http://localhost:1234/v1/models
+
+4. **FastAPI Server**
+   - Purpose: Main application server
+   - Port: 8000
+   - Status Check: http://localhost:8000/docs
+
+### Common Issues & Solutions
+
+1. **Neo4j Connection Issues**
+   ```bash
+   # Restart Neo4j container
+   docker compose -f scripts/docker/compose/docker-compose.yml restart neo4j
+   # Check logs
+   docker compose -f scripts/docker/compose/docker-compose.yml logs neo4j
+   ```
+
+2. **Qdrant Connection Issues**
+   ```bash
+   # Restart Qdrant container
+   docker compose -f scripts/docker/compose/docker-compose.yml restart qdrant
+   # Check logs
+   docker compose -f scripts/docker/compose/docker-compose.yml logs qdrant
+   ```
+
+3. **LMStudio Issues**
+   - Ensure model is loaded
+   - Check server is running at http://localhost:1234
+   - Verify API key is set to "lm-studio"
+
+4. **FastAPI Server Issues**
+   - Check all services are running
+   - Verify environment variables
+   - Check logs for errors
 
 ## System Architecture
 
