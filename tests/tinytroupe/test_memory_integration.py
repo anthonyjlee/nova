@@ -297,6 +297,319 @@ async def test_query_task_outputs(nova):
         raise
 
 @pytest.mark.asyncio
+async def test_memory_consolidation_patterns(nova):
+    """Test different memory consolidation patterns."""
+    domain = "development"
+    
+    async with TestContext(nova.memory_system, domain):
+        # Create agents
+        worker = await nova.spawn_agent(
+            agent_type="worker",
+            name="worker_agent",
+            attributes={
+                "skills": ["task_execution"],
+                "domain": domain
+            }
+        )
+        
+        # Store related memories that should form a pattern
+        memories = [
+            {
+                "content": "Implemented user authentication",
+                "concepts": [
+                    {
+                        "name": "Authentication",
+                        "type": "Feature",
+                        "category": "security",
+                        "description": "User authentication system",
+                        "confidence": 0.9
+                    }
+                ]
+            },
+            {
+                "content": "Added password hashing",
+                "concepts": [
+                    {
+                        "name": "Password Hashing",
+                        "type": "Component",
+                        "category": "security",
+                        "description": "Password security feature",
+                        "confidence": 0.9
+                    }
+                ],
+                "relationships": [
+                    {
+                        "from_concept": "Password Hashing",
+                        "to_concept": "Authentication",
+                        "type": "implements",
+                        "properties": {"security_level": "high"}
+                    }
+                ]
+            },
+            {
+                "content": "Implemented session management",
+                "concepts": [
+                    {
+                        "name": "Session Management",
+                        "type": "Component",
+                        "category": "security",
+                        "description": "User session handling",
+                        "confidence": 0.9
+                    }
+                ],
+                "relationships": [
+                    {
+                        "from_concept": "Session Management",
+                        "to_concept": "Authentication",
+                        "type": "implements",
+                        "properties": {"type": "stateful"}
+                    }
+                ]
+            }
+        ]
+        
+        # Store memories
+        for memory in memories:
+            await worker.store_memory(
+                content=memory["content"],
+                importance=0.8,
+                context={
+                    "domain": domain,
+                    "agent_type": "worker"
+                },
+                concepts=memory.get("concepts", []),
+                relationships=memory.get("relationships", [])
+            )
+        
+        # Mock consolidation to return our test memories
+        memory_dicts = [
+            create_memory_dict(
+                content=m["content"],
+                concepts=m.get("concepts", []),
+                relationships=m.get("relationships", [])
+            ) for m in memories
+        ]
+        
+        mock_memories = [
+            Mock(spec=EpisodicMemory, **d) for d in memory_dicts
+        ]
+        
+        nova.memory_system.episodic.get_consolidation_candidates = AsyncMock(
+            return_value=mock_memories
+        )
+        
+        # Trigger consolidation
+        await worker.reflect()
+        
+        # Verify pattern extraction
+        stored_knowledge = nova.memory_system.semantic.store_knowledge.call_args[0][0]
+        
+        # Verify security pattern was extracted
+        security_concepts = [c for c in stored_knowledge["concepts"] 
+                           if c["category"] == "security"]
+        assert len(security_concepts) == 3
+        
+        # Verify implementation relationships
+        impl_relations = [r for r in stored_knowledge["relationships"]
+                         if r["type"] == "implements"]
+        assert len(impl_relations) == 2
+
+@pytest.mark.asyncio
+async def test_cross_domain_memory_access(nova):
+    """Test memory access across domains."""
+    domains = ["development", "security"]
+    
+    async with TestContext(nova.memory_system, domains[0]):
+        # Create agents in different domains
+        dev_agent = await nova.spawn_agent(
+            agent_type="worker",
+            name="dev_agent",
+            attributes={
+                "skills": ["development"],
+                "domain": domains[0]
+            }
+        )
+        
+        security_agent = await nova.spawn_agent(
+            agent_type="worker", 
+            name="security_agent",
+            attributes={
+                "skills": ["security"],
+                "domain": domains[1]
+            }
+        )
+        
+        # Store memory in development domain
+        dev_memory = await dev_agent.store_memory(
+            content="Implemented new API endpoint",
+            importance=0.8,
+            context={
+                "domain": domains[0],
+                "agent_type": "worker"
+            },
+            concepts=[{
+                "name": "API Endpoint",
+                "type": "Component",
+                "category": "backend",
+                "description": "New API endpoint",
+                "confidence": 0.9
+            }]
+        )
+        
+        # Store memory in security domain
+        security_memory = await security_agent.store_memory(
+            content="Security audit of API endpoint",
+            importance=0.8,
+            context={
+                "domain": domains[1],
+                "agent_type": "worker"
+            },
+            concepts=[{
+                "name": "Security Audit",
+                "type": "Process",
+                "category": "security",
+                "description": "API security review",
+                "confidence": 0.9
+            }],
+            relationships=[{
+                "from_concept": "Security Audit",
+                "to_concept": "API Endpoint",
+                "type": "analyzes",
+                "properties": {"status": "completed"}
+            }]
+        )
+        
+        # Mock memory query results
+        mock_memories = [
+            nova.create_memory_mock(
+                content="Implemented new API endpoint",
+                context={"domain": domains[0]},
+                concepts=[{
+                    "name": "API Endpoint",
+                    "type": "Component"
+                }]
+            ),
+            nova.create_memory_mock(
+                content="Security audit of API endpoint",
+                context={"domain": domains[1]},
+                concepts=[{
+                    "name": "Security Audit",
+                    "type": "Process"
+                }]
+            )
+        ]
+        
+        nova.memory_system.episodic.store.search_vectors = AsyncMock(
+            return_value=mock_memories
+        )
+        
+        # Query from development domain
+        dev_results = await dev_agent.recall_memories(
+            query={
+                "filter": {
+                    "context": {
+                        "domain": domains[0]
+                    }
+                }
+            }
+        )
+        
+        # Verify domain boundary enforcement
+        assert len(dev_results) == 1
+        assert dev_results[0].context["domain"] == domains[0]
+        
+        # Query with explicit cross-domain access
+        cross_domain_results = await dev_agent.recall_memories(
+            query={
+                "filter": {
+                    "context": {
+                        "domain": {"$in": domains}
+                    }
+                }
+            },
+            allow_cross_domain=True
+        )
+        
+        # Verify cross-domain access
+        assert len(cross_domain_results) == 2
+        domains_found = {r.context["domain"] for r in cross_domain_results}
+        assert domains_found == set(domains)
+
+@pytest.mark.asyncio
+async def test_memory_cleanup(nova):
+    """Test memory cleanup operations."""
+    domain = "development"
+    
+    async with TestContext(nova.memory_system, domain):
+        # Create agent
+        agent = await nova.spawn_agent(
+            agent_type="worker",
+            name="cleanup_agent",
+            attributes={
+                "skills": ["development"],
+                "domain": domain
+            }
+        )
+        
+        # Store test memories
+        memories = []
+        for i in range(3):
+            memory = await agent.store_memory(
+                content=f"Test memory {i}",
+                importance=0.8,
+                context={
+                    "domain": domain,
+                    "agent_type": "worker"
+                }
+            )
+            memories.append(memory)
+        
+        # Mock memory retrieval
+        mock_memories = [
+            nova.create_memory_mock(
+                content=f"Test memory {i}",
+                context={"domain": domain}
+            ) for i in range(3)
+        ]
+        
+        nova.memory_system.episodic.store.search_vectors = AsyncMock(
+            return_value=mock_memories
+        )
+        
+        # Archive old memories
+        await agent.archive_memories(
+            filter_={
+                "context": {
+                    "domain": domain
+                }
+            },
+            before_timestamp=format_timestamp()
+        )
+        
+        # Verify archive operation
+        nova.memory_system.episodic.store.archive_memories.assert_called_once()
+        archive_args = nova.memory_system.episodic.store.archive_memories.call_args[1]
+        assert "filter" in archive_args
+        assert archive_args["filter"]["context"]["domain"] == domain
+        
+        # Delete archived memories
+        await agent.delete_memories(
+            filter_={
+                "context": {
+                    "domain": domain
+                },
+                "archived": True
+            }
+        )
+        
+        # Verify deletion operation
+        nova.memory_system.episodic.store.delete_vectors.assert_called_once()
+        delete_args = nova.memory_system.episodic.store.delete_vectors.call_args[1]
+        assert "filter" in delete_args
+        assert delete_args["filter"]["context"]["domain"] == domain
+        assert delete_args["filter"]["archived"] is True
+
+@pytest.mark.asyncio
 async def test_consolidate_task_knowledge(nova):
     """Test consolidating task outputs into semantic knowledge."""
     domain = "backend"
