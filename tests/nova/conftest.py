@@ -2,10 +2,124 @@
 
 import pytest
 import asyncio
+import uuid
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock
+from typing import Dict, List, Any, Optional
+
+from tests.nova.test_utils import (
+    track_resource,
+    untrack_resource,
+    generate_test_memory,
+    generate_test_agent
+)
 from nia.nova.core.analytics import AnalyticsResult
 from nia.memory.two_layer import TwoLayerMemorySystem
 from nia.world.environment import NIAWorld
+from nia.memory.types.memory_types import (
+    Memory, MemoryType, EpisodicMemory,
+    TaskOutput, OutputType, TaskStatus
+)
+
+# Test data generators
+def generate_test_profile(
+    name: str,
+    domain: str,
+    preferences: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """Generate test user profile data."""
+    profile_id = f"test_profile_{uuid.uuid4()}"
+    track_resource(profile_id)
+    
+    return {
+        "id": profile_id,
+        "name": name,
+        "domain": domain,
+        "preferences": preferences or {
+            "communication_style": "technical",
+            "visualization_preference": "high",
+            "task_granularity": "detailed"
+        },
+        "metadata": {
+            "test": True,
+            "created": datetime.now(timezone.utc).isoformat()
+        }
+    }
+
+def generate_test_task(
+    title: str,
+    domain: str,
+    agent_id: Optional[str] = None,
+    status: str = "pending",
+    subtasks: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
+    """Generate test task data."""
+    task_id = f"test_task_{uuid.uuid4()}"
+    track_resource(task_id)
+    
+    return {
+        "id": task_id,
+        "title": title,
+        "domain": domain,
+        "agent_id": agent_id,
+        "status": status,
+        "subtasks": subtasks or [],
+        "metadata": {
+            "test": True,
+            "created": datetime.now(timezone.utc).isoformat()
+        }
+    }
+
+def generate_test_output(
+    task_id: str,
+    output_type: str,
+    content: str,
+    agent_id: Optional[str] = None
+) -> Dict[str, Any]:
+    """Generate test task output data."""
+    output_id = f"test_output_{uuid.uuid4()}"
+    track_resource(output_id)
+    
+    return {
+        "id": output_id,
+        "task_id": task_id,
+        "type": output_type,
+        "content": content,
+        "agent_id": agent_id,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "metadata": {
+            "test": True
+        }
+    }
+
+# Test domains
+TEST_DOMAINS = {
+    "development": {
+        "name": "Development",
+        "description": "Software development domain",
+        "capabilities": ["coding", "testing", "debugging"]
+    },
+    "security": {
+        "name": "Security",
+        "description": "Security analysis domain",
+        "capabilities": ["audit", "review", "hardening"]
+    },
+    "documentation": {
+        "name": "Documentation",
+        "description": "Documentation and writing domain",
+        "capabilities": ["writing", "editing", "formatting"]
+    }
+}
+
+@pytest.fixture
+def test_domain():
+    """Get test domain data."""
+    domain_id = f"test_domain_{uuid.uuid4()}"
+    track_resource(domain_id)
+    return {
+        "id": domain_id,
+        **TEST_DOMAINS["development"]
+    }
 
 @pytest.fixture
 async def mock_vector_store():

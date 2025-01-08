@@ -9,7 +9,7 @@ from tinytroupe import TinyPerson
 from .base import BaseAgent as MemoryBaseAgent
 from ..world.environment import NIAWorld
 from ..memory.two_layer import TwoLayerMemorySystem
-from ..core.types.memory_types import Memory, EpisodicMemory, SemanticMemory, AgentResponse
+from ..core.types.memory_types import Memory, EpisodicMemory, SemanticMemory, AgentResponse, MemoryType
 from ..config import validate_agent_config
 
 logger = logging.getLogger(__name__)
@@ -41,10 +41,11 @@ class TinyTroupeAgent(TinyPerson, MemoryBaseAgent):
         # Initialize MemoryBaseAgent
         MemoryBaseAgent.__init__(
             self,
-            llm=None,  # Will be set later through LMStudio
-            store=memory_system.semantic.driver if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            agent_type=agent_type
+            name=name,
+            agent_type=agent_type,
+            memory_system=memory_system,
+            world=world,
+            attributes=attributes
         )
         
         # Store additional attributes
@@ -54,13 +55,13 @@ class TinyTroupeAgent(TinyPerson, MemoryBaseAgent):
     def _initialize_attributes(self, attributes: Optional[Dict] = None):
         """Initialize TinyTroupe attributes."""
         attributes = attributes or {}
-        self._configuration.update({
+        self._configuration = {
             "occupation": attributes.get("occupation", "Agent"),
             "current_goals": attributes.get("desires", ["Help users", "Learn and improve"]),
             "current_emotions": attributes.get("emotions", {"baseline": "neutral"}),
-            "memory_references": attributes.get("memory_references", []),
+            "memory_references": {},  # Initialize empty memory references
             "capabilities": attributes.get("capabilities", [])
-        })
+        }
         
     def define(self, occupation: str = None, desires: List[str] = None, 
               emotions: Dict[str, str] = None, domain: str = None,
@@ -92,22 +93,37 @@ class TinyTroupeAgent(TinyPerson, MemoryBaseAgent):
         
         # Process through TinyTroupe
         if "emotion" in event:
-            self.emotions.update(event["emotion"])
+            self._configuration["current_emotions"].update(event["emotion"])
             
         # Store observation
-        await self.store_memory(
-            content=event,
+        memory_id = await self.store_memory(
+            content=str(event),
             importance=event.get("importance", 0.5),
             context={"type": "observation"}
         )
+        if memory_id:
+            self._configuration["memory_references"][memory_id] = {
+                "type": "observation",
+                "timestamp": datetime.now().isoformat()
+            }
         
     async def act(self, action: str, **kwargs):
         """Perform an action through both systems."""
         # Log action in memory
-        await self.store_memory(
-            content={"action": action, "parameters": kwargs},
-            context={"type": "action"}
+        memory_id = await self.store_memory(
+            content=f"Action: {action}, Parameters: {str(kwargs)}",
+            importance=0.5,
+            context={
+                "type": "action",
+                "action": action,
+                "parameters": kwargs
+            }
         )
+        if memory_id:
+            self._configuration["memory_references"][memory_id] = {
+                "type": "action",
+                "timestamp": datetime.now().isoformat()
+            }
         
         # Execute through world if available
         if self.world:
@@ -116,14 +132,80 @@ class TinyTroupeAgent(TinyPerson, MemoryBaseAgent):
         logger.warning(f"Agent {self.name} has no world to execute action in")
         return None
         
+    async def learn_concept(self, name: str, type: str, description: str, related: List[str] = None):
+        """Learn a new concept."""
+        # Store concept in memory
+        memory_id = await self.store_memory(
+            content=f"Learning concept: {name} ({type}) - {description}",
+            importance=0.8,
+            context={"type": "concept_learning"},
+            concepts=[{
+                "name": name,
+                "type": type,
+                "description": description,
+                "related": related or []
+            }]
+        )
+        
+        # Update memory references
+        if memory_id:
+            self._configuration["memory_references"][memory_id] = {
+                "type": "concept",
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        # Update emotions if concept is emotional
+        if "emotion" in type.lower():
+            self._configuration["current_emotions"][name] = description
+            
+    async def store_memory(self, content: str, importance: float = 0.5, context: Dict = None, concepts: List = None, relationships: List = None) -> str:
+        """Store memory in both systems."""
+        # Create memory object
+        memory = EpisodicMemory(
+            content=content,
+            type=MemoryType.EPISODIC,
+            timestamp=datetime.now().isoformat(),
+            importance=importance,
+            context=context or {},
+            concepts=concepts or [],
+            relationships=relationships or [],
+            participants=[],
+            metadata={}
+        )
+        
+        # Store in memory system
+        memory_id = await self.memory_system.store_experience(memory)
+        
+        # Update memory references
+        if memory_id:
+            self._configuration["memory_references"][memory_id] = {
+                "type": context.get("type", "memory") if context else "memory",
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        return memory_id
+            
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems."""
-        # Process through memory system
-        response = await super().process(content, metadata)
+        # Store memory
+        memory_id = await self.store_memory(
+            content=content["content"] if "content" in content else str(content),
+            importance=content.get("importance", 0.8),
+            context=content.get("context", {}),
+            concepts=content.get("concepts", []),
+            relationships=content.get("relationships", [])
+        )
         
-        # Update TinyTroupe state based on response
-        if response and response.concepts:
-            for concept in response.concepts:
+        # Update memory references
+        if memory_id:
+            self._configuration["memory_references"][memory_id] = {
+                "type": "process",
+                "timestamp": datetime.now().isoformat()
+            }
+        
+        # Update TinyTroupe state based on content
+        if "concepts" in content:
+            for concept in content["concepts"]:
                 # Learn concept
                 await self.learn_concept(
                     name=concept["name"],
@@ -131,14 +213,13 @@ class TinyTroupeAgent(TinyPerson, MemoryBaseAgent):
                     description=concept["description"],
                     related=concept.get("related", [])
                 )
-                
-                # Update emotions based on concept
-                if "emotion" in concept["type"].lower():
-                    self.emotions.update({
-                        concept["name"]: concept["description"]
-                    })
-                    
-        return response
+        
+        return AgentResponse(
+            memory_id=memory_id,
+            content=content,
+            concepts=content.get("concepts", []),
+            relationships=content.get("relationships", [])
+        )
         
     async def reflect(self):
         """Reflect through both systems."""
@@ -160,31 +241,76 @@ class TinyTroupeAgent(TinyPerson, MemoryBaseAgent):
         # Update TinyTroupe state based on patterns
         for pattern in patterns:
             # Update emotions based on pattern importance
-            if pattern["importance_avg"] > 0.7:
-                self.emotions.update({
+            if pattern.get("importance_avg", 0) > 0.7:
+                self._configuration["current_emotions"].update({
                     "interest": "high",
-                    "focus": pattern["type"]
+                    "focus": pattern.get("type", "general")
                 })
                 
             # Update desires based on common concepts
-            if pattern["concepts"]:
-                self.desires.extend([
+            if pattern.get("concepts"):
+                self._configuration["current_goals"].extend([
                     f"Learn more about {concept}"
                     for concept in pattern["concepts"]
                 ])
                 
         # Store reflection
-        await self.store_memory(
-            content={
+        memory_id = await self.store_memory(
+            content=f"Reflection: {len(patterns)} patterns found. Emotions: {self._configuration['current_emotions']}. Goals: {self._configuration['current_goals']}",
+            importance=0.7,
+            context={
                 "type": "reflection",
                 "patterns": patterns,
-                "emotions": self.emotions,
-                "desires": self.desires,
+                "emotions": self._configuration["current_emotions"],
+                "desires": self._configuration["current_goals"],
                 "timestamp": datetime.now().isoformat()
-            },
-            importance=0.7,
-            context={"type": "reflection"}
+            }
         )
+        if memory_id:
+            self._configuration["memory_references"][memory_id] = {
+                "type": "reflection",
+                "timestamp": datetime.now().isoformat()
+            }
+            
+    def _analyze_patterns(self, memories: List[EpisodicMemory]) -> List[Dict]:
+        """Analyze patterns in memories."""
+        patterns = []
+        
+        # Group memories by type
+        type_groups = {}
+        for memory in memories:
+            memory_type = memory.context.get("type", "general")
+            if memory_type not in type_groups:
+                type_groups[memory_type] = []
+            type_groups[memory_type].append(memory)
+            
+        # Analyze each group
+        for memory_type, group in type_groups.items():
+            # Calculate average importance
+            importance_avg = sum(m.importance for m in group) / len(group)
+            
+            # Extract common concepts
+            concept_counts = {}
+            for memory in group:
+                for concept in memory.concepts:
+                    name = concept.get("name") if isinstance(concept, dict) else concept.name
+                    concept_counts[name] = concept_counts.get(name, 0) + 1
+                    
+            # Get most common concepts
+            common_concepts = sorted(
+                concept_counts.items(),
+                key=lambda x: x[1],
+                reverse=True
+            )[:3]
+            
+            patterns.append({
+                "type": memory_type,
+                "importance_avg": importance_avg,
+                "concepts": [name for name, _ in common_concepts],
+                "count": len(group)
+            })
+            
+        return patterns
 
 class TinyFactory:
     """Factory class for creating and managing TinyTroupe agents."""

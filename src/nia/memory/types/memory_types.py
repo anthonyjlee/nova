@@ -26,13 +26,17 @@ class TaskStatus(str, Enum):
     FAILED = "failed"
 
 class Domain(str, Enum):
-    """Domain of knowledge."""
+    """Domain of knowledge/expertise."""
     GENERAL = "general"
-    BACKEND = "backend"
-    FRONTEND = "frontend"
-    DATABASE = "database"
-    TESTING = "testing"
-    DEPLOYMENT = "deployment"
+    RETAIL = "retail"
+    ECOMMERCE = "ecommerce"
+    PHILOSOPHY = "philosophy"
+    PSYCHOLOGY = "psychology"
+    BUSINESS = "business"
+    SCIENCE = "science"
+    TECHNOLOGY = "technology"
+    ARTS = "arts"
+    EDUCATION = "education"
 
 class Concept(BaseModel):
     """Semantic concept representation."""

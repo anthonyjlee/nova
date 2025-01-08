@@ -350,9 +350,9 @@
   * Added end-to-end swarm tests
   * Tested cross-component interactions
   * Added tests for new endpoints:
-    - Chat system tests with emergent tasks
-    - Graph visualization with output types
-    - WebSocket integration for real-time updates
+    - Chat system tests with emergent tasks ✅
+    - Graph visualization with output types ✅
+    - WebSocket integration for real-time updates ✅
 
 - [ ] Frontend Development:
   * Begin SvelteKit setup
@@ -366,10 +366,17 @@
     - Agent status monitoring
 
 ### Blockers
-None - All critical issues resolved:
+Current blocking issues:
+- Memory integration tests not passing:
+  * TinyTroupe agent memory operations
+  * Cross-domain memory access
+  * Memory cleanup and archival
+
+Resolved issues:
 - Test fixtures working properly
 - Vector store timeouts fixed
-- Full test coverage achieved
-- Memory integration stable
+- Chat system tests passing
+- Graph visualization tests passing
+- WebSocket integration tests passing
 
 Note: This task list will be updated daily to reflect current progress and priorities.

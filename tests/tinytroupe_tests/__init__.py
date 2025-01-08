@@ -1,1 +1,0 @@
-"""TinyTroupe integration test package."""

@@ -1,13 +1,18 @@
-"""Shared fixtures for TinyTroupe memory tests."""
+"""Shared fixtures for memory integration tests."""
 
 import pytest
+import uuid
 from unittest.mock import Mock, AsyncMock
 from datetime import datetime, timezone
+from typing import Dict, List, Any, Optional
 
 from nia.memory.types.memory_types import (
-    Memory, MemoryType, EpisodicMemory
+    Memory, MemoryType, EpisodicMemory,
+    Concept, Relationship
 )
-from nia.memory.two_layer import TwoLayerMemorySystem
+from nia.memory.neo4j.base_store import Neo4jBaseStore
+from nia.memory.two_layer import TwoLayerMemorySystem, SemanticLayer
+from nia.core.neo4j.concept_store import ConceptStore
 from nia.memory.consolidation import ConsolidationManager
 from nia.world.environment import NIAWorld
 from nia.nova.orchestrator import Nova
@@ -25,6 +30,43 @@ def mock_vector_store():
             self.vectors = {}
             
         async def store_vector(self, content: Dict, metadata: Dict = None, layer: str = None) -> str:
+            # Convert content to EpisodicMemory if needed
+            if isinstance(content, dict):
+                # Handle text content format
+                if "text" in content:
+                    memory_dict = {
+                        "content": content["text"],
+                        "type": metadata.get("type", MemoryType.EPISODIC),
+                        "timestamp": metadata.get("timestamp", datetime.now(timezone.utc).isoformat()),
+                        "context": metadata.get("context", {}),
+                        "concepts": metadata.get("concepts", []),
+                        "relationships": metadata.get("relationships", []),
+                        "participants": metadata.get("participants", []),
+                        "importance": metadata.get("importance", 0.0),
+                        "metadata": metadata.get("metadata", {}),
+                        "consolidated": False
+                    }
+                else:
+                    # Handle direct memory dict format
+                    memory_dict = dict(content)
+                    if not memory_dict.get("content"):
+                        raise ValueError("Memory must have content")
+                    if not memory_dict.get("type"):
+                        memory_dict["type"] = MemoryType.EPISODIC
+                    if not memory_dict.get("timestamp"):
+                        memory_dict["timestamp"] = datetime.now(timezone.utc).isoformat()
+                    memory_dict.setdefault("context", {})
+                    memory_dict.setdefault("concepts", [])
+                    memory_dict.setdefault("relationships", [])
+                    memory_dict.setdefault("participants", [])
+                    memory_dict.setdefault("importance", 0.0)
+                    memory_dict.setdefault("metadata", {})
+                    memory_dict.setdefault("consolidated", False)
+                
+                # Create EpisodicMemory instance
+                memory = EpisodicMemory(**memory_dict)
+                content = memory.dict()
+
             vector_id = str(uuid.uuid4())
             # Store memory fields
             if isinstance(content, dict) and "text" in content:
@@ -116,7 +158,7 @@ def mock_vector_store():
                 return None
             return vector["content"]
             
-        async def search_vectors(self, content: str = None, filter: Dict = None, limit: int = None, score_threshold: float = None, layer: str = None) -> List[Dict]:
+        async def search_vectors(self, content: Dict = None, filter: Dict = None, limit: int = None, score_threshold: float = None, layer: str = None) -> List[Dict]:
             # Return all vectors for consolidation candidates
             if content is None and filter is None:
                 return [v["content"] for v in self.vectors.values()]
@@ -124,9 +166,19 @@ def mock_vector_store():
             # Handle filtered search
             results = []
             for vector in self.vectors.values():
-                if filter:
-                    # Handle nested filters
-                    matches = True
+                matches = True
+                
+                # Check content match if provided
+                if content:
+                    if isinstance(content, dict) and "text" in content:
+                        if content["text"] not in str(vector["content"].get("content", "")):
+                            matches = False
+                    elif isinstance(content, str):
+                        if content not in str(vector["content"].get("content", "")):
+                            matches = False
+                
+                # Check filter match if provided
+                if matches and filter:
                     for key, value in filter.items():
                         if isinstance(value, dict):
                             # Handle nested dictionary filters (e.g., {"context": {"project": "A"}})
@@ -146,21 +198,8 @@ def mock_vector_store():
                             # Handle direct metadata filters
                             if vector["metadata"].get(key) != value:
                                 matches = False
-                    if matches:
-                        # Convert concepts and relationships back to their proper types
-                        memory_data = dict(vector["content"])
-                        if "concepts" in memory_data:
-                            memory_data["concepts"] = [
-                                Concept(**c) if isinstance(c, dict) else c
-                                for c in memory_data["concepts"]
-                            ]
-                        if "relationships" in memory_data:
-                            memory_data["relationships"] = [
-                                Relationship(**r) if isinstance(r, dict) else r
-                                for r in memory_data["relationships"]
-                            ]
-                        results.append(EpisodicMemory(**memory_data))
-                else:
+                
+                if matches:
                     # Convert concepts and relationships back to their proper types
                     memory_data = dict(vector["content"])
                     if "concepts" in memory_data:
@@ -174,6 +213,11 @@ def mock_vector_store():
                             for r in memory_data["relationships"]
                         ]
                     results.append(EpisodicMemory(**memory_data))
+            
+            # Apply limit if provided
+            if limit is not None and len(results) > limit:
+                results = results[:limit]
+                
             return results
             
         async def update_metadata(self, vector_id: str, metadata: Dict):
@@ -513,35 +557,13 @@ def mock_neo4j_store():
 @pytest.fixture
 def memory_system(mock_vector_store, mock_neo4j_store):
     """Create memory system with mock stores."""
-    system = TwoLayerMemorySystem("bolt://127.0.0.1:7687", mock_vector_store)
+    system = TwoLayerMemorySystem(neo4j_uri="bolt://127.0.0.1:7687", vector_store=mock_vector_store)
     system.semantic = SemanticLayer(mock_neo4j_store)
     system.consolidation_manager = ConsolidationManager(system.episodic, system.semantic)
     
-    # Set up async mock behaviors for neo4j store
-    async def store_knowledge_mock(knowledge):
-        # Filter out any auto-generated concepts and keep only the explicitly defined ones
-        concepts = [c for c in knowledge["concepts"] if c["name"] in {
-            "API Endpoint", "User Profile", "Task Request", "Agent Collaboration",
-            "Hello Function", "User Processing", "API Documentation",
-            "Authentication", "Password Hashing", "Session Management",
-            "Security Audit"
-        }]
-        return {"concepts": concepts, "relationships": knowledge["relationships"]}
-    neo4j_store.store_knowledge = AsyncMock(side_effect=store_knowledge_mock)
-    neo4j_store.query_knowledge = AsyncMock(return_value=[])
-    neo4j_store.query = AsyncMock(return_value=[])
-    
-    # Set up async mock behaviors for episodic memory
-    system.episodic.store = vector_store
-    system.episodic.store_memory = AsyncMock(return_value="memory_id_1")
-    system.episodic.get_consolidation_candidates = AsyncMock(return_value=[])
-    system.episodic.query_memories = AsyncMock(return_value=[])
-    
-    # Set up async mock behaviors for semantic memory
-    system.semantic.driver = neo4j_store
-    system.semantic.store_knowledge = AsyncMock(side_effect=store_knowledge_mock)
-    system.semantic.query_knowledge = AsyncMock(return_value=[])
-    system.semantic.query = AsyncMock(return_value=[])
+    # Set up stores
+    system.episodic.store = mock_vector_store
+    system.semantic.driver = mock_neo4j_store
     
     return system
 

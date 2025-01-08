@@ -2,7 +2,12 @@
 
 import asyncio
 import logging
-from functools import wraps
+import json
+import uuid
+from datetime import datetime, timezone
+from typing import Dict, List, Any, Optional
+from contextlib import contextmanager
+from functools import wraps, partial
 from tenacity import (
     retry,
     stop_after_attempt,
@@ -11,7 +16,161 @@ from tenacity import (
     before_sleep_log
 )
 
+# Configure test logger
 logger = logging.getLogger(__name__)
+handler = logging.StreamHandler()
+handler.setFormatter(
+    logging.Formatter(
+        '%(asctime)s [%(levelname)s] %(name)s - %(message)s'
+    )
+)
+logger.addHandler(handler)
+logger.setLevel(logging.DEBUG)
+
+# Resource tracking
+active_resources = set()
+
+def track_resource(resource_id: str):
+    """Track an active test resource."""
+    active_resources.add(resource_id)
+    logger.debug(f"Resource tracked: {resource_id}")
+
+def untrack_resource(resource_id: str):
+    """Untrack a test resource."""
+    active_resources.discard(resource_id)
+    logger.debug(f"Resource untracked: {resource_id}")
+
+def get_active_resources() -> set:
+    """Get set of currently tracked resources."""
+    return active_resources.copy()
+
+@contextmanager
+def resource_tracking():
+    """Context manager to verify all resources are cleaned up."""
+    resources_before = get_active_resources()
+    try:
+        yield
+    finally:
+        resources_after = get_active_resources()
+        leaked = resources_after - resources_before
+        if leaked:
+            logger.warning(f"Leaked resources detected: {leaked}")
+            # Clean up leaked resources
+            for resource_id in leaked:
+                untrack_resource(resource_id)
+
+# Test data generation
+def generate_test_memory(
+    content: str,
+    domain: str,
+    agent_name: Optional[str] = None,
+    importance: float = 0.8,
+    concepts: Optional[List[Dict[str, Any]]] = None,
+    relationships: Optional[List[Dict[str, Any]]] = None
+) -> Dict[str, Any]:
+    """Generate consistent test memory data."""
+    timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    memory_id = f"test_memory_{uuid.uuid4()}"
+    track_resource(memory_id)
+    
+    return {
+        "id": memory_id,
+        "content": content,
+        "timestamp": timestamp,
+        "domain": domain,
+        "importance": importance,
+        "agent": agent_name,
+        "concepts": concepts or [],
+        "relationships": relationships or [],
+        "metadata": {
+            "test": True,
+            "generated": timestamp
+        }
+    }
+
+def generate_test_agent(
+    name: str,
+    agent_type: str,
+    domain: str,
+    skills: Optional[List[str]] = None
+) -> Dict[str, Any]:
+    """Generate consistent test agent data."""
+    agent_id = f"test_agent_{uuid.uuid4()}"
+    track_resource(agent_id)
+    
+    return {
+        "id": agent_id,
+        "name": name,
+        "type": agent_type,
+        "domain": domain,
+        "skills": skills or [],
+        "status": "active",
+        "metadata": {
+            "test": True,
+            "created": datetime.now(timezone.utc).isoformat()
+        }
+    }
+
+# Assertion helpers
+async def assert_eventually(
+    condition,
+    timeout: float = 5.0,
+    interval: float = 0.1,
+    message: str = "Condition not met"
+):
+    """Assert that a condition becomes true within timeout."""
+    deadline = asyncio.get_event_loop().time() + timeout
+    
+    while asyncio.get_event_loop().time() < deadline:
+        try:
+            if await condition():
+                return
+        except Exception as e:
+            logger.debug(f"Condition check failed: {e}")
+        await asyncio.sleep(interval)
+    
+    raise AssertionError(
+        f"{message} within {timeout} seconds"
+    )
+
+async def assert_memory_stored(
+    memory_system,
+    memory_id: str,
+    timeout: float = 5.0
+):
+    """Assert that a memory is stored in the system."""
+    async def check_memory():
+        try:
+            memory = await memory_system.get_memory(memory_id)
+            return memory is not None
+        except Exception:
+            return False
+    
+    await assert_eventually(
+        check_memory,
+        timeout=timeout,
+        message=f"Memory {memory_id} not found"
+    )
+
+async def assert_agent_state(
+    nova,
+    agent_id: str,
+    expected_state: str,
+    timeout: float = 5.0
+):
+    """Assert that an agent reaches expected state."""
+    async def check_state():
+        try:
+            agent = await nova.get_agent(agent_id)
+            return agent and agent.state == expected_state
+        except Exception:
+            return False
+    
+    await assert_eventually(
+        check_state,
+        timeout=timeout,
+        message=f"Agent {agent_id} did not reach {expected_state} state"
+    )
 
 # Vector store operation settings
 VECTOR_STORE_TIMEOUT = 30  # seconds

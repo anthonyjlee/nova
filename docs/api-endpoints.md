@@ -307,3 +307,209 @@ All endpoints require:
 ##### Filter Graph
 - **POST** `/api/graph/viz/filter`
 - Filter graph by multiple criteria
+
+### Task and Thread Management
+
+#### Thread Tasks
+
+##### Create Emergent Task
+- **POST** `/api/chat/threads/{thread_id}/tasks`
+- Create task from thread context
+- Request Body:
+  ```json
+  {
+    "description": "string",
+    "output_type": "string",  // code, media, new_skill, document, api_call
+    "domain": "string"
+  }
+  ```
+
+##### Update Task Status
+- **POST** `/api/chat/threads/{thread_id}/tasks/{task_id}/status`
+- Update task status
+- Request Body:
+  ```json
+  {
+    "status": "string",  // pending, in_progress, completed, failed
+    "output_data": "object"  // Optional task output
+  }
+  ```
+
+##### Get Thread Tasks
+- **GET** `/api/chat/threads/{thread_id}/tasks`
+- Get tasks for thread
+- Query Parameters:
+  * status: Filter by status
+  * output_type: Filter by output type
+
+#### Thread Management
+
+##### Update Thread Status
+- **POST** `/api/chat/threads/{thread_id}/status`
+- Update thread status
+- Request Body:
+  ```json
+  {
+    "status": "string"  // active/archived
+  }
+  ```
+
+##### Get Thread Summary
+- **GET** `/api/chat/threads/{thread_id}/summary`
+- Get thread summary from aggregator
+
+##### Update Log Visibility
+- **POST** `/api/chat/threads/{thread_id}/logs`
+- Update thread log visibility
+- Request Body:
+  ```json
+  {
+    "show_partial_logs": "boolean",
+    "show_agent_thoughts": "boolean"
+  }
+  ```
+
+##### Link Thread to Graph
+- **POST** `/api/chat/threads/{thread_id}/link`
+- Link thread to graph nodes
+- Request Body:
+  ```json
+  {
+    "node_ids": ["string"],
+    "link_type": "string"
+  }
+  ```
+
+### Task Visualization
+
+#### Task Graph
+
+##### Get Task Graph
+- **GET** `/graph/tasks`
+- Get task dependency graph
+
+##### Get Task Outputs
+- **GET** `/graph/tasks/{task_id}/outputs`
+- Get task output visualization
+
+##### Get Task Statistics
+- **GET** `/graph/tasks/statistics`
+- Get task statistics visualization
+
+##### Get Task Layout
+- **GET** `/graph/tasks/layout`
+- Get task graph layout
+- Query Parameters:
+  * layout: Layout algorithm (hierarchical/force/etc)
+
+##### Search Task Graph
+- **GET** `/graph/search`
+- Search task graph
+- Query Parameters:
+  * query: Search query
+  * types: Optional list of node types
+
+##### Filter Task Graph
+- **GET** `/graph/filter`
+- Filter task graph
+- Query Parameters:
+  * status: Filter by task status
+
+### Task Output Management
+
+#### Output Operations
+
+##### Store Task Output
+- **POST** `/api/tasks/{task_id}/outputs`
+- Store task output with type-specific handling
+- Request Body:
+  ```json
+  {
+    "output_type": "string", // code/media/skill/document/api_result
+    "content": object,
+    "metadata": {
+      "domain": "string",
+      "importance": float,
+      "tags": ["string"]
+    }
+  }
+  ```
+
+##### Get Task Output
+- **GET** `/api/tasks/{task_id}/outputs/{output_id}`
+- Get specific task output
+
+##### List Task Outputs
+- **GET** `/api/tasks/{task_id}/outputs`
+- List all outputs for a task
+- Query Parameters:
+  * output_type (optional): Filter by type
+  * domain (optional): Filter by domain
+
+##### Update Output Status
+- **PUT** `/api/tasks/{task_id}/outputs/{output_id}/status`
+- Update output status (pending/complete/failed)
+
+#### Real-time Updates
+
+##### Graph WebSocket
+- **WS** `/api/graph/viz/ws`
+- Real-time graph updates including:
+  * New nodes/edges
+  * Layout changes
+  * Task status updates
+  * Output visualization updates
+
+##### Memory WebSocket
+- **WS** `/api/memory/ws`
+- Real-time memory updates including:
+  * New memories
+  * Memory consolidation
+  * Cross-domain operations
+  * Cleanup events
+
+### Memory Integration
+
+#### Cross-Domain Operations
+
+##### Request Domain Access
+- **POST** `/api/memory/domains/access`
+- Request access to cross-domain operations
+- Request Body:
+  ```json
+  {
+    "source_domain": "string",
+    "target_domain": "string",
+    "operation": "string",
+    "justification": "string"
+  }
+  ```
+
+##### Get Domain Access Status
+- **GET** `/api/memory/domains/access/{request_id}`
+- Check status of domain access request
+
+#### Memory Cleanup
+
+##### Archive Memories
+- **POST** `/api/memory/archive`
+- Archive old or unused memories
+- Request Body:
+  ```json
+  {
+    "domain": "string",
+    "criteria": {
+      "age_days": integer,
+      "importance_threshold": float,
+      "access_count_threshold": integer
+    }
+  }
+  ```
+
+##### Get Archive Status
+- **GET** `/api/memory/archive/{archive_id}`
+- Check status of archive operation
+
+##### Restore from Archive
+- **POST** `/api/memory/archive/{archive_id}/restore`
+- Restore archived memories
