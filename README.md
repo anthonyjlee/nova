@@ -1,6 +1,6 @@
 # NIA (Nova Intelligence Architecture)
 
-> **Project Status (2025-01-07)**: Core components complete, fixing agent coordination tests before starting frontend development.
+> **Project Status (2025-01-08)**: Core components complete, improved code organization (Docker services and test structure). Preparing for frontend development.
 
 
 NIA is a sophisticated multi-agent system built on TinyTroupe that combines metacognition (Nova) with domain-specific tasks. The system features:
@@ -963,11 +963,13 @@ response = requests.post(
    - Purpose: Semantic memory storage
    - Port: 7474 (HTTP), 7687 (Bolt)
    - Status Check: http://localhost:7474
+   - Configuration: scripts/docker/neo4j/
 
 2. **Qdrant (Vector Store)**
    - Purpose: Ephemeral memory & embeddings
    - Port: 6333
    - Status Check: http://localhost:6333/dashboard
+   - Configuration: scripts/docker/qdrant/
 
 3. **LMStudio (LLM Server)**
    - Purpose: Local LLM inference
@@ -1084,3 +1086,21 @@ S = Supervisor, W = Worker, Numbers = Stages, Letters = Peer Agents
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+### Common Issues & Solutions
+
+1. **Neo4j Connection Issues**
+   ```bash
+   # Restart Neo4j container
+   docker compose -f scripts/docker/docker-compose.yml restart neo4j
+   # Check logs
+   docker compose -f scripts/docker/docker-compose.yml logs neo4j
+   ```
+
+2. **Qdrant Connection Issues**
+   ```bash
+   # Restart Qdrant container
+   docker compose -f scripts/docker/docker-compose.yml restart qdrant
+   # Check logs
+   docker compose -f scripts/docker/docker-compose.yml logs qdrant
+   ```
+

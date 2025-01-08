@@ -1,5 +1,4 @@
-Below is an implementation plan illustrating how to incorporate these memory extraction and comparison prompts into your NOVA (or “老樓管小慧AI”) setup—alongside an example of agent prompt advice. We’ll focus on practical steps for your dev team, using code snippets where relevant and ensuring they understand how to integrate everything into the multi-agent flow.
-
+Below is an implementation plan illustrating how to incorporate these memory extraction and comparison prompts into Nova.
 1. High-Level Architecture Overview
 	1.	NOVA
 	•	A multi-agent orchestration environment that coordinates sub-agents (belief, desire, emotion, reflection, etc.).

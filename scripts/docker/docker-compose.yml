@@ -1,15 +1,15 @@
 services:
   neo4j:
     build:
-      context: .
-      dockerfile: Dockerfile.neo4j
+      context: ./neo4j
+      dockerfile: Dockerfile
     ports:
       - "7474:7474"  # HTTP
       - "7687:7687"  # Bolt
     volumes:
-      - ./data/neo4j/data:/data
-      - ./data/neo4j/logs:/logs
-      - ./data/neo4j/import:/import
+      - ../data/neo4j/data:/data
+      - ../data/neo4j/logs:/logs
+      - ../data/neo4j/import:/import
     environment:
       - NEO4J_AUTH=neo4j/password
       - NEO4J_server_config_strict__validation_enabled=false
@@ -25,13 +25,13 @@ services:
 
   qdrant:
     build:
-      context: .
-      dockerfile: Dockerfile.qdrant
+      context: ./qdrant
+      dockerfile: Dockerfile
     ports:
       - "6333:6333"  # HTTP
       - "6334:6334"  # GRPC
     volumes:
-      - ./data/qdrant:/qdrant/storage
+      - ../data/qdrant:/qdrant/storage
     healthcheck:
       test: ["CMD-SHELL", "wget --no-verbose --tries=1 -O - http://localhost:6333/collections > /dev/null || exit 1"]
       interval: 10s

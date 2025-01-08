@@ -14,7 +14,7 @@ class ServiceManager:
     
     def __init__(self):
         """Initialize service manager."""
-        self.docker_compose_file = "scripts/docker/compose/docker-compose.yml"
+        self.docker_compose_file = "scripts/docker/docker-compose.yml"
         self.services = {
             "neo4j": {
                 "port": 7474,
