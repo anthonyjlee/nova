@@ -4,10 +4,10 @@ import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-from .core.meta import MetaAgent
+from .core.meta import MetaAgent, MetaResult
 from ..world.environment import NIAWorld
 from ..memory.two_layer import TwoLayerMemorySystem
-from ..memory.memory_types import MemoryEntry, EpisodicMemory, AgentResponse, DialogueContext
+from ..memory.types.memory_types import Memory, EpisodicMemory, TaskOutput, MemoryType
 from ..agents.base import BaseAgent
 
 logger = logging.getLogger(__name__)
@@ -23,10 +23,13 @@ class Nova(MetaAgent):
         llm: Optional['LLMInterface'] = None
     ):
         """Initialize Nova orchestrator."""
+        self.name = name  # Set name first
+        self.memory_system = memory_system  # Store memory system
+        
         # Initialize MetaAgent with memory system components
         super().__init__(
             llm=llm,
-            store=memory_system.semantic.store if memory_system else None,
+            store=memory_system.semantic.driver if memory_system else None,
             vector_store=memory_system.episodic.store if memory_system else None,
             agents={}  # Will be populated as agents are spawned
         )
@@ -34,26 +37,63 @@ class Nova(MetaAgent):
         self.world = world or NIAWorld(memory_system=memory_system)
         self._initialize_tinytroupe_attributes()
         
-        # Register with world
+        # Register with world if name is unique
         if self.world:
-            self.world.add_agent(self)
+            existing_names = [agent.name for agent in self.world.agents] if hasattr(self.world, 'agents') else []
+            if self.name not in existing_names:
+                self.world.add_agent(self)
+            else:
+                # Generate unique name by appending number
+                i = 1
+                while f"{self.name}_{i}" in existing_names:
+                    i += 1
+                self.name = f"{self.name}_{i}"
+                self.world.add_agent(self)
             
     def _initialize_tinytroupe_attributes(self):
         """Initialize TinyTroupe-specific attributes."""
-        self.define(
-            occupation="Meta Orchestrator",
-            desires=[
-                "Coordinate agents effectively",
-                "Maintain system coherence",
-                "Enable emergent behavior",
-                "Preserve conversation during tasks"
-            ],
-            emotions={
-                "baseline": "focused",
-                "towards_agents": "supportive"
-            }
-        )
+        self.occupation = "Meta Orchestrator"
+        self.desires = [
+            "Coordinate agents effectively",
+            "Maintain system coherence",
+            "Enable emergent behavior",
+            "Preserve conversation during tasks"
+        ]
+        self.emotions = {
+            "baseline": "focused",
+            "towards_agents": "supportive"
+        }
         
+    async def recall_memories(
+        self,
+        query: Dict,
+        limit: int = 10
+    ) -> List[Memory]:
+        """Recall memories from the memory system."""
+        if self.memory_system:
+            return await self.memory_system.query_memories(query, limit=limit)
+        return []
+
+    async def store_memory(
+        self,
+        content: Any,
+        importance: float = 0.7,
+        context: Optional[Dict] = None,
+        metadata: Optional[Dict] = None
+    ):
+        """Store memory in the memory system."""
+        if self.memory_system:
+            await self.memory_system.store_experience(
+                EpisodicMemory(
+                    content=str(content) if not isinstance(content, str) else content,
+                    type=MemoryType.EPISODIC,
+                    timestamp=datetime.now().isoformat(),
+                    importance=importance,
+                    context=context or {},
+                    metadata=metadata or {}
+                )
+            )
+
     async def spawn_agent(
         self,
         agent_type: str,
@@ -69,7 +109,7 @@ class Nova(MetaAgent):
         # Create agent
         agent = BaseAgent(
             name=name,
-            memory_system=self.memory,
+            memory_system=self.memory_system,
             world=self.world,
             attributes=attributes
         )
@@ -103,23 +143,23 @@ class Nova(MetaAgent):
     ) -> Dict:
         """Handle conversation between agents."""
         # Process through MetaAgent first
-        response = await self.process_interaction(message)
+        result = await self.process_interaction(message)
         
         # Then handle through world if needed
         if target:
             await self.world.execute_action(
                 self,
                 "converse",
-                message=response.dialogue,
+                message=result.response,
                 target=target
             )
             
         return {
             "type": "conversation",
-            "message": response.dialogue,
+            "message": result.response,
             "source": source or self.name,
             "target": target,
-            "response": response
+            "result": result
         }
         
     async def start_task(
@@ -238,7 +278,7 @@ class Nova(MetaAgent):
             "memories": len(memories)
         }
         
-    def _determine_task_status(self, memory: MemoryEntry) -> str:
+    def _determine_task_status(self, memory: Memory) -> str:
         """Determine task status from memory."""
         content = memory.content
         if isinstance(content, dict):

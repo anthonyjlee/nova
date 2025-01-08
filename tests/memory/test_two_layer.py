@@ -14,7 +14,7 @@ from nia.memory.two_layer import TwoLayerMemorySystem, EpisodicLayer, SemanticLa
 from nia.memory.consolidation import ConsolidationManager
 from nia.memory.neo4j.base_store import Neo4jBaseStore
 from nia.memory.types.memory_types import (
-    MemoryEntry, TaskOutput, GraphNode, GraphRelationship,
+    Memory, TaskOutput, GraphNode, GraphEdge,
     MemoryType, OutputType, TaskStatus, Domain,
     EpisodicMemory, Concept, Relationship
 )

@@ -5,12 +5,11 @@ from .memory_types import (
     OutputType,
     TaskStatus,
     Domain,
-    MemoryEntry,
+    Memory,
+    EpisodicMemory,
     TaskOutput,
-    GraphNode,
-    GraphRelationship,
-    MemoryQuery,
-    MemoryResult
+    Concept,
+    Relationship
 )
 
 __all__ = [
@@ -18,10 +17,9 @@ __all__ = [
     'OutputType',
     'TaskStatus',
     'Domain',
-    'MemoryEntry',
+    'Memory',
+    'EpisodicMemory',
     'TaskOutput',
-    'GraphNode',
-    'GraphRelationship',
-    'MemoryQuery',
-    'MemoryResult'
+    'Concept',
+    'Relationship'
 ]

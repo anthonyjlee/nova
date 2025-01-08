@@ -19,6 +19,7 @@ dependencies = [
     "tinytroupe @ file:///Users/alee5331/Documents/Projects/TinyTroupe",  # Local TinyTroupe package
     "docker>=7.1.0",
     "fastapi>=0.115.6",
+    "uvicorn>=0.25.0",
     "websockets>=14.1",
     "outlines>=0.1.11",
     "transformers>=4.47.1",

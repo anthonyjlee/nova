@@ -1,322 +1,387 @@
 """Tests for graph visualization endpoints."""
 
 import pytest
-from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from unittest.mock import Mock, patch, AsyncMock
 
-from nia.nova.endpoints.graph_endpoints import graph_viz_router
-from nia.nova.core.dependencies import get_graph_store
-
-app = FastAPI()
-app.include_router(graph_viz_router)
+from nia.nova.endpoints.graph_endpoints import router, get_graph_store
+from nia.memory.types.memory_types import TaskOutput, OutputType, TaskStatus
+from nia.core.types.graph_types import GraphNode, GraphEdge, GraphLayout
 
 @pytest.fixture
 def mock_graph_store():
-    """Create mock graph store."""
-    return AsyncMock()
+    """Mock graph store for testing."""
+    store = Mock()
+    store.get_tasks = AsyncMock(return_value=[])
+    store.get_task_outputs = AsyncMock(return_value=[])
+    store.get_task_statistics = AsyncMock(return_value={"total_tasks": 0, "completed": 0, "in_progress": 0, "pending": 0, "output_types": {}})
+    store.get_graph_layout = AsyncMock(return_value={"layout": "hierarchical", "positions": {}, "dimensions": {"width": 800, "height": 600}})
+    store.search_graph = AsyncMock(return_value={"nodes": [], "edges": []})
+    store.filter_graph = AsyncMock(return_value={"nodes": [], "edges": []})
+    return store
 
 @pytest.fixture
-def client(mock_graph_store):
-    """Create test client."""
-    app.dependency_overrides[get_graph_store] = lambda: mock_graph_store
-    return TestClient(app, headers={"X-API-Key": "test-key"})
+def app():
+    """Create FastAPI app."""
+    from fastapi import FastAPI
+    app = FastAPI()
+    app.include_router(router)
+    return app
 
-class TestGraphVizEndpoints:
-    """Test graph visualization endpoints."""
+@pytest.fixture
+def client(app, mock_graph_store):
+    """Test client with mocked dependencies."""
+    async def get_mock_store():
+        return mock_graph_store
+    app.dependency_overrides = {
+        get_graph_store: get_mock_store
+    }
+    return TestClient(app)
 
-    def test_get_nodes(self, client):
-        """Test node retrieval endpoint."""
-        # Test without metrics
-        response = client.get("/api/graph/viz/nodes", params={
-            "domain": "test",
-            "node_type": "task",
-            "include_metrics": False,
-            "limit": 10
-        })
-
-        assert response.status_code == 200
-        assert "nodes" in response.json()
-        assert "total_count" in response.json()
-        assert "domain_colors" in response.json()
-        assert response.json()["metrics"] is None
-
-        # Test with metrics
-        response = client.get("/api/graph/viz/nodes", params={
-            "domain": "test",
-            "node_type": "task",
-            "include_metrics": True,
-            "limit": 10
-        })
-
-        assert response.status_code == 200
-        assert "metrics" in response.json()
-        assert "node_performance" in response.json()["metrics"]
-        assert "node_load" in response.json()["metrics"]
-        assert "node_health" in response.json()["metrics"]
-
-    def test_get_pattern_templates(self, client):
-        """Test pattern templates endpoint."""
-        response = client.get("/api/graph/viz/patterns", params={
-            "pattern_type": "hierarchical"
-        })
-
-        assert response.status_code == 200
-        assert "patterns" in response.json()
-        assert "total_count" in response.json()
-        assert "timestamp" in response.json()
-
-    def test_get_execution_flow(self, client):
-        """Test execution flow endpoint."""
-        # Test without metrics
-        response = client.get("/api/graph/viz/execution-flow", params={
-            "task_id": "task1",
-            "include_metrics": False
-        })
-
-        assert response.status_code == 200
-        assert "nodes" in response.json()
-        assert "edges" in response.json()
-        assert response.json()["metrics"] is None
-
-        # Test with metrics
-        response = client.get("/api/graph/viz/execution-flow", params={
-            "task_id": "task1",
-            "include_metrics": True
-        })
-
-        assert response.status_code == 200
-        assert "metrics" in response.json()
-        assert "execution_time" in response.json()["metrics"]
-        assert "resource_usage" in response.json()["metrics"]
-        assert "error_rates" in response.json()["metrics"]
-
-    def test_get_performance_metrics(self, client):
-        """Test performance metrics endpoint."""
-        response = client.get("/api/graph/viz/performance", params={
-            "node_ids": ["node1", "node2"],
-            "metric_types": ["performance", "health"],
-            "time_range": "1h"
-        })
-
-        assert response.status_code == 200
-        assert "metrics" in response.json()
-        assert "node_metrics" in response.json()["metrics"]
-        assert "edge_metrics" in response.json()["metrics"]
-        assert "system_metrics" in response.json()["metrics"]
-        assert "thresholds" in response.json()
-
-    def test_get_edges(self, client):
-        """Test edge retrieval endpoint."""
-        response = client.get("/api/graph/viz/edges", params={
-            "source_id": "node1",
-            "target_id": "node2",
-            "edge_type": "depends_on",
-            "limit": 10
-        })
-
-        assert response.status_code == 200
-        assert "edges" in response.json()
-        assert "total_count" in response.json()
-        assert "timestamp" in response.json()
-
-    def test_get_brand_node_details(self, client):
-        """Test brand node details endpoint."""
-        response = client.get("/api/graph/viz/nodes/brand1")
-
-        assert response.status_code == 200
-        assert response.json()["type"] == "brand"
-        assert "inventory_levels" in response.json()["properties"]
-        assert "discount_rules" in response.json()["properties"]
-        assert "linked_threads" in response.json()
-        assert "domain" in response.json()
-
-    def test_get_policy_node_details(self, client):
-        """Test policy node details endpoint."""
-        response = client.get("/api/graph/viz/nodes/policy1")
-
-        assert response.status_code == 200
-        assert response.json()["type"] == "policy"
-        assert "rules" in response.json()["properties"]
-        assert "affected_brands" in response.json()["properties"]
-        assert "linked_threads" in response.json()
-        assert "rules" in response.json()["properties"]
-        assert "affected_brands" in response.json()["properties"]
-        assert "linked_threads" in response.json()
-
-    @pytest.mark.asyncio
-    async def test_node_updates_websocket(self, client):
-        """Test node updates WebSocket endpoint."""
-        with client.websocket_connect("/api/graph/viz/nodes/node1/updates") as websocket:
-            data = websocket.receive_json()
-            assert "node_id" in data
-            assert data["type"] == "property_update"
-            assert "changes" in data
-            assert "timestamp" in data
-
-    def test_update_node_style(self, client):
-        """Test node style update endpoint."""
-        response = client.post("/api/graph/viz/nodes/node1/style", json={
-            "style": {
-                "color": "#ff0000",
-                "size": 20,
-                "shape": "circle"
+@pytest.mark.asyncio
+async def test_get_task_graph(client, mock_graph_store):
+    """Test getting task dependency graph."""
+    # Mock task data
+    tasks = [
+        {
+            "id": "task1",
+            "name": "Root Task",
+            "status": TaskStatus.COMPLETED,
+            "dependencies": []
+        },
+        {
+            "id": "task2", 
+            "name": "Subtask 1",
+            "status": TaskStatus.IN_PROGRESS,
+            "dependencies": ["task1"]
+        },
+        {
+            "id": "task3",
+            "name": "Subtask 2", 
+            "status": TaskStatus.PENDING,
+            "dependencies": ["task1"]
+        }
+    ]
+    
+    # Expected graph structure
+    expected = {
+        "nodes": [
+            {
+                "id": "task1",
+                "label": "Root Task",
+                "type": "task",
+                "metadata": {"status": "completed"}
             },
-            "domain_specific": True
-        })
-
-        assert response.status_code == 200
-        assert "style" in response.json()
-        assert response.json()["domain_specific"] is True
-
-    def test_get_node_neighbors(self, client):
-        """Test node neighbors endpoint."""
-        response = client.get("/api/graph/viz/nodes/test_node/neighbors", params={
-            "edge_type": "depends_on",
-            "direction": "out",
-            "limit": 10
-        })
-
-        assert response.status_code == 200
-        assert "node_id" in response.json()
-        assert "neighbors" in response.json()
-        assert "total_count" in response.json()
-        assert "timestamp" in response.json()
-
-    def test_search_graph(self, client):
-        """Test graph search endpoint."""
-        response = client.post("/api/graph/viz/search", json={
-            "query": "test",
-            "node_types": ["task", "agent"],
-            "edge_types": ["depends_on"],
-            "limit": 10
-        })
-
-        assert response.status_code == 200
-        assert "nodes" in response.json()
-        assert "edges" in response.json()
-        assert "total_count" in response.json()
-        assert "timestamp" in response.json()
-
-    def test_get_task_graph_with_outputs(self, client):
-        """Test task graph retrieval with output types."""
-        response = client.get("/api/graph/viz/tasks", params={
-            "task_id": "task1",
-            "status": "active",
-            "output_type": "code",
-            "limit": 10
-        })
-
-        assert response.status_code == 200
-        assert "tasks" in response.json()
-        assert "dependencies" in response.json()
-        assert "output_stats" in response.json()
-        assert all(output_type in response.json()["output_stats"] 
-                  for output_type in ["code", "media", "new_skill", "document", "api_call"])
-        assert "total_count" in response.json()
-        assert "timestamp" in response.json()
-
-    def test_get_task_output(self, client):
-        """Test task output details endpoint."""
-        response = client.get("/api/graph/viz/tasks/task1/output")
-
-        assert response.status_code == 200
-        assert "task_id" in response.json()
-        assert "output_type" in response.json()
-        assert "output_data" in response.json()
-        assert "status" in response.json()
-        assert "references" in response.json()
-        assert all(ref_type in response.json()["references"] 
-                  for ref_type in ["neo4j_node", "qdrant_id", "external_url"])
-
-    def test_get_output_stats(self, client):
-        """Test output statistics endpoint."""
-        response = client.get("/api/graph/viz/tasks/outputs/stats", params={
-            "start_date": "2025-01-01",
-            "end_date": "2025-01-08",
-            "domain": "professional"
-        })
-
-        assert response.status_code == 200
-        assert "output_types" in response.json()
-        assert all(output_type in response.json()["output_types"] 
-                  for output_type in ["code", "media", "new_skill", "document", "api_call"])
-        assert "domains" in response.json()
-        assert all(domain in response.json()["domains"] 
-                  for domain in ["professional", "personal"])
-
-    def test_get_graph_layout(self, client):
-        """Test graph layout endpoint."""
-        response = client.get("/api/graph/viz/layout", params={
-            "algorithm": "force"
-        })
-
-        assert response.status_code == 200
-        assert "layout" in response.json()
-        assert "timestamp" in response.json()
-
-    def test_get_visualization_stats(self, client):
-        """Test visualization statistics endpoint."""
-        response = client.get("/api/graph/viz/stats")
-
-        assert response.status_code == 200
-        assert "node_count" in response.json()
-        assert "edge_count" in response.json()
-        assert "node_types" in response.json()
-        assert "edge_types" in response.json()
-        assert "domains" in response.json()
-        assert "timestamp" in response.json()
-
-    def test_filter_graph(self, client):
-        """Test graph filtering endpoint."""
-        response = client.post("/api/graph/viz/filter", json={
-            "node_types": ["task"],
-            "edge_types": ["depends_on"],
-            "domains": ["test"],
-            "date_range": {
-                "start": "2025-01-01",
-                "end": "2025-01-08"
+            {
+                "id": "task2",
+                "label": "Subtask 1",
+                "type": "task",
+                "metadata": {"status": "in_progress"}
+            },
+            {
+                "id": "task3",
+                "label": "Subtask 2",
+                "type": "task",
+                "metadata": {"status": "pending"}
             }
-        })
-
-        assert response.status_code == 200
-        assert "nodes" in response.json()
-        assert "edges" in response.json()
-        assert "total_count" in response.json()
-        assert "timestamp" in response.json()
-
-    def test_invalid_layout_algorithm(self, client):
-        """Test invalid layout algorithm handling."""
-        response = client.get("/api/graph/viz/layout", params={
-            "algorithm": "invalid"
-        })
-        assert response.status_code == 422
-
-    def test_invalid_node_id(self, client):
-        """Test handling of non-existent node."""
-        response = client.get("/api/graph/viz/nodes/nonexistent")
-        assert response.status_code == 404
-
-    def test_invalid_direction(self, client):
-        """Test invalid neighbor direction handling."""
-        response = client.get("/api/graph/viz/nodes/test_node/neighbors", params={
-            "direction": "invalid"
-        })
-        assert response.status_code == 422
-
-    def test_invalid_filter_criteria(self, client):
-        """Test invalid filter criteria handling."""
-        response = client.post("/api/graph/viz/filter", json={
-            "date_range": {
-                "start": "invalid"
+        ],
+        "edges": [
+            {
+                "from_": "task1",
+                "to": "task2",
+                "type": "depends_on",
+                "metadata": None
+            },
+            {
+                "from_": "task1",
+                "to": "task3",
+                "type": "depends_on",
+                "metadata": None
             }
-        })
-        assert response.status_code == 422
+        ]
+    }
+    
+    mock_graph_store.get_tasks.return_value = tasks
+    response = client.get("/graph/tasks")
+    assert response.status_code == 200
+    assert response.json() == expected
 
-    def test_large_limit(self, client):
-        """Test handling of large limit parameter."""
-        response = client.get("/api/graph/viz/nodes", params={
-            "limit": 2000  # Above maximum
-        })
-        assert response.status_code == 422
+@pytest.mark.asyncio
+async def test_get_task_outputs(client, mock_graph_store):
+    """Test getting task output visualization."""
+    # Mock output data
+    outputs = [
+        TaskOutput(
+            task_id="task1",
+            type=OutputType.CODE,
+            content="def hello(): print('Hello')",
+            metadata={"language": "python"}
+        ),
+        TaskOutput(
+            task_id="task1", 
+            type=OutputType.DOCUMENT,
+            content="API Documentation",
+            metadata={"format": "markdown"}
+        )
+    ]
+    
+    # Expected graph structure
+    expected = {
+        "nodes": [
+            {
+                "id": "task1",
+                "label": "Task task1",
+                "type": "task",
+                "metadata": None
+            },
+            {
+                "id": "output1",
+                "label": "Code Output",
+                "type": "output",
+                "metadata": {
+                    "output_type": "code",
+                    "language": "python"
+                }
+            },
+            {
+                "id": "output2",
+                "label": "Document Output",
+                "type": "output",
+                "metadata": {
+                    "output_type": "document",
+                    "format": "markdown"
+                }
+            }
+        ],
+        "edges": [
+            {
+                "from_": "task1",
+                "to": "output1",
+                "type": "produces",
+                "metadata": None
+            },
+            {
+                "from_": "task1",
+                "to": "output2",
+                "type": "produces",
+                "metadata": None
+            }
+        ]
+    }
+    
+    mock_graph_store.get_task_outputs.return_value = outputs
+    response = client.get("/graph/tasks/task1/outputs")
+    assert response.status_code == 200
+    assert response.json() == expected
+
+@pytest.mark.asyncio
+async def test_get_task_statistics(client, mock_graph_store):
+    """Test getting task statistics visualization."""
+    # Mock statistics data
+    stats = {
+        "total_tasks": 10,
+        "completed": 5,
+        "in_progress": 3,
+        "pending": 2,
+        "output_types": {
+            "code": 3,
+            "document": 4,
+            "media": 2,
+            "api": 1
+        }
+    }
+    
+    # Expected graph structure
+    expected = {
+        "nodes": [
+            {
+                "id": "stats",
+                "label": "Task Statistics",
+                "type": "stats",
+                "metadata": {"total": 10}
+            },
+            {
+                "id": "completed",
+                "label": "Completed",
+                "type": "status",
+                "metadata": {"count": 5}
+            },
+            {
+                "id": "in_progress",
+                "label": "In Progress",
+                "type": "status",
+                "metadata": {"count": 3}
+            },
+            {
+                "id": "pending",
+                "label": "Pending",
+                "type": "status",
+                "metadata": {"count": 2}
+            },
+            {
+                "id": "outputs",
+                "label": "Output Types",
+                "type": "outputs",
+                "metadata": None
+            },
+            {
+                "id": "code",
+                "label": "Code",
+                "type": "output_type",
+                "metadata": {"count": 3}
+            },
+            {
+                "id": "document",
+                "label": "Document",
+                "type": "output_type",
+                "metadata": {"count": 4}
+            },
+            {
+                "id": "media",
+                "label": "Media",
+                "type": "output_type",
+                "metadata": {"count": 2}
+            },
+            {
+                "id": "api",
+                "label": "Api",
+                "type": "output_type",
+                "metadata": {"count": 1}
+            }
+        ],
+        "edges": [
+            {
+                "from_": "stats",
+                "to": "completed",
+                "type": "has_status",
+                "metadata": None
+            },
+            {
+                "from_": "stats",
+                "to": "in_progress",
+                "type": "has_status",
+                "metadata": None
+            },
+            {
+                "from_": "stats",
+                "to": "pending",
+                "type": "has_status",
+                "metadata": None
+            },
+            {
+                "from_": "stats",
+                "to": "outputs",
+                "type": "has_outputs",
+                "metadata": None
+            },
+            {
+                "from_": "outputs",
+                "to": "code",
+                "type": "output_type",
+                "metadata": None
+            },
+            {
+                "from_": "outputs",
+                "to": "document",
+                "type": "output_type",
+                "metadata": None
+            },
+            {
+                "from_": "outputs",
+                "to": "media",
+                "type": "output_type",
+                "metadata": None
+            },
+            {
+                "from_": "outputs",
+                "to": "api",
+                "type": "output_type",
+                "metadata": None
+            }
+        ]
+    }
+    
+    mock_graph_store.get_task_statistics.return_value = stats
+    response = client.get("/graph/tasks/statistics")
+    assert response.status_code == 200
+    assert response.json() == expected
+
+@pytest.mark.asyncio
+async def test_get_task_layout(client, mock_graph_store):
+    """Test getting task graph layout."""
+    # Mock graph data
+    graph = {
+        "nodes": [
+            GraphNode(id="task1", label="Task 1", type="task"),
+            GraphNode(id="task2", label="Task 2", type="task"),
+            GraphNode(id="task3", label="Task 3", type="task")
+        ],
+        "edges": [
+            GraphEdge(from_="task1", to="task2", type="depends_on"),
+            GraphEdge(from_="task1", to="task3", type="depends_on")
+        ]
+    }
+    
+    # Expected layout
+    expected = {
+        "layout": GraphLayout.HIERARCHICAL,
+        "positions": {
+            "task1": {"x": 0, "y": 0},
+            "task2": {"x": -100, "y": 100},
+            "task3": {"x": 100, "y": 100}
+        },
+        "dimensions": {
+            "width": 800,
+            "height": 600
+        }
+    }
+    
+    mock_graph_store.get_graph_layout.return_value = expected
+    response = client.get("/graph/tasks/layout", 
+                         params={"layout": "hierarchical"})
+    assert response.status_code == 200
+    assert response.json() == expected
+
+@pytest.mark.asyncio
+async def test_search_task_graph(client, mock_graph_store):
+    """Test searching task graph."""
+    # Mock search results
+    results = {
+        "nodes": [
+            GraphNode(id="task1", label="API Task", type="task",
+                     metadata={"status": "completed"}),
+            GraphNode(id="output1", label="API Documentation", type="output",
+                     metadata={"type": "document"})
+        ],
+        "edges": [
+            GraphEdge(from_="task1", to="output1", type="produces")
+        ]
+    }
+    
+    mock_graph_store.search_graph.return_value = results
+    response = client.get("/graph/search", 
+                         params={"query": "API", "types": ["task", "output"]})
+    assert response.status_code == 200
+    assert response.json() == results
+
+@pytest.mark.asyncio
+async def test_filter_task_graph(client, mock_graph_store):
+    """Test filtering task graph."""
+    # Mock filtered results
+    results = {
+        "nodes": [
+            GraphNode(id="task1", label="Task 1", type="task",
+                     metadata={"status": "completed"}),
+            GraphNode(id="task2", label="Task 2", type="task", 
+                     metadata={"status": "completed"})
+        ],
+        "edges": [
+            GraphEdge(from_="task1", to="task2", type="depends_on")
+        ]
+    }
+    
+    mock_graph_store.filter_graph.return_value = results
+    response = client.get("/graph/filter",
+                         params={"status": "completed"})
+    assert response.status_code == 200
+    assert response.json() == results

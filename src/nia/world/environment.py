@@ -209,3 +209,22 @@ class NIAWorld(TinyWorld):
     def get_domain_agents(self, domain: str) -> List[str]:
         """Get agents registered to a domain."""
         return self.task_domains.get(domain, {}).get("agents", [])
+        
+    async def cleanup(self):
+        """Clean up world resources."""
+        if self.memory:
+            await self.memory.store_experience(
+                EpisodicMemory(
+                    content="World cleanup",
+                    source="world",
+                    importance=0.7,
+                    context={
+                        "type": "system",
+                        "world": self.name
+                    }
+                )
+            )
+        self.state["active_agents"].clear()
+        self.state["pending_tasks"].clear()
+        self.resources.clear()
+        self.task_domains.clear()
