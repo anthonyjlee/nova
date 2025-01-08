@@ -408,62 +408,25 @@ AGENT_RESPONSIBILITIES: Dict[str, str] = {
   * Handle validation
   * Maintain consistency""",
 
-    "synthesis": """
-- Combine information with domain awareness
-- Generate summaries respecting boundaries
-- Extract key points within context
-- Create coherent output across domains
-- Learn from synthesis patterns
-- Coordinate with memory system for knowledge
-- Support swarm synthesis:
-  * Share patterns
-  * Track combinations
-  * Handle integration
-  * Maintain coherence""",
-
-    "analysis": """
-- Extract insights with domain awareness
-- Identify patterns within boundaries
-- Detect anomalies in context
-- Generate actionable insights
-- Learn from analysis patterns
-- Coordinate with memory system for knowledge
-- Support swarm analysis:
-  * Share insights
-  * Track patterns
-  * Handle validation
-  * Maintain quality""",
-
-    "default": """
-- Understand requests with domain awareness
-- Provide helpful responses within boundaries
-- Maintain context across domains
-- Ensure clear communication
-- Learn from interaction patterns
-- Coordinate with memory system appropriately
-- Support swarm operations:
-  * Follow protocols
-  * Share insights
-  * Handle tasks
-  * Maintain quality""",
-
-    "swarm_registry": """
-- Manage swarm pattern registration and storage
-- Validate swarm configurations and dependencies
-- Track swarm lifecycle events and status
-- Maintain pattern relationships and metadata
-- Support pattern search and retrieval
-- Handle pattern updates and versioning
+    "profile": """
+- Manage user profiles and preferences
+- Handle psychometric questionnaire processing
+- Adapt task configurations based on:
+  * Personality traits (Big Five)
+  * Learning style preferences
+  * Communication preferences
+- Manage domain-specific confidence scores
+- Handle auto-approval settings and validation
+- Track profile evolution and updates
 - Coordinate with memory system for:
-  * Pattern storage in Neo4j
-  * Vector embeddings for semantic search
-  * Event history tracking
-  * Performance metrics
-- Support swarm operations:
-  * Pattern template management
-  * Configuration validation
-  * Lifecycle tracking
-  * Registry maintenance"""
+  * Profile storage in Neo4j
+  * Preference history tracking
+  * Confidence score updates
+- Support profile-based adaptations:
+  * Task granularity adjustment
+  * Communication style matching
+  * Learning style accommodation
+  * Domain boundary enforcement"""
 }
 
 VALID_DOMAINS: Set[str] = {"personal", "professional"}

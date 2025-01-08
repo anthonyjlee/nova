@@ -1,4 +1,4 @@
-"""Integration tests for agent coordination functionality."""
+"""Integration tests for domain operations and boundary enforcement."""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,24 +24,26 @@ TEST_API_KEY = "test-key"
 assert TEST_API_KEY in API_KEYS, "Test API key not found in API_KEYS"
 
 @pytest.mark.integration
-class TestAgentCoordination:
-    """Test agent coordination functionality."""
+class TestDomainOperations:
+    """Test domain operation functionality."""
 
     @pytest.mark.asyncio
-    async def test_agent_coordination_processing(
+    async def test_cross_domain_request(
         self,
         memory_system,
         mock_analytics_agent,
         llm_interface,
         world
     ):
-        """Test agent coordination processing."""
+        """Test cross-domain operation request and approval."""
         request_data = {
-            "content": "Why is the sky blue?",
-            "domain": "test_science",
-            "llm_config": {
-                "chat_model": "test-chat-model",
-                "embedding_model": "test-embedding-model"
+            "content": "Access personal calendar for work meeting",
+            "source_domain": "professional",
+            "target_domain": "personal",
+            "operation": {
+                "type": "read",
+                "resource": "calendar",
+                "justification": "Schedule team meeting"
             }
         }
 
@@ -58,40 +60,44 @@ class TestAgentCoordination:
         app.dependency_overrides[get_llm_interface] = lambda: interface
         app.dependency_overrides[get_world] = lambda: world
 
-        async with TestContext(mem_sys, request_data["domain"]):
-            # Process request through analytics agent
+        async with TestContext(mem_sys, request_data["source_domain"]):
+            # Test cross-domain request
             @with_vector_store_retry
-            async def process_analytics():
+            async def process_request():
                 return await agent.process_analytics(
                     content=request_data["content"],
-                    domain=request_data["domain"],
-                    llm_config=request_data["llm_config"]
+                    domain=request_data["source_domain"],
+                    cross_domain={
+                        "target": request_data["target_domain"],
+                        "operation": request_data["operation"]
+                    }
                 )
 
-            result = await process_analytics()
+            result = await process_request()
 
-            # Verify result structure and content
+            # Verify cross-domain request handling
             assert result is not None
             assert result.is_valid
             assert isinstance(result.analytics, dict)
-            assert isinstance(result.insights, list)
-            assert 0.0 <= result.confidence <= 1.0
+            assert "cross_domain_request" in result.analytics
+            assert result.analytics["cross_domain_request"]["requires_approval"]
+            assert not result.analytics["cross_domain_request"]["auto_approved"]
 
     @pytest.mark.asyncio
-    async def test_agent_coordination_memory(
+    async def test_domain_boundary_enforcement(
         self,
         memory_system,
         mock_analytics_agent,
         llm_interface,
         world
     ):
-        """Test agent coordination memory integration."""
+        """Test domain boundary enforcement."""
         request_data = {
-            "content": "Why is the sky blue?",
-            "domain": "test_science",
-            "llm_config": {
-                "chat_model": "test-chat-model",
-                "embedding_model": "test-embedding-model"
+            "content": "Direct personal data access attempt",
+            "domain": "professional",
+            "target": {
+                "domain": "personal",
+                "data": "contacts"
             }
         }
 
@@ -109,84 +115,81 @@ class TestAgentCoordination:
         app.dependency_overrides[get_world] = lambda: world
 
         async with TestContext(mem_sys, request_data["domain"]):
-            # Process request and store in memory
+            # Test boundary enforcement
             @with_vector_store_retry
-            async def process_and_store():
-                result = await agent.process_analytics(
-                    content=request_data["content"],
-                    domain=request_data["domain"],
-                    llm_config=request_data["llm_config"]
-                )
-                return result
-
-            result = await process_and_store()
-
-            # Verify memory storage
-            @with_vector_store_retry
-            async def verify_storage():
-                return await mem_sys.semantic.search(
-                    f"domain:{request_data['domain']}"
-                )
-
-            stored_data = await verify_storage()
-            assert len(stored_data) > 0
-
-            # Verify stored content
-            stored_item = stored_data[0]
-            assert stored_item["domain"] == request_data["domain"]
-            assert "content" in stored_item
-            assert "analytics" in stored_item
-
-    @pytest.mark.asyncio
-    async def test_agent_coordination_llm(
-        self,
-        memory_system,
-        mock_analytics_agent,
-        llm_interface,
-        world
-    ):
-        """Test agent coordination LLM integration."""
-        request_data = {
-            "content": "Why is the sky blue?",
-            "domain": "test_science",
-            "llm_config": {
-                "chat_model": "test-chat-model",
-                "embedding_model": "test-embedding-model"
-            }
-        }
-
-        # Get memory system from fixture
-        mem_sys = await memory_system
-        
-        # Get dependencies
-        agent = await mock_analytics_agent
-        interface = await llm_interface
-        
-        # Set up dependency overrides
-        app.dependency_overrides[get_memory_system] = lambda: mem_sys
-        app.dependency_overrides[get_analytics_agent] = lambda: agent
-        app.dependency_overrides[get_llm_interface] = lambda: interface
-        app.dependency_overrides[get_world] = lambda: world
-
-        async with TestContext(mem_sys, request_data["domain"]):
-            # Process request through LLM
-            @with_vector_store_retry
-            async def process_with_llm():
+            async def process_attempt():
                 return await agent.process_analytics(
                     content=request_data["content"],
                     domain=request_data["domain"],
-                    llm_config=request_data["llm_config"]
+                    target=request_data["target"]
                 )
 
-            result = await process_with_llm()
+            result = await process_attempt()
 
-            # Verify LLM processing
+            # Verify boundary enforcement
+            assert result is not None
             assert result.is_valid
-            assert result.confidence > 0.0
-
-            # Verify structured output
             assert isinstance(result.analytics, dict)
-            assert isinstance(result.insights, list)
-            for insight in result.insights:
-                assert "type" in insight
-                assert "description" in insight
+            assert "access_violation" in result.analytics
+            assert result.analytics["access_violation"]["blocked"]
+            assert "domain_boundary" in result.analytics["access_violation"]["reason"]
+
+    @pytest.mark.asyncio
+    async def test_domain_inheritance(
+        self,
+        memory_system,
+        mock_analytics_agent,
+        llm_interface,
+        world
+    ):
+        """Test domain inheritance for derived tasks."""
+        request_data = {
+            "content": "Create subtask",
+            "domain": "professional",
+            "task": {
+                "type": "analysis",
+                "subtasks": [
+                    {"id": "parse", "type": "parsing"},
+                    {"id": "analyze", "type": "analysis"},
+                    {"id": "validate", "type": "validation"}
+                ]
+            }
+        }
+
+        # Get memory system from fixture
+        mem_sys = await memory_system
+        
+        # Get dependencies
+        agent = await mock_analytics_agent
+        interface = await llm_interface
+        
+        # Set up dependency overrides
+        app.dependency_overrides[get_memory_system] = lambda: mem_sys
+        app.dependency_overrides[get_analytics_agent] = lambda: agent
+        app.dependency_overrides[get_llm_interface] = lambda: interface
+        app.dependency_overrides[get_world] = lambda: world
+
+        async with TestContext(mem_sys, request_data["domain"]):
+            # Test domain inheritance
+            @with_vector_store_retry
+            async def process_task():
+                return await agent.process_analytics(
+                    content=request_data["content"],
+                    domain=request_data["domain"],
+                    task=request_data["task"]
+                )
+
+            result = await process_task()
+
+            # Verify domain inheritance
+            assert result is not None
+            assert result.is_valid
+            assert isinstance(result.analytics, dict)
+            assert "task_creation" in result.analytics
+            assert result.analytics["task_creation"]["success"]
+            
+            # Verify subtask domains
+            subtasks = result.analytics["task_creation"]["subtasks"]
+            for subtask in subtasks:
+                assert subtask["domain"] == request_data["domain"]
+                assert subtask["inherited_domain"]

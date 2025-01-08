@@ -1,4 +1,4 @@
-"""Integration tests for agent coordination functionality."""
+"""Integration tests for swarm pattern functionality."""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -24,24 +24,26 @@ TEST_API_KEY = "test-key"
 assert TEST_API_KEY in API_KEYS, "Test API key not found in API_KEYS"
 
 @pytest.mark.integration
-class TestAgentCoordination:
-    """Test agent coordination functionality."""
+class TestSwarmPatterns:
+    """Test swarm pattern functionality."""
 
     @pytest.mark.asyncio
-    async def test_agent_coordination_processing(
+    async def test_majority_voting(
         self,
         memory_system,
         mock_analytics_agent,
         llm_interface,
         world
     ):
-        """Test agent coordination processing."""
+        """Test majority voting swarm pattern."""
         request_data = {
-            "content": "Why is the sky blue?",
+            "content": "Test majority voting",
             "domain": "test_science",
-            "llm_config": {
-                "chat_model": "test-chat-model",
-                "embedding_model": "test-embedding-model"
+            "swarm_config": {
+                "type": "majority_voting",
+                "threshold": 0.6,
+                "voting_timeout": 30.0,
+                "allow_revotes": False
             }
         }
 
@@ -59,39 +61,40 @@ class TestAgentCoordination:
         app.dependency_overrides[get_world] = lambda: world
 
         async with TestContext(mem_sys, request_data["domain"]):
-            # Process request through analytics agent
+            # Test voting mechanism
             @with_vector_store_retry
-            async def process_analytics():
+            async def process_voting():
                 return await agent.process_analytics(
                     content=request_data["content"],
                     domain=request_data["domain"],
-                    llm_config=request_data["llm_config"]
+                    swarm_config=request_data["swarm_config"]
                 )
 
-            result = await process_analytics()
+            result = await process_voting()
 
-            # Verify result structure and content
+            # Verify voting results
             assert result is not None
             assert result.is_valid
             assert isinstance(result.analytics, dict)
-            assert isinstance(result.insights, list)
-            assert 0.0 <= result.confidence <= 1.0
+            assert "voting_results" in result.analytics
+            assert result.analytics["voting_results"]["threshold_met"]
 
     @pytest.mark.asyncio
-    async def test_agent_coordination_memory(
+    async def test_round_robin(
         self,
         memory_system,
         mock_analytics_agent,
         llm_interface,
         world
     ):
-        """Test agent coordination memory integration."""
+        """Test round robin swarm pattern."""
         request_data = {
-            "content": "Why is the sky blue?",
+            "content": "Test round robin",
             "domain": "test_science",
-            "llm_config": {
-                "chat_model": "test-chat-model",
-                "embedding_model": "test-embedding-model"
+            "swarm_config": {
+                "type": "round_robin",
+                "rotation_interval": 1.0,
+                "fair_scheduling": True
             }
         }
 
@@ -109,84 +112,79 @@ class TestAgentCoordination:
         app.dependency_overrides[get_world] = lambda: world
 
         async with TestContext(mem_sys, request_data["domain"]):
-            # Process request and store in memory
+            # Test task rotation
             @with_vector_store_retry
-            async def process_and_store():
-                result = await agent.process_analytics(
-                    content=request_data["content"],
-                    domain=request_data["domain"],
-                    llm_config=request_data["llm_config"]
-                )
-                return result
-
-            result = await process_and_store()
-
-            # Verify memory storage
-            @with_vector_store_retry
-            async def verify_storage():
-                return await mem_sys.semantic.search(
-                    f"domain:{request_data['domain']}"
-                )
-
-            stored_data = await verify_storage()
-            assert len(stored_data) > 0
-
-            # Verify stored content
-            stored_item = stored_data[0]
-            assert stored_item["domain"] == request_data["domain"]
-            assert "content" in stored_item
-            assert "analytics" in stored_item
-
-    @pytest.mark.asyncio
-    async def test_agent_coordination_llm(
-        self,
-        memory_system,
-        mock_analytics_agent,
-        llm_interface,
-        world
-    ):
-        """Test agent coordination LLM integration."""
-        request_data = {
-            "content": "Why is the sky blue?",
-            "domain": "test_science",
-            "llm_config": {
-                "chat_model": "test-chat-model",
-                "embedding_model": "test-embedding-model"
-            }
-        }
-
-        # Get memory system from fixture
-        mem_sys = await memory_system
-        
-        # Get dependencies
-        agent = await mock_analytics_agent
-        interface = await llm_interface
-        
-        # Set up dependency overrides
-        app.dependency_overrides[get_memory_system] = lambda: mem_sys
-        app.dependency_overrides[get_analytics_agent] = lambda: agent
-        app.dependency_overrides[get_llm_interface] = lambda: interface
-        app.dependency_overrides[get_world] = lambda: world
-
-        async with TestContext(mem_sys, request_data["domain"]):
-            # Process request through LLM
-            @with_vector_store_retry
-            async def process_with_llm():
+            async def process_rotation():
                 return await agent.process_analytics(
                     content=request_data["content"],
                     domain=request_data["domain"],
-                    llm_config=request_data["llm_config"]
+                    swarm_config=request_data["swarm_config"]
                 )
 
-            result = await process_with_llm()
+            result = await process_rotation()
 
-            # Verify LLM processing
+            # Verify rotation results
+            assert result is not None
             assert result.is_valid
-            assert result.confidence > 0.0
-
-            # Verify structured output
             assert isinstance(result.analytics, dict)
-            assert isinstance(result.insights, list)
-            for insight in result.insights:
-                assert "type" in insight
-                assert "description" in insight
+            assert "rotation_metrics" in result.analytics
+            assert result.analytics["rotation_metrics"]["fair_distribution"]
+
+    @pytest.mark.asyncio
+    async def test_graph_workflow(
+        self,
+        memory_system,
+        mock_analytics_agent,
+        llm_interface,
+        world
+    ):
+        """Test graph workflow swarm pattern."""
+        request_data = {
+            "content": "Test graph workflow",
+            "domain": "test_science",
+            "swarm_config": {
+                "type": "graph_workflow",
+                "nodes": [
+                    {"id": "parse", "agent": "parsing"},
+                    {"id": "analyze", "agent": "analysis"},
+                    {"id": "validate", "agent": "validation"}
+                ],
+                "edges": [
+                    {"from": "parse", "to": "analyze"},
+                    {"from": "analyze", "to": "validate"}
+                ]
+            }
+        }
+
+        # Get memory system from fixture
+        mem_sys = await memory_system
+        
+        # Get dependencies
+        agent = await mock_analytics_agent
+        interface = await llm_interface
+        
+        # Set up dependency overrides
+        app.dependency_overrides[get_memory_system] = lambda: mem_sys
+        app.dependency_overrides[get_analytics_agent] = lambda: agent
+        app.dependency_overrides[get_llm_interface] = lambda: interface
+        app.dependency_overrides[get_world] = lambda: world
+
+        async with TestContext(mem_sys, request_data["domain"]):
+            # Test graph execution
+            @with_vector_store_retry
+            async def process_graph():
+                return await agent.process_analytics(
+                    content=request_data["content"],
+                    domain=request_data["domain"],
+                    swarm_config=request_data["swarm_config"]
+                )
+
+            result = await process_graph()
+
+            # Verify graph execution results
+            assert result is not None
+            assert result.is_valid
+            assert isinstance(result.analytics, dict)
+            assert "graph_metrics" in result.analytics
+            assert result.analytics["graph_metrics"]["execution_complete"]
+            assert len(result.analytics["graph_metrics"]["node_results"]) == 3
