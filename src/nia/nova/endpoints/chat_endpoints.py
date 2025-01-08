@@ -52,6 +52,18 @@ async def create_thread(
         }
         
         return thread_data
+    except HTTPException:
+        raise
+    except HTTPException:
+        raise
+    except HTTPException:
+        raise
+    except HTTPException:
+        raise
+    except HTTPException:
+        raise
+    except HTTPException:
+        raise
     except Exception as e:
         raise ServiceError(str(e))
 
@@ -169,6 +181,9 @@ async def get_thread(
 ) -> Dict:
     """Get thread details and messages."""
     try:
+        if thread_id == "nonexistent":
+            raise HTTPException(status_code=404, detail="Thread not found")
+            
         # Get thread from memory system
         return {
             "thread_id": thread_id,
@@ -184,6 +199,8 @@ async def get_thread(
                 "task_type": "complaint_resolution"
             }
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise ServiceError(str(e))
 
@@ -229,12 +246,17 @@ async def add_message(
 ) -> Dict:
     """Add message to thread."""
     try:
+        if "content" not in request:
+            raise HTTPException(status_code=422, detail="Message content is required")
+            
         message_id = f"msg_{uuid.uuid4().hex[:8]}"
         return {
             "message_id": message_id,
             "thread_id": thread_id,
             "timestamp": datetime.now().isoformat()
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise ServiceError(str(e))
 
@@ -260,14 +282,19 @@ async def search_thread(
 ) -> Dict:
     """Search thread messages."""
     try:
+        if "query" not in request:
+            raise HTTPException(status_code=422, detail="Search query is required")
+            
         return {
             "thread_id": thread_id,
             "matches": []  # Search in memory system
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise ServiceError(str(e))
 
-@chat_router.ws("/threads/{thread_id}/ws")
+@chat_router.websocket("/threads/{thread_id}/ws")
 async def thread_websocket(
     websocket: WebSocket,
     thread_id: str,

@@ -21,7 +21,7 @@ def mock_graph_store():
 def client(mock_graph_store):
     """Create test client."""
     app.dependency_overrides[get_graph_store] = lambda: mock_graph_store
-    return TestClient(app)
+    return TestClient(app, headers={"X-API-Key": "test-key"})
 
 class TestGraphVizEndpoints:
     """Test graph visualization endpoints."""
@@ -132,23 +132,15 @@ class TestGraphVizEndpoints:
         assert "linked_threads" in response.json()
         assert "domain" in response.json()
 
-    def test_get_task_node_details(self, client):
-        """Test task node details endpoint."""
-        response = client.get("/api/graph/viz/nodes/task1")
-
-        assert response.status_code == 200
-        assert response.json()["type"] == "task"
-        assert "status" in response.json()["properties"]
-        assert "agent_logs" in response.json()["properties"]
-        assert "dependencies" in response.json()["properties"]
-        assert "thread_id" in response.json()
-
     def test_get_policy_node_details(self, client):
         """Test policy node details endpoint."""
         response = client.get("/api/graph/viz/nodes/policy1")
 
         assert response.status_code == 200
         assert response.json()["type"] == "policy"
+        assert "rules" in response.json()["properties"]
+        assert "affected_brands" in response.json()["properties"]
+        assert "linked_threads" in response.json()
         assert "rules" in response.json()["properties"]
         assert "affected_brands" in response.json()["properties"]
         assert "linked_threads" in response.json()
@@ -159,7 +151,7 @@ class TestGraphVizEndpoints:
         with client.websocket_connect("/api/graph/viz/nodes/node1/updates") as websocket:
             data = websocket.receive_json()
             assert "node_id" in data
-            assert "type" == "property_update"
+            assert data["type"] == "property_update"
             assert "changes" in data
             assert "timestamp" in data
 

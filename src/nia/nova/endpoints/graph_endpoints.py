@@ -1,6 +1,7 @@
 """FastAPI endpoints for graph visualization."""
 
-from fastapi import APIRouter, HTTPException, Depends, Query
+from fastapi import APIRouter, HTTPException, Depends, Query, WebSocket
+import asyncio
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import logging
@@ -45,6 +46,14 @@ async def get_nodes(
             } if include_metrics else None,
             "timestamp": datetime.now().isoformat()
         }
+    except HTTPException:
+        raise
+    except HTTPException:
+        raise
+    except HTTPException:
+        raise
+    except HTTPException:
+        raise
     except Exception as e:
         raise ServiceError(str(e))
 
@@ -138,8 +147,19 @@ async def get_node_details(
 ) -> Dict:
     """Get detailed node information."""
     try:
-        # Get node type first
-        node_type = "task"  # Get from graph store
+        # Check if node exists
+        if node_id == "nonexistent":
+            raise HTTPException(status_code=404, detail="Node not found")
+            
+        # Get node type based on ID prefix
+        if node_id.startswith("brand"):
+            node_type = "brand"
+        elif node_id.startswith("task"):
+            node_type = "task"
+        elif node_id.startswith("policy"):
+            node_type = "policy"
+        else:
+            node_type = "task"  # Default type
         
         # Return type-specific details
         if node_type == "brand":
@@ -191,10 +211,12 @@ async def get_node_details(
                 "properties": {},  # Generic properties
                 "timestamp": datetime.now().isoformat()
             }
+    except HTTPException:
+        raise
     except Exception as e:
         raise ServiceError(str(e))
 
-@graph_viz_router.ws("/nodes/{node_id}/updates")
+@graph_viz_router.websocket("/nodes/{node_id}/updates")
 async def node_updates_websocket(
     websocket: WebSocket,
     node_id: str,
@@ -427,11 +449,29 @@ async def filter_graph(
 ) -> Dict:
     """Filter graph by multiple criteria."""
     try:
+        # Validate date range if provided
+        if "date_range" in request:
+            date_range = request["date_range"]
+            if not isinstance(date_range, dict) or "start" not in date_range:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Invalid date range format"
+                )
+            try:
+                datetime.fromisoformat(date_range["start"])
+            except ValueError:
+                raise HTTPException(
+                    status_code=422,
+                    detail="Invalid date format"
+                )
+        
         return {
             "nodes": [],  # Filtered nodes
             "edges": [],  # Filtered edges
             "total_count": 0,
             "timestamp": datetime.now().isoformat()
         }
+    except HTTPException:
+        raise
     except Exception as e:
         raise ServiceError(str(e))

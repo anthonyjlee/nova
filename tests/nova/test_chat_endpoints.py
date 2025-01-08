@@ -22,7 +22,7 @@ def mock_coordination_agent():
 def client(mock_coordination_agent):
     """Create test client."""
     app.dependency_overrides[get_coordination_agent] = lambda: mock_coordination_agent
-    return TestClient(app)
+    return TestClient(app, headers={"X-API-Key": "test-key"})
 
 class TestChatEndpoints:
     """Test chat system endpoints."""

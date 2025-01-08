@@ -42,12 +42,13 @@ class EpisodicLayer:
                 
             # Store with content dict and set layer based on memory type
             memory_id = await self.store.store_vector(
-                content=content,  # Store content as dict
+                content={
+                    **memory_dict,  # Include all memory fields in content
+                    "content": content["text"]  # Store text content directly
+                },
                 metadata={
                     "type": memory.type.value,  # Use actual memory type
-                    "timestamp": datetime.now().isoformat(),
-                    "context": memory.context if hasattr(memory, "context") else {},
-                    **{k: v for k, v in memory_dict.items() if k != "content"}  # Store other fields as metadata
+                    "timestamp": datetime.now().isoformat()
                 },
                 layer=memory.type.value.lower()  # Use memory type as layer
             )
@@ -479,9 +480,13 @@ class TwoLayerMemorySystem:
     async def query_episodic(self, query: Dict) -> List[EpisodicMemory]:
         """Query episodic memories."""
         try:
-            # Search with type filter
+            # Extract filter and convert to vector store format
+            filter_dict = query.get("filter", {})
+            
+            # Search with type and filter
             results = await self.episodic.store.search_vectors(
                 content={"text": query.get("text", "")},  # Match the stored format
+                filter=filter_dict,  # Pass filter directly
                 limit=query.get("limit", 5),
                 score_threshold=query.get("score_threshold", 0.7),
                 layer=query.get("type", "episodic").lower()  # Use specified type or default to episodic
@@ -498,11 +503,35 @@ class TwoLayerMemorySystem:
                     content = str(content)
                     
                 # Create memory with properly formatted content
-                memory_data = {
-                    **r,
-                    "content": content
-                }
-                memories.append(EpisodicMemory(**memory_data))
+                memory_data = dict(r)  # Make a copy of the result
+                if isinstance(memory_data, dict):
+                    # Extract fields from the content dictionary
+                    if "content" in memory_data:
+                        content = memory_data["content"]
+                        if isinstance(content, dict):
+                            content = content.get("text", "")
+                        elif isinstance(content, str):
+                            content = content
+                        else:
+                            content = str(content)
+                        memory_data["content"] = content
+                    
+                    # Create EpisodicMemory object
+                    try:
+                        memory = EpisodicMemory(
+                            content=memory_data.get("content", ""),
+                            type=memory_data.get("type", MemoryType.EPISODIC),
+                            timestamp=memory_data.get("timestamp", datetime.now().isoformat()),
+                            context=memory_data.get("context", {}),
+                            concepts=memory_data.get("concepts", []),
+                            relationships=memory_data.get("relationships", []),
+                            participants=memory_data.get("participants", []),
+                            importance=memory_data.get("importance", 0.0),
+                            metadata=memory_data.get("metadata", {})
+                        )
+                        memories.append(memory)
+                    except Exception as e:
+                        logger.error(f"Failed to create EpisodicMemory: {str(e)}")
             return memories
         except Exception as e:
             logger.error(f"Failed to query episodic memories: {str(e)}")
