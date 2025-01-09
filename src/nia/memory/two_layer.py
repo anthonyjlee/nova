@@ -51,14 +51,14 @@ class EpisodicLayer:
             for concept in memory.concepts:
                 if not hasattr(concept, "name") or not concept.name:
                     raise ValueError("Concepts must have a name")
-                if not hasattr(concept, "confidence") or not 0 <= concept.confidence <= 1:
+                if not concept.validation or "confidence" not in concept.validation or not 0 <= concept.validation["confidence"] <= 1:
                     raise ValueError(f"Concept {concept.name} must have valid confidence (0-1)")
                     
         # Validate relationships
         if memory.relationships:
             for rel in memory.relationships:
-                if not hasattr(rel, "from_") or not hasattr(rel, "to"):
-                    raise ValueError("Relationships must have from_ and to fields")
+                if not hasattr(rel, "source") or not hasattr(rel, "target"):
+                    raise ValueError("Relationships must have source and target fields")
                 if not hasattr(rel, "confidence") or not 0 <= rel.confidence <= 1:
                     raise ValueError(f"Relationship must have valid confidence (0-1)")
 
@@ -69,34 +69,21 @@ class EpisodicLayer:
             self._validate_memory(memory)
             
             # Create embedding and store
+            # Convert memory to dict and ensure type is string
             memory_dict = memory.dict()
             memory_dict["consolidated"] = False  # Ensure consolidated field is set
+            memory_dict["type"] = str(memory_dict["type"])
             
-            # Ensure content is properly formatted with validation
-            content = memory_dict["content"]
-            if isinstance(content, str):
-                content = {"text": content, "type": "text"}
-            elif isinstance(content, dict):
-                if "text" not in content:
-                    raise ValueError("Dict content must have 'text' field")
-                if "type" not in content:
-                    content["type"] = "structured"
-            else:
-                raise ValueError(f"Invalid content type: {type(content)}")
-                
-            # Store with content dict and set layer based on memory type
+            # Store with original content and set layer based on memory type
             memory_id = await self.store.store_vector(
-                content={
-                    **memory_dict,  # Include all memory fields in content
-                    "content": content  # Store full content dict
-                },
+                content=memory_dict,
                 metadata={
-                    "type": memory.type.value,
+                    "type": memory_dict["type"],
                     "timestamp": datetime.now().isoformat(),
                     "importance": memory.importance,
                     "domain": memory.context.get("domain", "general")
                 },
-                layer=memory.type.value.lower()
+                layer=memory_dict["type"].lower()
             )
             
             # Track for consolidation if important enough
@@ -114,21 +101,28 @@ class EpisodicLayer:
             # Get all memories
             results = await self.store.search_vectors()
             
-            # Ensure content is properly formatted for each memory
+            # Convert each result to EpisodicMemory
             formatted_results = []
             for r in results:
-                content = r.get("content", {})
-                if isinstance(content, dict):
-                    content = content.get("text", "")
-                elif isinstance(content, str):
-                    content = content
-                else:
-                    content = str(content)
-                    
-                formatted_results.append({
-                    **r,
-                    "content": content
-                })
+                try:
+                    memory = EpisodicMemory(
+                        id=r.get("id"),
+                        content=r.get("content", ""),
+                        type=r.get("type", MemoryType.EPISODIC.value),
+                        importance=r.get("importance", 0.5),
+                        timestamp=r.get("timestamp", datetime.now(timezone.utc).isoformat()),
+                        context=r.get("context", {}),
+                        consolidated=r.get("consolidated", False),
+                        participants=r.get("participants", []),
+                        concepts=r.get("concepts", []),
+                        relationships=r.get("relationships", []),
+                        emotions=r.get("emotions", {}),
+                        related_memories=r.get("related_memories", [])
+                    )
+                    formatted_results.append(memory)
+                except Exception as e:
+                    logger.error(f"Failed to create EpisodicMemory: {str(e)}")
+                    continue
                 
             return formatted_results
         except Exception as e:
@@ -139,14 +133,18 @@ class EpisodicLayer:
         """Archive memories after consolidation."""
         try:
             for memory_id in memory_ids:
-                # Update metadata to mark as consolidated
+                # First mark as consolidated
                 await self.store.update_metadata(
                     memory_id,
                     {"consolidated": True}
                 )
-                self.pending_consolidation.remove(memory_id)
+                # Then delete the memory
+                if hasattr(self.store, 'delete_vector'):
+                    await self.store.delete_vector(memory_id)
+                if memory_id in self.pending_consolidation:
+                    self.pending_consolidation.remove(memory_id)
         except Exception as e:
-            logger.error(f"Failed to archive memories: {str(e)}")
+            logger.error(f"Failed to archive memories: '{memory_id}' ({str(e)})")
 
 class SemanticLayer(ConceptStore):
     """Handles long-term semantic knowledge using Neo4j.
@@ -376,18 +374,19 @@ class SemanticLayer(ConceptStore):
                     continue
                     
                 # Store concept with enhanced metadata
-                await self.store_concept(
-                    name=concept["name"],
-                    type=concept["type"],
-                    description=concept.get("description", ""),
-                    validation={
+                    validation = json.dumps(concept.get("validation") or {
                         "domain": concept["domain"],
                         "confidence": concept.get("confidence", 1.0),
                         "source": concept.get("source", "system"),
                         "timestamp": datetime.now(timezone.utc).isoformat()
-                    },
-                    is_consolidation=concept.get("is_consolidation", False)
-                )
+                    })
+                    await self.store_concept(
+                        name=concept["name"],
+                        type=concept["type"],
+                        description=concept.get("description", ""),
+                        validation=validation,
+                        is_consolidation=concept.get("is_consolidation", False)
+                    )
                 
             # Validate and store relationships with cross-domain support
             for rel in knowledge.get("relationships", []):
@@ -498,24 +497,28 @@ class SemanticLayer(ConceptStore):
         """Build Cypher query from query dict."""
         # Basic query building - extend based on needs
         if query.get("type") == "concept":
-            # Handle both type and label matching
+            # Handle type, label, pattern, and context matching
             conditions = []
-            if "type" in query:
-                conditions.append(f"n.type = '{query['type']}'")
-            if "label" in query:
-                conditions.append(f"n.type = '{query['label']}'")
+            if "names" in query:
+                names_list = [f"'{name}'" for name in query["names"]]
+                conditions.append(f"n.name IN [{','.join(names_list)}]")
+            elif "text" in query:
+                conditions.append(f"n.description CONTAINS '{query['text']}'")
+            elif "pattern" in query:
+                conditions.append(f"n.description CONTAINS '{query['pattern']}'")
+            if "context" in query:
+                for key, value in query["context"].items():
+                    if key == "access_domain":
+                        conditions.append(f"(n.access_domain = '{value}' OR n.validation CONTAINS '\"access_domain\":\"{value}\"')")
+                    else:
+                        conditions.append(f"n.{key} = '{value}'")
             
-            where_clause = " OR ".join(conditions) if conditions else "true"
+            where_clause = " AND ".join(conditions) if conditions else "true"
             
             return f"""
             MATCH (n:Concept)
             WHERE {where_clause}
             RETURN n
-            """
-        elif query.get("pattern"):
-            return f"""
-            MATCH p = {query['pattern']}
-            RETURN p
             """
         return ""
         
@@ -524,10 +527,10 @@ class SemanticLayer(ConceptStore):
         processed = []
         for result in results:
             if "n" in result:  # Single node
-                if isinstance(result["n"], dict) and "properties" in result["n"]:
-                    processed.append(result["n"]["properties"])
-                else:
-                    processed.append(result["n"])
+                node = result["n"]
+                if isinstance(node, dict):
+                    # Extract node properties
+                    processed.append(node)
             elif "p" in result:  # Path
                 processed.append(self._process_path(result["p"]))
         return processed
@@ -551,6 +554,20 @@ class TwoLayerMemorySystem:
         self._initialized = False
         self.llm = llm  # Store LLM interface
         self.vector_store = vector_store  # Expose vector_store for external use
+        
+    def _create_validation_metadata(
+        self,
+        source: str,
+        confidence: float,
+        access_domain: str
+    ) -> Dict:
+        """Create validation metadata for concepts."""
+        return {
+            "source": source,
+            "confidence": confidence,
+            "access_domain": access_domain,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
         
     async def initialize(self):
         """Initialize connections to Neo4j and vector store."""
@@ -664,25 +681,39 @@ class TwoLayerMemorySystem:
             
     async def consolidate_memories(self):
         """Convert episodic memories to semantic knowledge."""
+        logger.info("Starting memory consolidation")
         if not self.consolidation_manager:
             logger.warning("No consolidation manager set")
             return
             
         # Get memories ready for consolidation
         memories = await self.episodic.get_consolidation_candidates()
+        logger.info(f"Found {len(memories)} consolidation candidates")
         
         if not memories:
+            logger.info("No memories to consolidate")
             return
             
+        # Log memory details
+        for memory in memories:
+            logger.info(f"Memory candidate - ID: {memory.id if hasattr(memory, 'id') else 'unknown'}, "
+                       f"Importance: {memory.importance if hasattr(memory, 'importance') else 'unknown'}, "
+                       f"Content: {memory.content if hasattr(memory, 'content') else 'unknown'}")
+            
         # Extract patterns and relationships
+        logger.info("Extracting knowledge from memories")
         knowledge = await self.consolidation_manager.extract_knowledge(memories)
+        logger.info(f"Extracted knowledge: {json.dumps(knowledge, separators=(',', ':'), ensure_ascii=False)}")
         
         # Store in semantic layer
+        logger.info("Storing knowledge in semantic layer")
         await self.semantic.store_knowledge(knowledge)
         
         # Archive processed memories
         memory_ids = [m.id for m in memories if hasattr(m, 'id')]
+        logger.info(f"Archiving {len(memory_ids)} processed memories")
         await self.episodic.archive_memories(memory_ids)
+        logger.info("Memory consolidation complete")
         
     async def query_episodic(self, query: Dict) -> List[EpisodicMemory]:
         """Query episodic memories."""
@@ -698,48 +729,7 @@ class TwoLayerMemorySystem:
                 score_threshold=query.get("score_threshold", 0.7),
                 layer=query.get("type", "episodic").lower()  # Use specified type or default to episodic
             )
-            memories = []
-            for r in results:
-                # Ensure content is properly extracted from the stored format
-                content = r.get("content", {})
-                if isinstance(content, dict):
-                    content = content.get("text", "")
-                elif isinstance(content, str):
-                    content = content
-                else:
-                    content = str(content)
-                    
-                # Create memory with properly formatted content
-                memory_data = dict(r)  # Make a copy of the result
-                if isinstance(memory_data, dict):
-                    # Extract fields from the content dictionary
-                    if "content" in memory_data:
-                        content = memory_data["content"]
-                        if isinstance(content, dict):
-                            content = content.get("text", "")
-                        elif isinstance(content, str):
-                            content = content
-                        else:
-                            content = str(content)
-                        memory_data["content"] = content
-                    
-                    # Create EpisodicMemory object
-                    try:
-                        memory = EpisodicMemory(
-                            content=memory_data.get("content", ""),
-                            type=memory_data.get("type", MemoryType.EPISODIC),
-                            timestamp=memory_data.get("timestamp", datetime.now().isoformat()),
-                            context=memory_data.get("context", {}),
-                            concepts=memory_data.get("concepts", []),
-                            relationships=memory_data.get("relationships", []),
-                            participants=memory_data.get("participants", []),
-                            importance=memory_data.get("importance", 0.0),
-                            metadata=memory_data.get("metadata", {})
-                        )
-                        memories.append(memory)
-                    except Exception as e:
-                        logger.error(f"Failed to create EpisodicMemory: {str(e)}")
-            return memories
+            return results
         except Exception as e:
             logger.error(f"Failed to query episodic memories: {str(e)}")
             return []

@@ -1,6 +1,9 @@
 """Validation handling for Neo4j concepts."""
 
+import logging
 from typing import Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 class ValidationHandler:
     """Handles validation data for concepts."""
@@ -11,12 +14,21 @@ class ValidationHandler:
         is_consolidation: bool
     ) -> Optional[Dict]:
         """Process validation data based on consolidation status."""
-        # Return None if no validation provided
+        # Return empty dict if no validation provided
         if not validation:
-            return None
+            return {}
 
-        # Create a copy to avoid modifying original
-        validation = dict(validation)
+        # Handle different validation input types
+        try:
+            if isinstance(validation, dict):
+                validation = validation.copy()
+            elif isinstance(validation, list):
+                validation = dict(validation)
+            else:
+                raise ValueError(f"Unexpected validation type: {type(validation)}")
+        except Exception as e:
+            logger.error(f"Error processing validation: {str(e)}")
+            validation = {}
         confidence = validation.get("confidence")
 
         if confidence is not None:

@@ -1,13 +1,27 @@
-"""Core type definitions."""
+"""Core type definitions for NIA."""
 
-from .graph_types import (
-    GraphNode,
-    GraphEdge,
-    GraphLayout
+from .memory_types import (
+    Memory, MemoryType, Concept, Relationship, Domain, DomainContext,
+    SemanticMemory, EpisodicMemory, ProceduralMemory,
+    AgentResponse, DialogueMessage, DialogueContext,
+    Belief, MemoryQuery, ConsolidationRule, MemoryBatch
 )
 
 __all__ = [
-    'GraphNode',
-    'GraphEdge',
-    'GraphLayout'
+    'Memory',
+    'MemoryType',
+    'Concept',
+    'Relationship',
+    'Domain',
+    'DomainContext',
+    'SemanticMemory',
+    'EpisodicMemory',
+    'ProceduralMemory',
+    'AgentResponse',
+    'DialogueMessage',
+    'DialogueContext',
+    'Belief',
+    'MemoryQuery',
+    'ConsolidationRule',
+    'MemoryBatch'
 ]

@@ -1,5 +1,6 @@
 """Neo4j concept store implementation."""
 
+import json
 import logging
 from typing import Dict, List, Optional, Union
 
@@ -32,28 +33,30 @@ class ConceptStore(Neo4jBaseStore):
             "validation": validation or {}
         })
 
-        # Process validation data
-        validation = ValidationHandler.process_validation(validation, is_consolidation)
-
         async def store_operation():
+            # Process validation data
+            validation_dict = ValidationHandler.process_validation(validation, is_consolidation)
+            access_domain = validation_dict.get("access_domain", "general")
+
             # Build base query
             base_query = """
             MERGE (c:Concept {name: $name})
             SET c.type = $type,
                 c.description = $description,
-                c.is_consolidation = $is_consolidation
+                c.is_consolidation = $is_consolidation,
+                c.access_domain = $access_domain,
+                c.validation = $validation
             """
             params = {
                 "name": name,
                 "type": type,
                 "description": description,
-                "is_consolidation": is_consolidation
+                "is_consolidation": is_consolidation,
+                "access_domain": access_domain,
+                "validation": validation
             }
 
-            # Add validation fields to query
-            query = ValidationHandler.build_validation_query(
-                validation, is_consolidation, params, base_query
-            )
+            query = base_query
             await self.run_query(query, params)
 
             # Handle related concepts

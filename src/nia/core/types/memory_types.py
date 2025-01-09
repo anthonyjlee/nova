@@ -34,25 +34,6 @@ class MemoryType(str, Enum):
     PROCEDURAL = "procedural"
     EMOTIONAL = "emotional"
 
-class AgentResponse(BaseModel):
-    """Response from an agent."""
-    content: str
-    confidence: float = 1.0
-    metadata: Dict[str, Any] = {}
-
-class DialogueMessage(BaseModel):
-    """A message in a dialogue."""
-    content: str
-    sender: str
-    timestamp: datetime = Field(default_factory=datetime.now)
-    metadata: Dict[str, Any] = {}
-
-class DialogueContext(BaseModel):
-    """Context for a dialogue."""
-    messages: List[DialogueMessage] = []
-    participants: List[str] = []
-    metadata: Dict[str, Any] = {}
-
 class DomainContext(BaseModel):
     """Domain context for memories and concepts."""
     primary_domain: Domain
@@ -69,38 +50,14 @@ class DomainContext(BaseModel):
     confidence: float = 1.0
     validation: Optional[Dict[str, Any]] = None
 
-class Memory(BaseModel):
-    """Base memory model."""
-    id: Optional[str] = None
-    content: Union[str, Dict[str, Any]]  # Allow both string and dict content
-    type: MemoryType
-    importance: float = 1.0
-    timestamp: datetime = Field(default_factory=datetime.now)
-    context: Dict[str, Any] = {}
-    consolidated: bool = False
-    domain_context: Optional[DomainContext] = None
-
-class EpisodicMemory(Memory):
-    """Episodic memory model."""
-    type: MemoryType = MemoryType.EPISODIC
-    location: Optional[str] = None
-    participants: Optional[List[str]] = None
-    emotions: Optional[Dict[str, float]] = None
-    related_memories: Optional[List[str]] = None
-
-class SemanticMemory(Memory):
-    """Semantic memory model."""
-    type: MemoryType = MemoryType.SEMANTIC
-    concepts: List[str] = []
-    relationships: List[Dict[str, str]] = []
-    confidence: float = 1.0
-
-class ProceduralMemory(Memory):
-    """Procedural memory model."""
-    type: MemoryType = MemoryType.PROCEDURAL
-    steps: List[str] = []
-    prerequisites: List[str] = []
-    success_criteria: List[str] = []
+    def dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        d = super().dict()
+        # Convert enums to strings
+        d["primary_domain"] = str(self.primary_domain)
+        if self.knowledge_vertical:
+            d["knowledge_vertical"] = str(self.knowledge_vertical)
+        return d
 
 class Concept(BaseModel):
     """A concept in the knowledge graph."""
@@ -118,6 +75,13 @@ class Concept(BaseModel):
         }
     )
 
+    def dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        d = super().dict()
+        if self.domain_context:
+            d["domain_context"] = self.domain_context.dict()
+        return d
+
 class Relationship(BaseModel):
     """A relationship between concepts."""
     source: str
@@ -127,6 +91,104 @@ class Relationship(BaseModel):
     domain_context: DomainContext
     confidence: float = 1.0
     bidirectional: bool = False
+
+    def dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        d = super().dict()
+        if self.domain_context:
+            d["domain_context"] = self.domain_context.dict()
+        return d
+
+class Memory(BaseModel):
+    """Base memory model."""
+    id: Optional[str] = None
+    content: Union[str, Dict[str, Any]]  # Allow both string and dict content
+    type: MemoryType
+    importance: float = 1.0
+    timestamp: datetime = Field(default_factory=datetime.now)
+    context: Dict[str, Any] = {}
+    consolidated: bool = False
+    domain_context: Optional[DomainContext] = None
+
+    def dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        d = super().dict()
+        # Convert datetime to ISO format
+        if self.timestamp:
+            d["timestamp"] = self.timestamp.isoformat()
+        # Convert type enum to string
+        d["type"] = self.type.value if isinstance(self.type, MemoryType) else str(self.type)
+        # Convert domain context if present
+        if self.domain_context:
+            d["domain_context"] = self.domain_context.dict()
+        return d
+
+class EpisodicMemory(Memory):
+    """Episodic memory model."""
+    type: MemoryType = MemoryType.EPISODIC
+    location: Optional[str] = None
+    participants: List[str] = Field(default_factory=list)
+    emotions: Dict[str, float] = Field(default_factory=dict)
+    related_memories: List[str] = Field(default_factory=list)
+    concepts: List[Concept] = Field(default_factory=list)
+    relationships: List[Relationship] = Field(default_factory=list)
+
+    def dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        d = super().dict()
+        # Convert concepts and relationships
+        if self.concepts:
+            d["concepts"] = [c.dict() for c in self.concepts]
+        if self.relationships:
+            d["relationships"] = [r.dict() for r in self.relationships]
+        return d
+
+class SemanticMemory(Memory):
+    """Semantic memory model."""
+    type: MemoryType = MemoryType.SEMANTIC
+    concepts: List[str] = []
+    relationships: List[Dict[str, str]] = []
+    confidence: float = 1.0
+
+class ProceduralMemory(Memory):
+    """Procedural memory model."""
+    type: MemoryType = MemoryType.PROCEDURAL
+    steps: List[str] = []
+    prerequisites: List[str] = []
+    success_criteria: List[str] = []
+
+class AgentResponse(BaseModel):
+    """Response from an agent."""
+    content: str
+    confidence: float = 1.0
+    metadata: Dict[str, Any] = {}
+
+class DialogueMessage(BaseModel):
+    """A message in a dialogue."""
+    content: str
+    sender: str
+    timestamp: datetime = Field(default_factory=datetime.now)
+    metadata: Dict[str, Any] = {}
+
+    def dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        d = super().dict()
+        if self.timestamp:
+            d["timestamp"] = self.timestamp.isoformat()
+        return d
+
+class DialogueContext(BaseModel):
+    """Context for a dialogue."""
+    messages: List[DialogueMessage] = []
+    participants: List[str] = []
+    metadata: Dict[str, Any] = {}
+
+    def dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        d = super().dict()
+        if self.messages:
+            d["messages"] = [m.dict() for m in self.messages]
+        return d
 
 class Belief(BaseModel):
     """A belief about concepts."""
@@ -140,6 +202,17 @@ class Belief(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
     last_updated: datetime = Field(default_factory=datetime.now)
 
+    def dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        d = super().dict()
+        if self.domain_context:
+            d["domain_context"] = self.domain_context.dict()
+        if self.created_at:
+            d["created_at"] = self.created_at.isoformat()
+        if self.last_updated:
+            d["last_updated"] = self.last_updated.isoformat()
+        return d
+
 class MemoryQuery(BaseModel):
     """Query for searching memories."""
     content: Optional[str] = None
@@ -147,6 +220,15 @@ class MemoryQuery(BaseModel):
     time_range: Optional[tuple[datetime, datetime]] = None
     filter: Dict[str, Any] = {}
     limit: int = 10
+
+    def dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        d = super().dict()
+        if self.type:
+            d["type"] = str(self.type)
+        if self.time_range:
+            d["time_range"] = [t.isoformat() if t else None for t in self.time_range]
+        return d
 
 class ConsolidationRule(BaseModel):
     """Rule for memory consolidation."""
@@ -163,8 +245,22 @@ class ConsolidationRule(BaseModel):
         }
     )
 
+    def dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        d = super().dict()
+        if self.domain_context:
+            d["domain_context"] = self.domain_context.dict()
+        return d
+
 class MemoryBatch(BaseModel):
     """Batch of memories for processing."""
     memories: List[Memory]
     metadata: Dict[str, Any] = {}
     batch_id: Optional[str] = None
+
+    def dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        d = super().dict()
+        if self.memories:
+            d["memories"] = [m.dict() for m in self.memories]
+        return d

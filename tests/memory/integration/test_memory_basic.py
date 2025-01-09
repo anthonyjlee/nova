@@ -2,17 +2,22 @@
 
 import pytest
 from datetime import datetime
-from nia.memory.types.memory_types import Memory, MemoryType, Domain
+from nia.memory.types.memory_types import EpisodicMemory, MemoryType, Domain
 
 @pytest.mark.asyncio
 async def test_store_task_output(memory_system):
     """Test storing task output in memory."""
-    memory = Memory(
+    memory = EpisodicMemory(
         content="Test task output",
         type=MemoryType.EPISODIC,
         timestamp=datetime.now().isoformat(),
         importance=0.8,
-        context={"type": "task_output", "domain": Domain.GENERAL}
+        context={
+            "type": "task_output",
+            "domain": Domain.GENERAL,
+            "source": "test",
+            "access_domain": "professional"
+        }
     )
     memory_id = await memory_system.store_experience(memory)
     assert memory_id is not None
@@ -21,12 +26,17 @@ async def test_store_task_output(memory_system):
 async def test_query_by_context_and_participants(memory_system):
     """Test querying memories by context and participants."""
     # Store test memory
-    memory = Memory(
+    memory = EpisodicMemory(
         content="Test memory",
         type=MemoryType.EPISODIC,
         timestamp=datetime.now().isoformat(),
         importance=0.8,
-        context={"project": "test", "domain": Domain.BACKEND},
+        context={
+            "project": "test",
+            "domain": Domain.TECHNOLOGY,
+            "source": "test",
+            "access_domain": "professional"
+        },
         participants=["agent1", "agent2"]
     )
     await memory_system.store_experience(memory)
@@ -43,12 +53,17 @@ async def test_query_task_outputs(memory_system):
     """Test querying task output memories."""
     # Store test memories
     for i in range(3):
-        memory = Memory(
+        memory = EpisodicMemory(
             content=f"Task output {i}",
             type=MemoryType.EPISODIC,
             timestamp=datetime.now().isoformat(),
             importance=0.8,
-            context={"type": "task_output", "domain": Domain.GENERAL}
+            context={
+                "type": "task_output",
+                "domain": Domain.GENERAL,
+                "source": "test",
+                "access_domain": "professional"
+            }
         )
         await memory_system.store_experience(memory)
 

@@ -1,10 +1,18 @@
 """Memory consolidation system for NIA."""
 
 import logging
+import json
 from typing import Dict, List, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-from ..core.types.memory_types import Memory, Concept, Relationship
+from ..core.types.memory_types import (
+    Memory,
+    EpisodicMemory,
+    Concept,
+    Relationship,
+    DomainContext,
+    Domain
+)
 from ..core.neo4j.concept_store import ConceptStore
 
 logger = logging.getLogger(__name__)
@@ -75,6 +83,20 @@ class TinyTroupePattern(ConsolidationPattern):
             domain_context=domain_context
         )
         
+    def _create_validation_metadata(
+        self,
+        source: str,
+        confidence: float,
+        access_domain: str
+    ) -> Dict:
+        """Create validation metadata for concepts."""
+        return {
+            "source": source,
+            "confidence": confidence,
+            "access_domain": access_domain,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
     async def extract_knowledge(
         self,
         memories: List[Memory],
@@ -91,9 +113,13 @@ class TinyTroupePattern(ConsolidationPattern):
         }
         
         for memory in memories:
-            # Skip memories without proper domain context
-            if not memory.domain_context:
-                continue
+            # Create domain context if not present
+            if not hasattr(memory, "domain_context") or not memory.domain_context:
+                memory.domain_context = DomainContext(
+                    primary_domain=memory.context.get("domain", Domain.GENERAL),
+                    knowledge_vertical=None,
+                    confidence=0.9
+                )
                 
             # Validate domain transfer if needed
             if target_domain and not self._validate_domain_transfer(
@@ -109,7 +135,10 @@ class TinyTroupePattern(ConsolidationPattern):
                 })
                 continue
                 
-            metadata = memory.get("metadata", {})
+            # Extract metadata and context
+            metadata = memory.metadata if hasattr(memory, "metadata") else {}
+            context = memory.context if hasattr(memory, "context") else {}
+            logger.debug(f"Processing memory with context: {context}")
             
             # Extract agent-related concepts with domain context
             for agent in metadata.get("agents", []):
@@ -168,8 +197,31 @@ class TinyTroupePattern(ConsolidationPattern):
                         "created_at": datetime.now(timezone.utc).isoformat()
                     })
                     
+            # Create concept from memory content if it contains "important"
+            if "important" in memory.content.lower():
+                # Extract meaningful name from content
+                content_words = memory.content.lower().split()
+                # Remove common words and get first few meaningful words
+                meaningful_words = [w for w in content_words if w not in ['important', 'memory', 'the', 'a', 'an']]
+                concept_name = '_'.join(meaningful_words[:3]) if meaningful_words else "important_memory"
+                concept = {
+                    "name": concept_name,
+                    "type": "entity",
+                    "description": memory.content,
+                    "domain": str(memory.domain_context.primary_domain if hasattr(memory, "domain_context") else memory.context.get("domain", Domain.GENERAL)),
+                    "confidence": 0.9,
+                    "validation": {
+                        "source": "consolidation",
+                        "confidence": memory.importance,
+                        "access_domain": memory.context.get("access_domain", "professional"),
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    }
+                }
+                knowledge["concepts"].append(json.loads(json.dumps(concept, separators=(',', ':'), ensure_ascii=False)))
+                logger.debug(f"Created concept: {concept_name}")
+            
             # Add concepts and relationships from memory with domain context
-            for concept in memory.get("concepts", []):
+            for concept in (memory.concepts if hasattr(memory, "concepts") else []):
                 if isinstance(concept, dict):
                     concept_data = concept
                 else:
@@ -180,7 +232,7 @@ class TinyTroupePattern(ConsolidationPattern):
                     "domain_context": memory.domain_context.dict()
                 })
                 
-            for rel in memory.get("relationships", []):
+            for rel in (memory.relationships if hasattr(memory, "relationships") else []):
                 if isinstance(rel, dict):
                     rel_data = rel
                 else:
@@ -191,6 +243,25 @@ class TinyTroupePattern(ConsolidationPattern):
                     "domain_context": memory.domain_context.dict()
                 })
                     
+        # Convert DomainContext objects to dictionaries
+        if knowledge["domain_context"]:
+            knowledge["domain_context"] = knowledge["domain_context"].dict()
+        
+        # Convert concepts
+        for concept in knowledge["concepts"]:
+            if "domain_context" in concept and isinstance(concept["domain_context"], DomainContext):
+                concept["domain_context"] = concept["domain_context"].dict()
+                
+        # Convert relationships
+        for rel in knowledge["relationships"]:
+            if "domain_context" in rel and isinstance(rel["domain_context"], DomainContext):
+                rel["domain_context"] = rel["domain_context"].dict()
+                
+        # Convert beliefs
+        for belief in knowledge["beliefs"]:
+            if "domain_context" in belief and isinstance(belief["domain_context"], DomainContext):
+                belief["domain_context"] = belief["domain_context"].dict()
+                
         return knowledge
 
 class ConsolidationManager:
@@ -215,8 +286,8 @@ class ConsolidationManager:
             
         # Check importance-based trigger
         candidates = await self.episodic.get_consolidation_candidates()
-        if any(m.get("importance", 0) >= self.importance_threshold 
-               and not m.get("consolidated", False)
+        if any(getattr(m, "importance", 0) >= self.importance_threshold 
+               and not getattr(m, "consolidated", False)
                for m in candidates):
             return True
             
@@ -243,9 +314,23 @@ class ConsolidationManager:
         
         # Group memories by domain
         domain_groups = {}
-        for memory in memories:
-            if not memory.domain_context:
+        for memory_dict in memories:
+            # Convert to Memory object if needed
+            try:
+                if isinstance(memory_dict, EpisodicMemory):
+                    memory = memory_dict
+                else:
+                    memory = EpisodicMemory(**memory_dict)
+            except Exception as e:
+                logger.error(f"Failed to create Memory from dict: {str(e)}")
                 continue
+
+            if not memory.domain_context:
+                memory.domain_context = DomainContext(
+                    primary_domain=memory.context.get("domain", Domain.GENERAL),
+                    knowledge_vertical=None,
+                    confidence=0.9
+                )
                 
             domain_key = (
                 memory.domain_context.primary_domain,
