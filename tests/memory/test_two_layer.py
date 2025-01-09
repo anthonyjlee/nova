@@ -65,28 +65,69 @@ def mock_vector_store():
                     if field in metadata:
                         memory_dict[field] = metadata[field]
 
-            # Ensure all required fields are present with proper types
+            # Validate and ensure all required fields are present with proper types
             if "concepts" not in memory_dict:
                 memory_dict["concepts"] = []
             elif not isinstance(memory_dict["concepts"], list):
                 memory_dict["concepts"] = [memory_dict["concepts"]]
             elif isinstance(memory_dict["concepts"], list):
-                # Convert each concept to a dict if it's not already
-                memory_dict["concepts"] = [
-                    c.dict() if hasattr(c, "dict") else c 
-                    for c in memory_dict["concepts"]
-                ]
+                # Convert and validate each concept
+                validated_concepts = []
+                for c in memory_dict["concepts"]:
+                    if hasattr(c, "dict"):
+                        concept_dict = c.dict()
+                    else:
+                        concept_dict = c
+                    
+                    # Validate concept type
+                    if "type" in concept_dict and concept_dict["type"] not in [
+                        "entity", "action", "property", "event", "abstract"
+                    ]:
+                        raise ValueError(f"Invalid concept type: {concept_dict['type']}")
+                    
+                    # Validate confidence
+                    if "confidence" in concept_dict:
+                        confidence = float(concept_dict["confidence"])
+                        if not 0 <= confidence <= 1:
+                            raise ValueError(f"Confidence must be between 0 and 1, got {confidence}")
+                    
+                    validated_concepts.append(concept_dict)
+                memory_dict["concepts"] = validated_concepts
             
             if "relationships" not in memory_dict:
                 memory_dict["relationships"] = []
             elif not isinstance(memory_dict["relationships"], list):
                 memory_dict["relationships"] = [memory_dict["relationships"]]
             elif isinstance(memory_dict["relationships"], list):
-                # Convert each relationship to a dict if it's not already
-                memory_dict["relationships"] = [
-                    r.dict() if hasattr(r, "dict") else r 
-                    for r in memory_dict["relationships"]
-                ]
+                # Convert and validate each relationship
+                validated_relationships = []
+                for r in memory_dict["relationships"]:
+                    if hasattr(r, "dict"):
+                        rel_dict = r.dict()
+                    else:
+                        rel_dict = r
+                    
+                    # Validate relationship type
+                    if "type" in rel_dict and rel_dict["type"] not in [
+                        "is_a", "has_a", "part_of", "related_to", 
+                        "causes", "implies", "precedes", "similar_to"
+                    ]:
+                        raise ValueError(f"Invalid relationship type: {rel_dict['type']}")
+                    
+                    # Validate confidence
+                    if "confidence" in rel_dict:
+                        confidence = float(rel_dict["confidence"])
+                        if not 0 <= confidence <= 1:
+                            raise ValueError(f"Confidence must be between 0 and 1, got {confidence}")
+                    
+                    # Ensure domains list
+                    if "domains" not in rel_dict:
+                        rel_dict["domains"] = ["general"]
+                    elif not isinstance(rel_dict["domains"], list):
+                        rel_dict["domains"] = [rel_dict["domains"]]
+                    
+                    validated_relationships.append(rel_dict)
+                memory_dict["relationships"] = validated_relationships
             
             if "participants" not in memory_dict:
                 memory_dict["participants"] = []
@@ -98,10 +139,17 @@ def mock_vector_store():
             elif not isinstance(memory_dict["importance"], (int, float)):
                 memory_dict["importance"] = float(memory_dict["importance"])
             
+            # Validate context structure
             if "context" not in memory_dict:
-                memory_dict["context"] = {}
+                memory_dict["context"] = {"domain": "general", "source": "system"}
             elif not isinstance(memory_dict["context"], dict):
                 memory_dict["context"] = {"value": memory_dict["context"]}
+            else:
+                # Ensure required context fields
+                if "domain" not in memory_dict["context"]:
+                    memory_dict["context"]["domain"] = "general"
+                if "source" not in memory_dict["context"]:
+                    memory_dict["context"]["source"] = "system"
             
             if "metadata" not in memory_dict:
                 memory_dict["metadata"] = {}
@@ -466,15 +514,42 @@ def mock_neo4j_store():
                         }
                         self.store.nodes[node_id] = target_node
                     
-                    # Create relationship
-                    self.store.relationships.append({
+                    # Create relationship with enhanced properties
+                    relationship = {
                         "from": params.get("name"),
                         "to": params.get("related_name"),
-                        "type": "RELATED_TO",
-                        "properties": {}
-                    })
+                        "type": params.get("type", "RELATED_TO"),
+                        "properties": {
+                            "domains": params.get("domains", ["general"]),
+                            "confidence": params.get("confidence", 1.0),
+                            "bidirectional": params.get("bidirectional", False),
+                            "created_at": datetime.now(timezone.utc).isoformat(),
+                            "last_updated": datetime.now(timezone.utc).isoformat()
+                        }
+                    }
+                    self.store.relationships.append(relationship)
                     
-                    return MockAsyncResult([{"c": source_node["properties"], "r": target_node["properties"]}])
+                    # Create reverse relationship if bidirectional
+                    if params.get("bidirectional", False):
+                        reverse_relationship = {
+                            "from": params.get("related_name"),
+                            "to": params.get("name"),
+                            "type": params.get("type", "RELATED_TO"),
+                            "properties": {
+                                "domains": params.get("domains", ["general"]),
+                                "confidence": params.get("confidence", 1.0),
+                                "bidirectional": True,
+                                "created_at": datetime.now(timezone.utc).isoformat(),
+                                "last_updated": datetime.now(timezone.utc).isoformat()
+                            }
+                        }
+                        self.store.relationships.append(reverse_relationship)
+                    
+                    return MockAsyncResult([{
+                        "c": source_node["properties"], 
+                        "r": target_node["properties"],
+                        "relationship": relationship["properties"]
+                    }])
             elif "MATCH ()-[r:RELATED_TO]->() RETURN count" in query:
                 # Handle relationship count query
                 return MockAsyncResult([{"count": len(self.store.relationships)}])
@@ -518,12 +593,39 @@ def mock_neo4j_store():
             print(f"Added relationship: {relationship}")
             print(f"Relationships after: {self.relationships}")
             
-        async def create_belief(self, subject: str, predicate: str, object: str, confidence: float = 1.0):
+        async def create_belief(
+            self, 
+            subject: str, 
+            predicate: str, 
+            object: str, 
+            confidence: float = 1.0,
+            domains: List[str] = None,
+            context: Dict = None,
+            source: str = "system"
+        ):
+            """Create a belief with enhanced metadata."""
+            # Validate confidence
+            if not 0 <= confidence <= 1:
+                raise ValueError(f"Confidence must be between 0 and 1, got {confidence}")
+                
+            # Ensure domains list
+            if domains is None:
+                domains = ["general"]
+                
+            # Ensure context dict
+            if context is None:
+                context = {}
+                
             self.beliefs.append({
                 "subject": subject,
                 "predicate": predicate,
                 "object": object,
-                "confidence": confidence
+                "confidence": confidence,
+                "domains": domains,
+                "context": context,
+                "source": source,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "last_updated": datetime.now(timezone.utc).isoformat()
             })
             
         async def run_query(self, query: str) -> List[Dict]:
@@ -619,6 +721,116 @@ async def test_memory_querying(memory_system):
     assert len(results) == 1
     assert results[0].context["project"] == "A"
     assert "Alice" in results[0].participants
+
+@pytest.mark.asyncio
+async def test_validation_errors(memory_system):
+    """Test validation error handling."""
+    # Test invalid concept type
+    with pytest.raises(ValueError, match="type"):
+        memory = EpisodicMemory(
+            content="Invalid concept",
+            type=MemoryType.EPISODIC,
+            timestamp=datetime.now().isoformat(),
+            importance=0.8,
+            context={"domain": "professional", "source": "test"},
+            concepts=[
+                Concept(
+                    name="Test",
+                    type="invalid_type",  # Should fail validation
+                    description="Test concept",
+                    confidence=0.9
+                )
+            ]
+        )
+        await memory_system.store_experience(memory)
+
+    # Test invalid confidence value
+    with pytest.raises(ValueError, match="confidence"):
+        memory = EpisodicMemory(
+            content="Invalid confidence",
+            type=MemoryType.EPISODIC,
+            timestamp=datetime.now().isoformat(),
+            importance=0.8,
+            context={"domain": "professional", "source": "test"},
+            concepts=[
+                Concept(
+                    name="Test",
+                    type="entity",
+                    description="Test concept",
+                    confidence=1.5  # Should fail validation
+                )
+            ]
+        )
+        await memory_system.store_experience(memory)
+
+    # Test missing required context fields
+    with pytest.raises(ValueError, match="context"):
+        memory = EpisodicMemory(
+            content="Missing context",
+            type=MemoryType.EPISODIC,
+            timestamp=datetime.now().isoformat(),
+            importance=0.8,
+            context={},  # Missing required fields
+            concepts=[
+                Concept(
+                    name="Test",
+                    type="entity",
+                    description="Test concept",
+                    confidence=0.9
+                )
+            ]
+        )
+        await memory_system.store_experience(memory)
+
+@pytest.mark.asyncio
+async def test_bidirectional_relationships(memory_system):
+    """Test bidirectional relationship handling."""
+    memory = EpisodicMemory(
+        content="System architecture",
+        type=MemoryType.EPISODIC,
+        timestamp=datetime.now().isoformat(),
+        importance=0.8,
+        context={"domain": "professional", "source": "architecture"},
+        concepts=[
+            Concept(name="Frontend", type="entity", description="Frontend system", confidence=0.9),
+            Concept(name="Backend", type="entity", description="Backend system", confidence=0.9)
+        ],
+        relationships=[
+            Relationship(
+                from_="Frontend",
+                to="Backend",
+                type="communicates_with",
+                domains=["professional"],
+                confidence=0.9,
+                bidirectional=True
+            )
+        ]
+    )
+    
+    # Store memory
+    await memory_system.store_experience(memory)
+    
+    # Trigger consolidation
+    await memory_system.consolidate_memories()
+    
+    # Verify both relationships exist
+    results = await memory_system.query_semantic({
+        "type": "concept",
+        "pattern": "Frontend|Backend"
+    })
+    
+    assert len(results) > 0
+    
+    # Check relationships in both directions
+    found_forward = False
+    found_reverse = False
+    for result in results:
+        if "Frontend" in str(result) and "Backend" in str(result):
+            found_forward = True
+        if "Backend" in str(result) and "Frontend" in str(result):
+            found_reverse = True
+    
+    assert found_forward and found_reverse
 
 if __name__ == "__main__":
     pytest.main([__file__])

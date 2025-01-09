@@ -197,6 +197,130 @@ async def test_complex_pattern_consolidation(memory_system):
             assert "SQL" in str(result) or "NoSQL" in str(result)
 
 @pytest.mark.asyncio
+async def test_pattern_validation_errors(memory_system):
+    """Test validation errors during pattern consolidation."""
+    # Test invalid concept type
+    with pytest.raises(ValueError, match="type"):
+        memory = Memory(
+            content="Invalid concept type",
+            type=MemoryType.EPISODIC,
+            timestamp=datetime.now().isoformat(),
+            importance=0.8,
+            context={
+                "domain": "professional",
+                "source": "test"
+            },
+            concepts=[
+                Concept(
+                    name="Test",
+                    type="invalid_type",  # Should fail validation
+                    domain="professional",
+                    confidence=0.9
+                )
+            ]
+        )
+        await memory_system.store_experience(memory)
+
+    # Test invalid confidence value
+    with pytest.raises(ValueError, match="confidence"):
+        memory = Memory(
+            content="Invalid confidence",
+            type=MemoryType.EPISODIC,
+            timestamp=datetime.now().isoformat(),
+            importance=0.8,
+            context={
+                "domain": "professional",
+                "source": "test"
+            },
+            concepts=[
+                Concept(
+                    name="Test",
+                    type="entity",
+                    domain="professional",
+                    confidence=1.5  # Should fail validation
+                )
+            ]
+        )
+        await memory_system.store_experience(memory)
+
+    # Test missing required context fields
+    with pytest.raises(ValueError, match="context"):
+        memory = Memory(
+            content="Missing context fields",
+            type=MemoryType.EPISODIC,
+            timestamp=datetime.now().isoformat(),
+            importance=0.8,
+            context={
+                # Missing required fields
+            },
+            concepts=[
+                Concept(
+                    name="Test",
+                    type="entity",
+                    domain="professional",
+                    confidence=0.9
+                )
+            ]
+        )
+        await memory_system.store_experience(memory)
+
+@pytest.mark.asyncio
+async def test_bidirectional_relationship_consolidation(memory_system):
+    """Test consolidation of bidirectional relationships."""
+    # Store memory with bidirectional relationship
+    concepts = [
+        Concept(name="Frontend", type="entity", domain="professional", confidence=0.9),
+        Concept(name="Backend", type="entity", domain="professional", confidence=0.9)
+    ]
+    relationships = [
+        Relationship(
+            from_="Frontend",
+            to="Backend",
+            type="communicates_with",
+            domains=["professional"],
+            confidence=0.9,
+            bidirectional=True
+        )
+    ]
+
+    memory = Memory(
+        content="System architecture overview",
+        type=MemoryType.EPISODIC,
+        timestamp=datetime.now().isoformat(),
+        importance=0.8,
+        context={
+            "domain": "professional",
+            "source": "architecture_review"
+        },
+        concepts=concepts,
+        relationships=relationships
+    )
+    await memory_system.store_experience(memory)
+
+    # Trigger consolidation
+    await memory_system.consolidate_memories()
+
+    # Verify bidirectional relationship was stored
+    semantic_results = await memory_system.query_semantic({
+        "type": "concept",
+        "pattern": "Frontend|Backend",
+        "context": {
+            "domain": "professional"
+        }
+    })
+    assert len(semantic_results) > 0
+
+    # Verify both directions exist
+    found_forward = False
+    found_reverse = False
+    for result in semantic_results:
+        if "Frontend" in str(result) and "Backend" in str(result):
+            found_forward = True
+        if "Backend" in str(result) and "Frontend" in str(result):
+            found_reverse = True
+    assert found_forward and found_reverse
+
+@pytest.mark.asyncio
 async def test_cross_domain_pattern_consolidation(memory_system):
     """Test consolidation of patterns that span domains."""
     # Store cross-domain related memories

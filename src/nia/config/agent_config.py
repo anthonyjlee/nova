@@ -429,8 +429,52 @@ AGENT_RESPONSIBILITIES: Dict[str, str] = {
   * Domain boundary enforcement"""
 }
 
-VALID_DOMAINS: Set[str] = {"personal", "professional"}
-REQUIRED_CONFIG_FIELDS: Set[str] = {"name", "agent_type", "domain"}
+from ..core.types.memory_types import Domain
+
+# Base domains are required for all agents
+BASE_DOMAINS: Set[str] = {Domain.PERSONAL, Domain.PROFESSIONAL}
+
+# Knowledge verticals for specialized domains
+KNOWLEDGE_VERTICALS: Set[str] = {
+    Domain.RETAIL,
+    Domain.BUSINESS,
+    Domain.PSYCHOLOGY,
+    Domain.TECHNOLOGY,
+    Domain.BACKEND,
+    Domain.DATABASE,
+    Domain.GENERAL
+}
+
+REQUIRED_CONFIG_FIELDS: Set[str] = {
+    "name", 
+    "agent_type", 
+    "domain",  # Primary domain (personal/professional)
+    "knowledge_vertical"  # Optional specialized domain
+}
+
+def validate_domain_config(config: Dict[str, Any]) -> bool:
+    """Validate domain configuration.
+    
+    Args:
+        config: Configuration dictionary containing domain settings
+        
+    Returns:
+        bool: True if configuration is valid
+        
+    Raises:
+        ValueError: If domain configuration is invalid
+    """
+    # Validate primary domain
+    if config["domain"] not in BASE_DOMAINS:
+        raise ValueError(f"Invalid primary domain: {config['domain']}. Must be one of {BASE_DOMAINS}")
+        
+    # Validate knowledge vertical if specified
+    if "knowledge_vertical" in config:
+        vertical = config["knowledge_vertical"]
+        if vertical and vertical not in KNOWLEDGE_VERTICALS:
+            raise ValueError(f"Invalid knowledge vertical: {vertical}. Must be one of {KNOWLEDGE_VERTICALS}")
+            
+    return True
 
 def get_agent_prompt(agent_type: str) -> str:
     """Get the prompt template for a specific agent type.
@@ -467,14 +511,17 @@ def validate_agent_config(agent_type: str, config: Dict[str, Any]) -> bool:
         ValueError: If the configuration is missing required fields,
                     or if the agent type or domain is invalid.
     """
-    missing_fields = REQUIRED_CONFIG_FIELDS - config.keys()
+    # Check required fields except knowledge_vertical (optional)
+    required_fields = REQUIRED_CONFIG_FIELDS - {"knowledge_vertical"}
+    missing_fields = required_fields - config.keys()
     if missing_fields:
         raise ValueError(f"Missing required fields: {', '.join(missing_fields)}")
 
+    # Validate agent type
     if agent_type not in AGENT_RESPONSIBILITIES:
         raise ValueError(f"Invalid agent type: {agent_type}")
 
-    if config["domain"] not in VALID_DOMAINS:
-        raise ValueError(f"Invalid domain: {config['domain']}")
+    # Validate domain configuration
+    validate_domain_config(config)
 
     return True

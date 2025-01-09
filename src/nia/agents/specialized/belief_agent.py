@@ -275,42 +275,101 @@ class BeliefAgent(NovaBeliefAgent, TinyTroupeAgent):
         """Get memory system."""
         return self._memory_system
         
-    async def get_domain_access(self, domain: str) -> bool:
-        """Check if agent has access to specified domain."""
-        # For testing, only allow personal domain
-        if domain == "personal":
+    async def get_domain_access(self, domain_context: DomainContext) -> bool:
+        """Check if agent has access to specified domain context."""
+        # Always allow access to agent's primary domain
+        if domain_context.primary_domain == self.domain:
             return True
             
+        # For cross-domain operations, check if approved
+        if domain_context.cross_domain and domain_context.cross_domain.get("approved"):
+            return True
+            
+        # For knowledge verticals, check semantic store
         if self._memory_system and hasattr(self._memory_system, "semantic"):
             try:
-                return await self._memory_system.semantic.store.get_domain_access(
+                # Check both primary domain and knowledge vertical
+                primary_access = await self._memory_system.semantic.store.get_domain_access(
                     self.name,
-                    domain
+                    domain_context.primary_domain
                 )
-            except Exception:
+                
+                # If no knowledge vertical or primary access denied, return primary access result
+                if not domain_context.knowledge_vertical or not primary_access:
+                    return primary_access
+                    
+                # Check knowledge vertical access
+                vertical_access = await self._memory_system.semantic.store.get_domain_access(
+                    self.name,
+                    domain_context.knowledge_vertical
+                )
+                
+                # Both must be granted for access
+                return primary_access and vertical_access
+                
+            except Exception as e:
+                logger.error(f"Error checking domain access: {str(e)}")
                 return False
+                
         return False
         
-    async def validate_domain_access(self, domain: str):
-        """Validate access to a domain before processing."""
-        if not await self.get_domain_access(domain):
+    async def validate_domain_access(self, domain_context: DomainContext):
+        """Validate access to a domain context before processing."""
+        if not await self.get_domain_access(domain_context):
             raise PermissionError(
-                f"BeliefAgent {self.name} does not have access to domain: {domain}"
+                f"BeliefAgent {self.name} does not have access to domain context: {domain_context}"
             )
             
-    async def record_reflection(self, content: str, domain: Optional[str] = None):
-        """Record a reflection with domain awareness."""
+    async def request_cross_domain_access(
+        self,
+        source_domain: DomainContext,
+        target_domain: DomainContext,
+        justification: str
+    ) -> bool:
+        """Request access for cross-domain operation."""
         if self._memory_system and hasattr(self._memory_system, "semantic"):
             try:
+                return await self._memory_system.semantic.store.request_cross_domain_access(
+                    agent_name=self.name,
+                    source_domain=source_domain,
+                    target_domain=target_domain,
+                    justification=justification
+                )
+            except Exception as e:
+                logger.error(f"Error requesting cross-domain access: {str(e)}")
+                return False
+        return False
+            
+    async def record_reflection(
+        self,
+        content: str,
+        domain_context: Optional[DomainContext] = None
+    ):
+        """Record a reflection with enhanced domain awareness."""
+        if self._memory_system and hasattr(self._memory_system, "semantic"):
+            try:
+                # Create default domain context if none provided
+                if domain_context is None:
+                    domain_context = DomainContext(
+                        primary_domain=self.domain,
+                        knowledge_vertical=None
+                    )
+                    
+                # Validate domain access
+                await self.validate_domain_access(domain_context)
+                
+                # Record reflection with domain context
                 await self._memory_system.semantic.store.record_reflection(
                     content=content,
-                    domain=domain or self.domain
+                    domain_context=domain_context
                 )
-                # Store reference
+                
+                # Store reference with domain information
                 if "memory_references" in self._configuration:
                     self._configuration["memory_references"].append({
                         "type": "reflection",
                         "content": content,
+                        "domain_context": domain_context.dict(),
                         "timestamp": datetime.now().isoformat()
                     })
             except Exception as e:

@@ -26,35 +26,82 @@ class EpisodicLayer:
             self.store = vector_store
         self.pending_consolidation = set()
         
+    def _validate_memory(self, memory: Memory) -> None:
+        """Validate memory before storage."""
+        # Validate content type
+        if not isinstance(memory.content, (str, dict)):
+            raise ValueError(f"Invalid content type: {type(memory.content)}. Must be str or dict.")
+            
+        # Validate importance range
+        if not 0 <= memory.importance <= 1:
+            raise ValueError(f"Importance must be between 0 and 1, got {memory.importance}")
+            
+        # Validate context structure
+        if memory.context:
+            if not isinstance(memory.context, dict):
+                raise ValueError(f"Context must be a dictionary, got {type(memory.context)}")
+            # Required context fields
+            required_fields = {"domain", "source"}
+            missing_fields = required_fields - set(memory.context.keys())
+            if missing_fields:
+                raise ValueError(f"Missing required context fields: {missing_fields}")
+                
+        # Validate concepts
+        if memory.concepts:
+            for concept in memory.concepts:
+                if not hasattr(concept, "name") or not concept.name:
+                    raise ValueError("Concepts must have a name")
+                if not hasattr(concept, "confidence") or not 0 <= concept.confidence <= 1:
+                    raise ValueError(f"Concept {concept.name} must have valid confidence (0-1)")
+                    
+        # Validate relationships
+        if memory.relationships:
+            for rel in memory.relationships:
+                if not hasattr(rel, "from_") or not hasattr(rel, "to"):
+                    raise ValueError("Relationships must have from_ and to fields")
+                if not hasattr(rel, "confidence") or not 0 <= rel.confidence <= 1:
+                    raise ValueError(f"Relationship must have valid confidence (0-1)")
+
     async def store_memory(self, memory: Memory) -> str:
         """Store a new episodic memory."""
         try:
+            # Validate memory
+            self._validate_memory(memory)
+            
             # Create embedding and store
             memory_dict = memory.dict()
             memory_dict["consolidated"] = False  # Ensure consolidated field is set
             
-            # Ensure content is properly formatted
+            # Ensure content is properly formatted with validation
             content = memory_dict["content"]
             if isinstance(content, str):
-                content = {"text": content}
-            elif not isinstance(content, dict):
-                content = {"text": str(content)}
+                content = {"text": content, "type": "text"}
+            elif isinstance(content, dict):
+                if "text" not in content:
+                    raise ValueError("Dict content must have 'text' field")
+                if "type" not in content:
+                    content["type"] = "structured"
+            else:
+                raise ValueError(f"Invalid content type: {type(content)}")
                 
             # Store with content dict and set layer based on memory type
             memory_id = await self.store.store_vector(
                 content={
                     **memory_dict,  # Include all memory fields in content
-                    "content": content["text"]  # Store text content directly
+                    "content": content  # Store full content dict
                 },
                 metadata={
-                    "type": memory.type.value,  # Use actual memory type
-                    "timestamp": datetime.now().isoformat()
+                    "type": memory.type.value,
+                    "timestamp": datetime.now().isoformat(),
+                    "importance": memory.importance,
+                    "domain": memory.context.get("domain", "general")
                 },
-                layer=memory.type.value.lower()  # Use memory type as layer
+                layer=memory.type.value.lower()
             )
             
-            # Track for consolidation
-            self.pending_consolidation.add(memory_id)
+            # Track for consolidation if important enough
+            if memory.importance >= 0.7:  # High importance threshold
+                self.pending_consolidation.add(memory_id)
             
             return memory_id
         except Exception as e:
@@ -192,81 +239,241 @@ class SemanticLayer(ConceptStore):
         }
         
     def _create_concept_pattern(self) -> Dict:
-        """Create pattern for concept extraction."""
+        """Create pattern for concept extraction with enhanced validation."""
         return {
             "type": "concept",
-            "properties": ["name", "category", "attributes"]
+            "properties": {
+                "required": ["name", "type", "domain"],
+                "optional": ["category", "attributes", "confidence"],
+                "validation": {
+                    "name": lambda x: isinstance(x, str) and len(x) > 0,
+                    "type": lambda x: x in ["entity", "action", "property", "event", "abstract"],
+                    "domain": lambda x: isinstance(x, str) and len(x) > 0,
+                    "confidence": lambda x: isinstance(x, float) and 0 <= x <= 1
+                }
+            }
         }
         
     def _create_relationship_pattern(self) -> Dict:
-        """Create pattern for relationship extraction."""
+        """Create pattern for relationship extraction with cross-domain support."""
         return {
             "type": "relationship",
-            "properties": ["from", "to", "type", "attributes"]
+            "properties": {
+                "required": ["from", "to", "type", "domains"],
+                "optional": ["attributes", "confidence", "bidirectional"],
+                "validation": {
+                    "from": lambda x: isinstance(x, str) and len(x) > 0,
+                    "to": lambda x: isinstance(x, str) and len(x) > 0,
+                    "type": lambda x: x in [
+                        "is_a", "has_a", "part_of", "related_to", 
+                        "causes", "implies", "precedes", "similar_to"
+                    ],
+                    "domains": lambda x: isinstance(x, list) and len(x) > 0,
+                    "confidence": lambda x: isinstance(x, float) and 0 <= x <= 1,
+                    "bidirectional": lambda x: isinstance(x, bool)
+                }
+            }
         }
         
     def _create_belief_pattern(self) -> Dict:
-        """Create pattern for belief extraction."""
+        """Create pattern for belief extraction with confidence scoring."""
         return {
             "type": "belief",
-            "properties": ["subject", "predicate", "object", "confidence"]
+            "properties": {
+                "required": ["subject", "predicate", "object", "confidence", "domains"],
+                "optional": ["context", "timestamp", "source"],
+                "validation": {
+                    "subject": lambda x: isinstance(x, str) and len(x) > 0,
+                    "predicate": lambda x: isinstance(x, str) and len(x) > 0,
+                    "object": lambda x: isinstance(x, str) and len(x) > 0,
+                    "confidence": lambda x: isinstance(x, float) and 0 <= x <= 1,
+                    "domains": lambda x: isinstance(x, list) and len(x) > 0,
+                    "context": lambda x: isinstance(x, dict),
+                    "timestamp": lambda x: isinstance(x, str) and len(x) > 0,
+                    "source": lambda x: isinstance(x, str) and len(x) > 0
+                }
+            }
         }
         
-    async def _create_belief(self, subject: str, predicate: str, object: str, confidence: float = 1.0):
-        """Create a belief in the knowledge graph."""
+    def _validate_pattern(self, data: Dict, pattern: Dict) -> bool:
+        """Validate data against a pattern."""
+        try:
+            # Check required properties
+            for prop in pattern["properties"]["required"]:
+                if prop not in data:
+                    logger.error(f"Missing required property: {prop}")
+                    return False
+                    
+            # Validate properties
+            for prop, value in data.items():
+                if prop in pattern["properties"]["validation"]:
+                    validator = pattern["properties"]["validation"][prop]
+                    if not validator(value):
+                        logger.error(f"Invalid value for {prop}: {value}")
+                        return False
+                        
+            return True
+        except Exception as e:
+            logger.error(f"Pattern validation failed: {str(e)}")
+            return False
+        
+    async def _create_belief(
+        self, 
+        subject: str, 
+        predicate: str, 
+        object: str, 
+        confidence: float = 1.0,
+        domains: List[str] = None,
+        context: Dict = None,
+        source: str = "system"
+    ):
+        """Create a belief in the knowledge graph with enhanced context."""
+        # Validate confidence
+        if not 0 <= confidence <= 1:
+            raise ValueError(f"Confidence must be between 0 and 1, got {confidence}")
+            
+        # Ensure domains list
+        if domains is None:
+            domains = ["general"]
+            
+        # Ensure context dict
+        if context is None:
+            context = {}
+            
+        # Create belief with full context
         await self.run_query(
             """
             MATCH (s:Concept {name: $subject})
             MATCH (o:Concept {name: $object})
-            MERGE (s)-[r:BELIEVES {predicate: $predicate, confidence: $confidence}]->(o)
+            MERGE (s)-[r:BELIEVES]->(o)
+            SET 
+                r.predicate = $predicate,
+                r.confidence = $confidence,
+                r.domains = $domains,
+                r.context = $context,
+                r.source = $source,
+                r.created_at = CASE WHEN r.created_at IS NULL THEN datetime() ELSE r.created_at END,
+                r.last_updated = datetime()
             """,
             {
                 "subject": subject,
                 "predicate": predicate,
                 "object": object,
-                "confidence": confidence
+                "confidence": confidence,
+                "domains": domains,
+                "context": json.dumps(context),
+                "source": source
             }
         )
 
     async def store_knowledge(self, knowledge: Dict):
-        """Store extracted semantic knowledge."""
+        """Store extracted semantic knowledge with pattern validation and cross-domain support."""
         try:
-            # Create concept nodes
+            # Validate and store concepts
             for concept in knowledge.get("concepts", []):
+                if not self._validate_pattern(concept, self.knowledge_patterns["concepts"]):
+                    logger.warning(f"Skipping invalid concept: {concept}")
+                    continue
+                    
+                # Store concept with enhanced metadata
                 await self.store_concept(
                     name=concept["name"],
                     type=concept["type"],
-                    description=concept["description"],
-                    validation=concept.get("validation"),
+                    description=concept.get("description", ""),
+                    validation={
+                        "domain": concept["domain"],
+                        "confidence": concept.get("confidence", 1.0),
+                        "source": concept.get("source", "system"),
+                        "timestamp": datetime.now(timezone.utc).isoformat()
+                    },
                     is_consolidation=concept.get("is_consolidation", False)
                 )
                 
-            # Create relationships
+            # Validate and store relationships with cross-domain support
             for rel in knowledge.get("relationships", []):
-                # Create source concept if it doesn't exist
+                if not self._validate_pattern(rel, self.knowledge_patterns["relationships"]):
+                    logger.warning(f"Skipping invalid relationship: {rel}")
+                    continue
+                    
+                # Create relationship with domain awareness
                 await self.run_query(
                     """
                     MERGE (c1:Concept {name: $from})
-                    ON CREATE SET c1.type = 'concept', c1.description = ''
+                    ON CREATE SET 
+                        c1.type = $from_type,
+                        c1.description = $from_description,
+                        c1.domain = $from_domain,
+                        c1.created_at = datetime()
                     WITH c1
                     MERGE (c2:Concept {name: $to})
-                    ON CREATE SET c2.type = 'concept', c2.description = ''
-                    MERGE (c1)-[:RELATED_TO {type: $type}]->(c2)
+                    ON CREATE SET 
+                        c2.type = $to_type,
+                        c2.description = $to_description,
+                        c2.domain = $to_domain,
+                        c2.created_at = datetime()
+                    WITH c1, c2
+                    MERGE (c1)-[r:RELATED_TO]->(c2)
+                    SET 
+                        r.type = $rel_type,
+                        r.domains = $domains,
+                        r.confidence = $confidence,
+                        r.bidirectional = $bidirectional,
+                        r.last_updated = datetime()
                     """,
                     {
                         "from": rel["from"],
+                        "from_type": rel.get("from_type", "concept"),
+                        "from_description": rel.get("from_description", ""),
+                        "from_domain": rel["domains"][0],  # Primary domain for source
                         "to": rel["to"],
-                        "type": rel["type"]
+                        "to_type": rel.get("to_type", "concept"),
+                        "to_description": rel.get("to_description", ""),
+                        "to_domain": rel["domains"][-1],  # Primary domain for target
+                        "rel_type": rel["type"],
+                        "domains": rel["domains"],
+                        "confidence": rel.get("confidence", 1.0),
+                        "bidirectional": rel.get("bidirectional", False)
                     }
                 )
                 
-            # Store beliefs
+                # Create reverse relationship if bidirectional
+                if rel.get("bidirectional", False):
+                    await self.run_query(
+                        """
+                        MATCH (c1:Concept {name: $from})
+                        MATCH (c2:Concept {name: $to})
+                        MERGE (c2)-[r:RELATED_TO]->(c1)
+                        SET 
+                            r.type = $rel_type,
+                            r.domains = $domains,
+                            r.confidence = $confidence,
+                            r.bidirectional = true,
+                            r.last_updated = datetime()
+                        """,
+                        {
+                            "from": rel["from"],
+                            "to": rel["to"],
+                            "rel_type": rel["type"],
+                            "domains": rel["domains"],
+                            "confidence": rel.get("confidence", 1.0)
+                        }
+                    )
+                
+            # Validate and store beliefs with enhanced context
             for belief in knowledge.get("beliefs", []):
+                if not self._validate_pattern(belief, self.knowledge_patterns["beliefs"]):
+                    logger.warning(f"Skipping invalid belief: {belief}")
+                    continue
+                    
+                # Store belief with full context
                 await self._create_belief(
                     belief["subject"],
                     belief["predicate"],
                     belief["object"],
-                    belief.get("confidence", 1.0)
+                    belief.get("confidence", 1.0),
+                    belief.get("domains", []),
+                    belief.get("context", {}),
+                    belief.get("source", "system")
                 )
         except Exception as e:
             logger.error(f"Failed to store semantic knowledge: {str(e)}")
