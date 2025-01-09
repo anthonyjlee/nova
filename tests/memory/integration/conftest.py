@@ -2,9 +2,13 @@
 
 import pytest
 import uuid
+import json
 from unittest.mock import Mock, AsyncMock
 from datetime import datetime, timezone
+import logging
 from typing import Dict, List, Any, Optional
+
+logger = logging.getLogger(__name__)
 
 from nia.memory.types.memory_types import (
     Memory, MemoryType, EpisodicMemory,
@@ -36,7 +40,7 @@ def mock_vector_store():
                 if "text" in content:
                     memory_dict = {
                         "content": content["text"],
-                        "type": metadata.get("type", MemoryType.EPISODIC),
+                        "type": MemoryType.EPISODIC.value,
                         "timestamp": metadata.get("timestamp", datetime.now(timezone.utc).isoformat()),
                         "context": metadata.get("context", {}),
                         "concepts": metadata.get("concepts", []),
@@ -52,7 +56,7 @@ def mock_vector_store():
                     if not memory_dict.get("content"):
                         raise ValueError("Memory must have content")
                     if not memory_dict.get("type"):
-                        memory_dict["type"] = MemoryType.EPISODIC
+                        memory_dict["type"] = MemoryType.EPISODIC.value
                     if not memory_dict.get("timestamp"):
                         memory_dict["timestamp"] = datetime.now(timezone.utc).isoformat()
                     memory_dict.setdefault("context", {})
@@ -69,33 +73,45 @@ def mock_vector_store():
 
             vector_id = str(uuid.uuid4())
             # Store memory fields
-            if isinstance(content, dict) and "text" in content:
-                # Handle content dict format from EpisodicLayer.store_memory
-                memory_dict = {
-                    "id": vector_id,
-                    "content": content["text"],
-                    "type": metadata.get("type", MemoryType.EPISODIC),
-                    "timestamp": metadata.get("timestamp", datetime.now().isoformat()),
-                    "context": metadata.get("context", {}),
-                    "concepts": metadata.get("concepts", []),
-                    "relationships": metadata.get("relationships", []),
-                    "participants": metadata.get("participants", []),
-                    "importance": metadata.get("importance", 0.0),
-                    "metadata": metadata.get("metadata", {}),
-                    "consolidated": False
-                }
+            if isinstance(content, dict):
+                if "text" in content:
+                    # Handle content dict format from EpisodicLayer.store_memory
+                    memory_dict = {
+                        "id": vector_id,
+                        "content": content["text"],
+                        "type": metadata.get("type", MemoryType.EPISODIC.value),
+                        "timestamp": metadata.get("timestamp", datetime.now().isoformat()),
+                        "context": metadata.get("context", {}),
+                        "concepts": [],
+                        "relationships": [],
+                        "participants": metadata.get("participants", []) if metadata else [],
+                        "importance": metadata.get("importance", 0.0),
+                        "metadata": metadata.get("metadata", {}),
+                        "consolidated": False
+                    }
+                else:
+                    # Handle direct memory dict format
+                    memory_dict = dict(content)
+                    memory_dict["id"] = vector_id
+                    memory_dict["consolidated"] = False
+                    memory_dict.setdefault("concepts", [])
+                    memory_dict.setdefault("relationships", [])
+                    memory_dict.setdefault("participants", [])
             elif isinstance(content, EpisodicMemory):
-                memory_dict = content.dict()
-                memory_dict["id"] = vector_id
-                memory_dict["consolidated"] = False
-            elif hasattr(content, "dict"):
-                memory_dict = content.dict()
+                memory_dict = dict(content.dict())
+                if isinstance(memory_dict.get("type"), MemoryType):
+                    memory_dict["type"] = memory_dict["type"].value
                 memory_dict["id"] = vector_id
                 memory_dict["consolidated"] = False
             else:
                 memory_dict = dict(content)
+                if isinstance(memory_dict.get("type"), MemoryType):
+                    memory_dict["type"] = memory_dict["type"].value
                 memory_dict["id"] = vector_id
                 memory_dict["consolidated"] = False
+                memory_dict.setdefault("concepts", [])
+                memory_dict.setdefault("relationships", [])
+                memory_dict.setdefault("participants", [])
 
             # Extract fields from metadata if they exist
             if metadata:
@@ -200,19 +216,40 @@ def mock_vector_store():
                                 matches = False
                 
                 if matches:
-                    # Convert concepts and relationships back to their proper types
-                    memory_data = dict(vector["content"])
-                    if "concepts" in memory_data:
-                        memory_data["concepts"] = [
-                            Concept(**c) if isinstance(c, dict) else c
-                            for c in memory_data["concepts"]
-                        ]
-                    if "relationships" in memory_data:
-                        memory_data["relationships"] = [
-                            Relationship(**r) if isinstance(r, dict) else r
-                            for r in memory_data["relationships"]
-                        ]
-                    results.append(EpisodicMemory(**memory_data))
+                    # Get the stored memory data
+                    memory_data = vector["content"]
+                    if isinstance(memory_data, dict):
+                        # Create EpisodicMemory instance
+                        try:
+                            # Ensure participants is a list of strings
+                            participants = memory_data.get("participants", [])
+                            if not isinstance(participants, list):
+                                participants = [str(participants)]
+                            else:
+                                participants = [str(p) for p in participants if p is not None]
+
+                            # Get content from memory_data
+                            content = memory_data.get("content", "")
+                            if isinstance(content, dict):
+                                content = content.get("text", "")
+
+                            memory = EpisodicMemory(
+                                id=memory_data.get("id"),
+                                content=content,
+                                type=memory_data.get("type", MemoryType.EPISODIC.value),
+                                importance=memory_data.get("importance", 0.5),
+                                timestamp=memory_data.get("timestamp", datetime.now(timezone.utc).isoformat()),
+                                context=memory_data.get("context", {}),
+                                consolidated=memory_data.get("consolidated", False),
+                                participants=participants,
+                                concepts=memory_data.get("concepts", []),
+                                relationships=memory_data.get("relationships", []),
+                                emotions=memory_data.get("emotions", {}),
+                                related_memories=memory_data.get("related_memories", [])
+                            )
+                            results.append(memory)
+                        except Exception as e:
+                            logger.error(f"Failed to create EpisodicMemory: {str(e)}")
             
             # Apply limit if provided
             if limit is not None and len(results) > limit:
@@ -222,7 +259,22 @@ def mock_vector_store():
             
         async def update_metadata(self, vector_id: str, metadata: Dict):
             if vector_id in self.vectors:
-                self.vectors[vector_id]["metadata"].update(metadata)
+                # Update consolidated flag in both content and metadata
+                if "consolidated" in metadata:
+                    self.vectors[vector_id]["content"]["consolidated"] = metadata["consolidated"]
+                    self.vectors[vector_id]["metadata"]["consolidated"] = metadata["consolidated"]
+                    
+                # Update other metadata
+                for key, value in metadata.items():
+                    if key != "consolidated":
+                        self.vectors[vector_id]["metadata"][key] = value
+                        
+        async def delete_vector(self, vector_id: str):
+            """Delete a vector from storage."""
+            if vector_id in self.vectors:
+                del self.vectors[vector_id]
+                return True
+            return False
                 
     return MockVectorStore()
 
@@ -232,22 +284,28 @@ def mock_neo4j_store():
     class MockAsyncResult:
         def __init__(self, data):
             self._data = data
+            logger.info(f"Created MockAsyncResult with data: {data}")
             
         async def data(self):
+            logger.info(f"Returning data: {self._data}")
             return self._data
             
         async def single(self):
             """Get the first record."""
             if self._data:
+                logger.info(f"Returning first record: {self._data[0]}")
                 return self._data[0]
+            logger.info("No records found")
             return None
 
         async def consume(self):
             """Consume the result."""
+            logger.info(f"Consuming data: {self._data}")
             return self._data
             
         def __aiter__(self):
             """Make the result iterable."""
+            logger.info("Creating async iterator")
             return self
             
         async def __anext__(self):
@@ -257,7 +315,9 @@ def mock_neo4j_store():
             if self._iter_index < len(self._data):
                 result = self._data[self._iter_index]
                 self._iter_index += 1
+                logger.info(f"Yielding next item: {result}")
                 return result
+            logger.info("No more items")
             raise StopAsyncIteration
 
     class MockSession:
@@ -292,22 +352,115 @@ def mock_neo4j_store():
                         })
                 return MockAsyncResult(matching_nodes)
             elif "WHERE" in query and "Concept" in query:
-                # Handle semantic query with type/label
-                conditions = []
-                if "type = $type" in query and "type" in params:
-                    type_value = params["type"]
-                    conditions.append(lambda props: props.get("type") == type_value)
-                if "label = $label" in query and "label" in params:
-                    label_value = params["label"]
-                    conditions.append(lambda props: props.get("type") == label_value)
-                
+                # Handle semantic query with pattern matching
                 matching_nodes = []
+                logger.info(f"Searching nodes with params: {params}")
+                logger.info(f"Current store nodes dict: {self.store.nodes}")
+                logger.info(f"Available nodes: {[n['properties'] for n in self.store.nodes.values()]}")
+                
+                # Parse names from query if present
+                names = None
+                if "names" in params:
+                    names = params["names"]
+                    if not isinstance(names, list):
+                        names = [names]
+                    names = [str(name) for name in names]
+                    logger.info(f"Searching for names: {names}")
+                elif "n.name IN" in query:
+                    # Extract names from the query string
+                    names_str = query.split("n.name IN [")[1].split("]")[0]
+                    names = [name.strip("'") for name in names_str.split(",")]
+                    logger.info(f"Extracted names from query: {names}")
+                
                 for node in self.store.nodes.values():
                     props = node["properties"]
-                    if all(condition(props) for condition in conditions):
-                        matching_nodes.append({"n": props})
+                    matches = True
+                    logger.info(f"Checking node: {props}")
+                    
+                    # Check type if specified
+                    if "type" in params:
+                        if params["type"] == "concept":
+                            # Allow both "concept" and "entity" types since consolidation uses "entity"
+                            if props.get("type") not in ["concept", "entity"]:
+                                matches = False
+                                continue
+                        elif params["type"] == "entity":
+                            # Allow both "concept" and "entity" types since consolidation uses "entity"
+                            if props.get("type") not in ["concept", "entity"]:
+                                matches = False
+                                continue
+                        elif props.get("type") != params["type"]:
+                            matches = False
+                            continue
+                    
+                    # Check names list if present
+                    if names is not None:
+                        node_name = str(props.get("name", ""))
+                        logger.info(f"Checking if node name '{node_name}' is in {names}")
+                        if node_name not in names:
+                            logger.info(f"Node name '{node_name}' not found in {names}, skipping")
+                            matches = False
+                            continue
+                        else:
+                            logger.info(f"Node name '{node_name}' found in {names}, including in results")
+                    
+                    # Check text or pattern if specified
+                    elif "text" in params:
+                        text = params["text"]
+                        if text not in props.get("description", "") and text not in props.get("name", ""):
+                            matches = False
+                            continue
+                    elif "pattern" in params:
+                        pattern = params["pattern"]
+                        if pattern not in props.get("description", "") and pattern not in props.get("name", ""):
+                            matches = False
+                            continue
+                                
+                    # Check context if specified
+                    if "context" in params:
+                        context = params["context"]
+                        for key, value in context.items():
+                            if key == "access_domain":
+                                validation = props.get("validation", {})
+                                if isinstance(validation, str):
+                                    try:
+                                        validation = json.loads(validation)
+                                    except json.JSONDecodeError:
+                                        validation = {}
+                                if validation.get("access_domain") == value:
+                                    continue
+                                else:
+                                    matches = False
+                                    break
+                            else:
+                                if props.get(key) != value:
+                                    matches = False
+                                    break
+                    
+                    if matches:
+                        # Process the node through ConceptStore's _process_concept_record
+                        processed_node = {
+                            "name": props["name"],
+                            "type": props["type"],
+                            "description": props.get("description", ""),
+                            "is_consolidation": props.get("is_consolidation", False)
+                        }
+                        # Add validation if present
+                        validation = props.get("validation")
+                        if validation:
+                            if isinstance(validation, str):
+                                try:
+                                    validation = json.loads(validation)
+                                except json.JSONDecodeError:
+                                    validation = {}
+                            processed_node["validation"] = validation
+                        matching_nodes.append({"n": processed_node})
+                logger.info(f"Query returned nodes: {matching_nodes}")
                 return MockAsyncResult(matching_nodes)
             elif "MERGE (c:Concept" in query:
+                logger.info(f"Processing MERGE query with params: {params}")
+                logger.info(f"Current store nodes dict before merge: {self.store.nodes}")
+                
                 # Extract parameters from the query if not in params
                 if "SET" in query:
                     # This is a full concept creation/update
@@ -320,6 +473,7 @@ def mock_neo4j_store():
                     if "description" not in params and "description:" in query:
                         desc = query.split("description: '")[1].split("'")[0]
                         params["description"] = desc
+                logger.info(f"Extracted params: {params}")
 
                 # Handle MERGE with ON CREATE SET
                 if "ON CREATE SET" in query:
@@ -349,6 +503,7 @@ def mock_neo4j_store():
                             "properties": node
                         }
                         existing_node = self.store.nodes[node_id]
+                        logger.info(f"Created new node with ON CREATE SET: {existing_node}")
                     return MockAsyncResult([{"c": existing_node["properties"]}])
                 else:
                     # Regular MERGE without ON CREATE SET
@@ -356,8 +511,16 @@ def mock_neo4j_store():
                         "name": params.get("name"),
                         "type": params.get("type", "concept"),
                         "description": params.get("description", ""),
-                        "is_consolidation": params.get("is_consolidation", False)
+                        "is_consolidation": params.get("is_consolidation", False),
+                        "validation": params.get("validation", {})
                     }
+                    
+                    # Parse validation if it's a string
+                    if isinstance(node["validation"], str):
+                        try:
+                            node["validation"] = json.loads(node["validation"])
+                        except json.JSONDecodeError:
+                            logger.error(f"Failed to parse validation JSON: {node['validation']}")
 
                     # Validate required fields
                     if not node["name"]:
@@ -377,9 +540,22 @@ def mock_neo4j_store():
                             "properties": node
                         }
                         existing_node = self.store.nodes[node_id]
+                        logger.info(f"Created new node: {existing_node}")
 
                     # Update existing node properties
                     existing_node["properties"].update(node)
+                    logger.info(f"Updated node properties: {existing_node['properties']}")
+                    
+                    # Add to store's nodes if not already there
+                    if not any(n["properties"]["name"] == node["name"] for n in self.store.nodes.values()):
+                        node_id = str(uuid.uuid4())
+                        self.store.nodes[node_id] = {
+                            "label": "Concept",
+                            "properties": dict(node)
+                        }
+                        logger.info(f"Added new node to store with ID {node_id}: {self.store.nodes[node_id]}")
+                    
+                    logger.info(f"Final store nodes dict: {self.store.nodes}")
                     return MockAsyncResult([{"c": existing_node["properties"]}])
             elif "MATCH (c:Concept {name: $name})-[:RELATED_TO]->(r:Concept)" in query:
                 # Handle get_related_concepts query
@@ -514,6 +690,7 @@ def mock_neo4j_store():
             self.relationships = []  # List to store relationships
             self.beliefs = []
             self.driver = self
+            logger.info("Initialized MockNeo4jStore with empty nodes dict")
             
         def session(self, database=None, default_access_mode=None):
             """Create a mock session."""
@@ -565,6 +742,50 @@ def memory_system(mock_vector_store, mock_neo4j_store):
     system.episodic.store = mock_vector_store
     system.semantic.driver = mock_neo4j_store
     
+    # Add logging for semantic layer ID
+    logger.info(f"Created memory system with semantic layer ID: {id(system.semantic)}")
+    
+    # Patch store_concept to add logging
+    original_store_concept = system.semantic.store_concept
+    async def logged_store_concept(*args, **kwargs):
+        logger.info(f"Storing concept with args: {args}, kwargs: {kwargs}")
+        result = await original_store_concept(*args, **kwargs)
+        logger.info(f"Stored concept result: {result}")
+        return result
+    system.semantic.store_concept = logged_store_concept
+
+    # Patch store_knowledge to add logging and implementation
+    async def logged_store_knowledge(knowledge):
+        logger.info(f"Storing knowledge with args: ({knowledge},) kwargs: {{}}")
+        
+        # Store concepts
+        for concept in knowledge.get("concepts", []):
+            logger.info(f"Storing concept: {concept}")
+            await system.semantic.store_concept(
+                name=concept["name"],
+                type=concept["type"],
+                description=concept["description"],
+                validation=concept["validation"],
+                is_consolidation=True
+            )
+            
+        # Store relationships
+        for rel in knowledge.get("relationships", []):
+            logger.info(f"Storing relationship: {rel}")
+            await system.semantic.run_query(
+                """
+                MERGE (c1:Concept {name: $from})
+                MERGE (c2:Concept {name: $to})
+                MERGE (c1)-[:RELATED_TO]->(c2)
+                """,
+                {"from": rel["from"], "to": rel["to"]}
+            )
+            
+        logger.info(f"Stored knowledge result: None")
+        return None
+        
+    system.semantic.store_knowledge = logged_store_knowledge
+    
     return system
 
 @pytest.fixture
@@ -578,7 +799,7 @@ def nova(memory_system, world):
     nova = Nova(memory_system=memory_system, world=world)
     
     # Set up mock memory behaviors
-    def create_memory_mock(content, memory_type=MemoryType.EPISODIC, context=None, metadata=None, concepts=None, relationships=None):
+    def create_memory_mock(content, memory_type="episodic", context=None, metadata=None, concepts=None, relationships=None):
         timestamp = format_timestamp()
         memory_dict = {
             "content": content,
