@@ -1,8 +1,8 @@
 """Core type definitions for NIA."""
 
 from .memory_types import (
-    Memory, MemoryType, Concept, Relationship, Domain, DomainContext,
-    SemanticMemory, EpisodicMemory, ProceduralMemory,
+    Memory, MemoryType, Concept, Relationship, BaseDomain, KnowledgeVertical,
+    DomainContext, SemanticMemory, EpisodicMemory, ProceduralMemory,
     AgentResponse, DialogueMessage, DialogueContext,
     Belief, MemoryQuery, ConsolidationRule, MemoryBatch
 )
@@ -12,7 +12,8 @@ __all__ = [
     'MemoryType',
     'Concept',
     'Relationship',
-    'Domain',
+    'BaseDomain',
+    'KnowledgeVertical',
     'DomainContext',
     'SemanticMemory',
     'EpisodicMemory',

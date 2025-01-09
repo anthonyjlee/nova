@@ -2,6 +2,7 @@
 
 import json
 import logging
+import asyncio
 from typing import Dict, List, Optional, Union
 
 from .base_store import Neo4jBaseStore
@@ -14,6 +15,76 @@ logger = logging.getLogger(__name__)
 class ConceptStore(Neo4jBaseStore):
     """Handles concept storage and retrieval in Neo4j."""
 
+    def __init__(self, uri: str, user: str = None, password: str = None, max_retry_time: int = 30, retry_interval: int = 1):
+        """Initialize the concept store and create indexes."""
+        super().__init__(
+            uri=uri, 
+            auth=(user, password) if user and password else None,
+            max_retry_time=max_retry_time,
+            retry_interval=retry_interval
+        )
+        # Initialize indexes asynchronously
+        self._init_task = None
+        self.max_retry_time = max_retry_time
+        self.retry_interval = retry_interval
+
+    async def _execute_with_retry(self, operation):
+        """Execute an operation with retry logic."""
+        start_time = asyncio.get_event_loop().time()
+        last_error = None
+        
+        while True:
+            try:
+                return await operation()
+            except Exception as e:
+                last_error = e
+                current_time = asyncio.get_event_loop().time()
+                if current_time - start_time >= self.max_retry_time:
+                    logger.error(f"Operation failed after {self.max_retry_time} seconds: {str(e)}")
+                    raise last_error
+                logger.warning(f"Operation failed, retrying in {self.retry_interval} seconds: {str(e)}")
+                await asyncio.sleep(self.retry_interval)
+
+    async def _ensure_indexes(self):
+        """Ensure indexes are created."""
+        if not self._init_task:
+            self._init_task = self.initialize_indexes()
+            await self._init_task
+
+    async def initialize_indexes(self) -> None:
+        """Initialize required indexes for the concept store."""
+        try:
+            # Create indexes for efficient concept lookup
+            await self.run_query("""
+                CREATE INDEX concept_name IF NOT EXISTS
+                FOR (c:Concept)
+                ON (c.name)
+            """)
+            
+            await self.run_query("""
+                CREATE INDEX concept_type IF NOT EXISTS
+                FOR (c:Concept)
+                ON (c.type)
+            """)
+            
+            await self.run_query("""
+                CREATE INDEX concept_access_domain IF NOT EXISTS
+                FOR (c:Concept)
+                ON (c.access_domain)
+            """)
+            
+            # Create composite index for relationship properties
+            await self.run_query("""
+                CREATE INDEX relationship_type IF NOT EXISTS
+                FOR ()-[r:RELATED_TO]-()
+                ON (r.type)
+            """)
+            
+            logger.info("Successfully initialized concept store indexes")
+        except Exception as e:
+            logger.error(f"Error initializing indexes: {str(e)}")
+            raise
+
     async def store_concept(
         self,
         name: str,
@@ -24,45 +95,82 @@ class ConceptStore(Neo4jBaseStore):
         is_consolidation: bool = False
     ) -> None:
         """Store a concept with validation."""
+        logger.info(f"Storing concept - Name: {name}, Type: {type}")
+        logger.info(f"Validation data: {validation}")
+        
+        # Ensure indexes are created
+        await self._ensure_indexes()
+        
         # Validate concept data
-        validate_concept_structure({
-            "name": name,
-            "type": type,
-            "description": description,
-            "related": related or [],
-            "validation": validation or {}
-        })
+        try:
+            validate_concept_structure({
+                "name": name,
+                "type": type,
+                "description": description,
+                "related": related or [],
+                "validation": validation or {}
+            })
+            logger.info("Concept structure validation passed")
+        except Exception as e:
+            logger.error(f"Concept validation failed: {str(e)}")
+            raise
 
         async def store_operation():
             # Process validation data
             validation_dict = ValidationHandler.process_validation(validation, is_consolidation)
             access_domain = validation_dict.get("access_domain", "general")
+            logger.info(f"Processed validation data: {validation_dict}")
+            
+            # Extract primitive validation fields
+            validation_fields = {
+                "confidence": validation_dict.get("confidence", 0.0),
+                "source": validation_dict.get("source", ""),
+                "access_domain": access_domain,
+                "timestamp": validation_dict.get("timestamp", "")
+            }
+            logger.info(f"Extracted validation fields: {validation_fields}")
 
-            # Build base query
+            # Build base query with all validation fields as direct properties
             base_query = """
             MERGE (c:Concept {name: $name})
             SET c.type = $type,
                 c.description = $description,
                 c.is_consolidation = $is_consolidation,
                 c.access_domain = $access_domain,
-                c.validation = $validation
+                c.confidence = $confidence,
+                c.validation_source = $source,
+                c.validation_timestamp = $timestamp,
+                c.domain = $domain,
+                c.supported_by = $supported_by,
+                c.contradicted_by = $contradicted_by,
+                c.needs_verification = $needs_verification,
+                c.validation = $validation_json
             """
             params = {
                 "name": name,
                 "type": type,
                 "description": description,
                 "is_consolidation": is_consolidation,
-                "access_domain": access_domain,
-                "validation": validation
+                "access_domain": validation_dict.get("access_domain", "general"),
+                "domain": validation_dict.get("domain", "general"),
+                "supported_by": validation_dict.get("supported_by", []),
+                "contradicted_by": validation_dict.get("contradicted_by", []),
+                "needs_verification": validation_dict.get("needs_verification", []),
+                "validation_json": json.dumps(validation_dict),  # Store complete validation as JSON
+                **validation_fields
             }
+            logger.info(f"Executing Neo4j query with params: {params}")
 
             query = base_query
-            await self.run_query(query, params)
+            result = await self.run_query(query, params)
+            logger.info(f"Query result: {result}")
 
             # Handle related concepts
             if related:
+                logger.info(f"Creating related concepts: {related}")
                 await self._create_related_concepts(related)
                 await self._create_relationships(name, related)
+                logger.info("Related concepts and relationships created")
 
         try:
             await self._execute_with_retry(store_operation)
@@ -83,26 +191,57 @@ class ConceptStore(Neo4jBaseStore):
                 {"name": rel}
             )
 
-    async def _create_relationships(self, name: str, related: List[str]) -> None:
+    async def _create_relationships(self, name: str, related: List[str], rel_type: str = "RELATED_TO") -> None:
         """Create relationships between concepts."""
         await self.run_query(
             """
             MATCH (c:Concept {name: $name})
             UNWIND $related as rel_name
             MATCH (r:Concept {name: rel_name})
-            MERGE (c)-[:RELATED_TO]->(r)
+            MERGE (c)-[rel:RELATED_TO]->(r)
+            SET rel.type = $rel_type
             """,
-            {"name": name, "related": related}
+            {"name": name, "related": related, "rel_type": rel_type}
+        )
+
+    async def store_relationship(self, source: str, target: str, rel_type: str, attributes: Dict = None) -> None:
+        """Store a relationship between concepts with optional attributes."""
+        # Ensure indexes are created
+        await self._ensure_indexes()
+        
+        # Convert complex attributes to string representation
+        if attributes:
+            attributes = {k: str(v) if isinstance(v, (dict, list)) else v 
+                        for k, v in attributes.items()}
+        
+        await self.run_query(
+            """
+            MATCH (s:Concept {name: $source})
+            MATCH (t:Concept {name: $target}) 
+            MERGE (s)-[r:RELATED_TO]->(t)
+            SET r.type = $rel_type,
+                r += $attributes
+            """,
+            {
+                "source": source,
+                "target": target,
+                "rel_type": rel_type,
+                "attributes": attributes or {}
+            }
         )
 
     async def get_concept(self, name: str) -> Optional[Dict]:
         """Get concept by name with retry logic."""
+        # Ensure indexes are created
+        await self._ensure_indexes()
+        
         async def get_operation():
             result = await self.run_query(
                 """
                 MATCH (c:Concept {name: $name})
-                OPTIONAL MATCH (c)-[:RELATED_TO]->(r:Concept)
-                RETURN c, collect(r.name) as related
+                OPTIONAL MATCH (c)-[r:RELATED_TO]->(related:Concept)
+                RETURN c, 
+                       collect({name: related.name, type: r.type, attributes: r}) as relationships
                 """,
                 {"name": name}
             )
@@ -120,30 +259,70 @@ class ConceptStore(Neo4jBaseStore):
     def _process_concept_record(self, record) -> Dict:
         """Process a Neo4j record into a concept dictionary."""
         concept = record["c"]
-        related = record["related"]
+        relationships = record["relationships"]
+        
+        # Get validation from stored JSON or build from fields
+        try:
+            validation = json.loads(concept.get("validation", "{}"))
+        except (json.JSONDecodeError, TypeError):
+            # Fallback to building from individual fields
+            validation = {
+                "confidence": concept.get("confidence", 0.0),
+                "source": concept.get("validation_source", "system"),
+                "access_domain": concept.get("access_domain", "general"),
+                "domain": concept.get("domain", "general"),
+                "timestamp": concept.get("validation_timestamp", ""),
+                "supported_by": concept.get("supported_by", []),
+                "contradicted_by": concept.get("contradicted_by", []),
+                "needs_verification": concept.get("needs_verification", [])
+            }
+        
         result = {
             "name": concept["name"],
             "type": concept["type"],
             "description": concept["description"],
-            "related": related,
-            "is_consolidation": concept.get("is_consolidation", False)
+            "relationships": [
+                self._process_relationship_record(rel)
+                for rel in relationships if rel["name"] is not None
+            ],
+            "is_consolidation": concept.get("is_consolidation", False),
+            "validation": validation
         }
-
-        # Extract validation data if present
-        validation = ValidationHandler.extract_validation(concept)
-        if validation:
-            result["validation"] = validation
 
         return result
 
+    def _process_relationship_record(self, record) -> Dict:
+        """Process a Neo4j relationship record."""
+        if not record:
+            return None
+            
+        # Extract attributes from the relationship record
+        attributes = {}
+        if isinstance(record.get('attributes'), dict):
+            attributes = record['attributes']
+        elif isinstance(record.get('attributes'), tuple):
+            # Handle tuple case by extracting the second element which contains attributes
+            _, attrs = record['attributes']
+            attributes = attrs if isinstance(attrs, dict) else {}
+            
+        return {
+            'name': record.get('name'),
+            'type': record.get('type'),
+            'attributes': attributes
+        }
+
     async def get_concepts_by_type(self, type: str) -> List[Dict]:
         """Get all concepts of a specific type."""
+        # Ensure indexes are created
+        await self._ensure_indexes()
+        
         async def get_operation():
             result = await self.run_query(
                 """
                 MATCH (c:Concept {type: $type})
-                OPTIONAL MATCH (c)-[:RELATED_TO]->(r:Concept)
-                RETURN c, collect(r.name) as related
+                OPTIONAL MATCH (c)-[r:RELATED_TO]->(related:Concept)
+                RETURN c, 
+                       collect({name: related.name, type: r.type, attributes: r}) as relationships
                 """,
                 {"type": type}
             )
@@ -158,12 +337,16 @@ class ConceptStore(Neo4jBaseStore):
 
     async def get_related_concepts(self, name: str) -> List[Dict]:
         """Get all concepts related to the given concept."""
+        # Ensure indexes are created
+        await self._ensure_indexes()
+        
         async def get_operation():
             result = await self.run_query(
                 """
-                MATCH (c:Concept {name: $name})-[:RELATED_TO]->(r:Concept)
-                OPTIONAL MATCH (r)-[:RELATED_TO]->(r2:Concept)
-                RETURN r as c, collect(r2.name) as related
+                MATCH (c:Concept {name: $name})-[r1:RELATED_TO]->(related:Concept)
+                OPTIONAL MATCH (related)-[r2:RELATED_TO]->(related2:Concept)
+                RETURN related as c, 
+                       collect({name: related2.name, type: r2.type, attributes: r2}) as relationships
                 """,
                 {"name": name}
             )
@@ -178,6 +361,9 @@ class ConceptStore(Neo4jBaseStore):
 
     async def search_concepts(self, query: str) -> List[Dict]:
         """Search concepts using full-text search."""
+        # Ensure indexes are created
+        await self._ensure_indexes()
+        
         async def search_operation():
             result = await self.run_query(
                 """
@@ -185,8 +371,9 @@ class ConceptStore(Neo4jBaseStore):
                 WHERE c.name = $query OR c.description = $query OR
                       toLower(c.name) CONTAINS toLower($query) OR 
                       toLower(c.description) CONTAINS toLower($query)
-                OPTIONAL MATCH (c)-[:RELATED_TO]->(r:Concept)
-                RETURN c, collect(r.name) as related
+                OPTIONAL MATCH (c)-[r:RELATED_TO]->(related:Concept)
+                RETURN c, 
+                       collect({name: related.name, type: r.type, attributes: r}) as relationships
                 """,
                 {"query": query}
             )
@@ -197,6 +384,84 @@ class ConceptStore(Neo4jBaseStore):
             return await self._execute_with_retry(search_operation)
         except Exception as e:
             logger.error(f"Error searching concepts with query {query}: {str(e)}")
+            return []
+
+    async def query_knowledge(self, query: Dict) -> List[Dict]:
+        """Query semantic knowledge."""
+        try:
+            conditions = []
+            params = {}
+            
+            # Handle entity queries with number conversion
+            if query.get("type") == "entity" and "names" in query:
+                names = []
+                for name in query["names"]:
+                    # Try to convert name to int if it's a digit
+                    if str(name).isdigit():
+                        names.append(str(name))
+                    else:
+                        names.append(name)
+                params["names"] = names
+                conditions.append("n.name IN $names")
+            
+            # Handle concept queries with pattern
+            elif query.get("type") == "concept" and "pattern" in query:
+                pattern = query["pattern"]
+                params["pattern"] = f".*{pattern}.*"
+                conditions.append("(n.name =~ $pattern OR n.description =~ $pattern)")
+            
+            # Handle context filtering
+            if "context" in query:
+                for key, value in query["context"].items():
+                    if key == "access_domain":
+                        params[f"context_{key}"] = value
+                        conditions.append("n.access_domain = $context_access_domain")
+                    elif key == "domain":
+                        params[f"context_{key}"] = value
+                        conditions.append("n.domain = $context_domain")
+                    elif key == "cross_domain.approved":
+                        params["cross_domain_approved"] = value
+                        conditions.append("n.cross_domain_approved = $cross_domain_approved")
+                    else:
+                        params[f"context_{key}"] = value
+                        conditions.append(f"n.{key} = $context_{key}")
+            
+            where_clause = " AND ".join(conditions) if conditions else "true"
+            
+            cypher = f"""
+            MATCH (n:Concept)
+            WHERE {where_clause}
+            OPTIONAL MATCH (n)-[r:RELATED_TO]->(related:Concept)
+            RETURN n, collect({{name: related.name, type: r.type, attributes: r}}) as relationships
+            """
+            
+            logger.info(f"Executing semantic query: {cypher}")
+            logger.info(f"Query parameters: {params}")
+            
+            # Execute query
+            records = await self.run_query(cypher, params)
+            logger.info(f"Raw query results: {records}")
+            
+            # Process results
+            results = []
+            for record in records:
+                if record["n"] is not None:
+                    try:
+                        concept = self._process_concept_record({
+                            "c": record["n"],
+                            "relationships": record["relationships"]
+                        })
+                        results.append(concept)
+                        logger.info(f"Processed concept: {concept}")
+                    except Exception as e:
+                        logger.error(f"Failed to process concept record: {str(e)}")
+                        logger.error(f"Record data: {record}")
+            
+            logger.info(f"Final processed results: {results}")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Failed to query knowledge: {str(e)}")
             return []
 
     async def store_concept_from_json(self, data: Union[str, Dict]) -> None:

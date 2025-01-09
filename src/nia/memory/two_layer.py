@@ -481,45 +481,89 @@ class SemanticLayer(ConceptStore):
     async def query_knowledge(self, query: Dict) -> List[Dict]:
         """Query semantic knowledge."""
         try:
-            # Convert query to Cypher
-            cypher = self._build_cypher_query(query)
-            
-            # Execute query using base store's run_query
-            records = await self.run_query(cypher)
-            
-            # Process and return results
-            return self._process_query_results(records)
-        except Exception as e:
-            logger.error(f"Failed to query knowledge: {str(e)}")
-            return []
-            
-    def _build_cypher_query(self, query: Dict) -> str:
-        """Build Cypher query from query dict."""
-        # Basic query building - extend based on needs
-        if query.get("type") == "concept":
-            # Handle type, label, pattern, and context matching
             conditions = []
-            if "names" in query:
-                names_list = [f"'{name}'" for name in query["names"]]
-                conditions.append(f"n.name IN [{','.join(names_list)}]")
-            elif "text" in query:
-                conditions.append(f"n.description CONTAINS '{query['text']}'")
-            elif "pattern" in query:
-                conditions.append(f"n.description CONTAINS '{query['pattern']}'")
+            params = {}
+            
+            # Handle entity queries with number conversion
+            if query.get("type") == "entity" and "names" in query:
+                names = []
+                for name in query["names"]:
+                    # Try to convert name to int if it's a digit
+                    if str(name).isdigit():
+                        names.append(str(name))
+                    else:
+                        names.append(name)
+                params["names"] = names
+                conditions.append("n.name IN $names")
+            
+            # Handle concept queries with pattern
+            elif query.get("type") == "concept" and "pattern" in query:
+                pattern = query["pattern"]
+                params["pattern"] = f".*{pattern}.*"
+                conditions.append("(n.name =~ $pattern OR n.description =~ $pattern)")
+            
+            # Handle context filtering with improved validation field handling
             if "context" in query:
                 for key, value in query["context"].items():
                     if key == "access_domain":
-                        conditions.append(f"(n.access_domain = '{value}' OR n.validation CONTAINS '\"access_domain\":\"{value}\"')")
+                        params[f"context_{key}"] = value
+                        conditions.append("""
+                            (n.access_domain = $context_access_domain OR 
+                             n.validation_source = $context_access_domain OR
+                             n.domain = $context_access_domain)
+                        """)
+                    elif "." in key:  # Handle nested context like cross_domain.approved
+                        field, subfield = key.split(".")
+                        params[f"context_{field}_{subfield}"] = value
+                        conditions.append(f"""
+                            (n.{field}_{subfield} = $context_{field}_{subfield} OR
+                             n.validation CONTAINS '{{\"{field}\":{{\"{subfield}\":{value}}}}}')
+                        """)
                     else:
-                        conditions.append(f"n.{key} = '{value}'")
+                        params[f"context_{key}"] = value
+                        conditions.append(f"""
+                            (n.{key} = $context_{key} OR
+                             n.validation CONTAINS '\"{key}\":\"{value}\"')
+                        """)
             
             where_clause = " AND ".join(conditions) if conditions else "true"
             
-            return f"""
+            cypher = f"""
             MATCH (n:Concept)
             WHERE {where_clause}
-            RETURN n
+            OPTIONAL MATCH (n)-[r:RELATED_TO]->(related:Concept)
+            RETURN n, collect({{name: related.name, type: r.type, attributes: r}}) as relationships
             """
+            
+            # Log query details
+            logger.info(f"Executing semantic query: {cypher}")
+            logger.info(f"Query parameters: {params}")
+            
+            # Execute query
+            records = await self.run_query(cypher, params)
+            logger.info(f"Raw query results: {records}")
+            
+            # Process results
+            results = []
+            for record in records:
+                if record["n"] is not None:
+                    try:
+                        concept = self._process_concept_record({
+                            "c": record["n"],
+                            "relationships": record["relationships"]
+                        })
+                        results.append(concept)
+                        logger.info(f"Processed concept: {concept}")
+                    except Exception as e:
+                        logger.error(f"Failed to process concept record: {str(e)}")
+                        logger.error(f"Record data: {record}")
+            
+            logger.info(f"Final processed results: {results}")
+            return results
+            
+        except Exception as e:
+            logger.error(f"Failed to query knowledge: {str(e)}")
+            return []
         return ""
         
     def _process_query_results(self, results: List[Dict]) -> List[Dict]:

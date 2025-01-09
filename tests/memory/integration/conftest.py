@@ -10,9 +10,9 @@ from typing import Dict, List, Any, Optional
 
 logger = logging.getLogger(__name__)
 
-from nia.memory.types.memory_types import (
+from nia.core.types.memory_types import (
     Memory, MemoryType, EpisodicMemory,
-    Concept, Relationship
+    Concept, Relationship, DomainContext, BaseDomain, KnowledgeVertical
 )
 from nia.memory.neo4j.base_store import Neo4jBaseStore
 from nia.memory.two_layer import TwoLayerMemorySystem, SemanticLayer
@@ -34,42 +34,163 @@ def mock_vector_store():
             self.vectors = {}
             
         async def store_vector(self, content: Dict, metadata: Dict = None, layer: str = None) -> str:
-            # Convert content to EpisodicMemory if needed
+            # Convert content to proper memory format
+            memory_dict = None
+            
             if isinstance(content, dict):
-                # Handle text content format
                 if "text" in content:
+                    # Create domain context
+                    domain_str = metadata.get("domain", "general")
+                    vertical_str = metadata.get("knowledge_vertical", "general")
+                    
+                    # Convert to proper enum values
+                    try:
+                        primary_domain = BaseDomain(domain_str.lower())
+                    except ValueError:
+                        primary_domain = BaseDomain.GENERAL
+                        
+                    try:
+                        knowledge_vertical = KnowledgeVertical(vertical_str.lower())
+                    except ValueError:
+                        knowledge_vertical = KnowledgeVertical.GENERAL
+                    
+                    domain_context = DomainContext(
+                        primary_domain=primary_domain,
+                        knowledge_vertical=knowledge_vertical,
+                        confidence=metadata.get("confidence", 1.0)
+                    )
+                    
+                    # Create memory dict
                     memory_dict = {
                         "content": content["text"],
                         "type": MemoryType.EPISODIC.value,
                         "timestamp": metadata.get("timestamp", datetime.now(timezone.utc).isoformat()),
                         "context": metadata.get("context", {}),
-                        "concepts": metadata.get("concepts", []),
-                        "relationships": metadata.get("relationships", []),
-                        "participants": metadata.get("participants", []),
                         "importance": metadata.get("importance", 0.0),
                         "metadata": metadata.get("metadata", {}),
-                        "consolidated": False
+                        "consolidated": False,
+                        "domain_context": domain_context,
+                        "participants": metadata.get("participants", []),
+                        "concepts": [],
+                        "relationships": []
                     }
+                    
+                    # Convert concepts if present
+                    if "concepts" in metadata:
+                        memory_dict["concepts"] = [
+                            Concept(
+                                name=c["name"],
+                                type=c["type"],
+                                description=c.get("description", ""),
+                                domain_context=domain_context,
+                                validation=c.get("validation", {})
+                            ) if isinstance(c, dict) else c
+                            for c in metadata["concepts"]
+                        ]
+                        
+                    # Convert relationships if present
+                    if "relationships" in metadata:
+                        memory_dict["relationships"] = [
+                            Relationship(
+                                from_=r["source"],
+                                to=r["target"],
+                                type=r["type"],
+                                domain_context=domain_context,
+                                confidence=r.get("confidence", 1.0),
+                                bidirectional=r.get("bidirectional", False)
+                            ) if isinstance(r, dict) else r
+                            for r in metadata["relationships"]
+                        ]
                 else:
-                    # Handle direct memory dict format
+                    # Handle direct memory dict format with enhanced validation
                     memory_dict = dict(content)
-                    if not memory_dict.get("content"):
-                        raise ValueError("Memory must have content")
-                    if not memory_dict.get("type"):
-                        memory_dict["type"] = MemoryType.EPISODIC.value
-                    if not memory_dict.get("timestamp"):
-                        memory_dict["timestamp"] = datetime.now(timezone.utc).isoformat()
+                    
+                    # Ensure domain context is properly formatted
+                    if "domain_context" not in memory_dict:
+                        domain_str = memory_dict.get("context", {}).get("domain", "general")
+                        vertical_str = memory_dict.get("context", {}).get("knowledge_vertical", "general")
+                        
+                        # Convert to proper enum values
+                        try:
+                            primary_domain = BaseDomain(domain_str.lower())
+                        except ValueError:
+                            primary_domain = BaseDomain.GENERAL
+                            
+                        try:
+                            knowledge_vertical = KnowledgeVertical(vertical_str.lower())
+                        except ValueError:
+                            knowledge_vertical = KnowledgeVertical.GENERAL
+                            
+                        memory_dict["domain_context"] = DomainContext(
+                            primary_domain=primary_domain,
+                            knowledge_vertical=knowledge_vertical,
+                            confidence=0.9
+                        )
+                    elif isinstance(memory_dict["domain_context"], dict):
+                        # Convert string enums to proper enum values
+                        domain_dict = dict(memory_dict["domain_context"])
+                        if "primary_domain" in domain_dict:
+                            try:
+                                domain_dict["primary_domain"] = BaseDomain(str(domain_dict["primary_domain"]).lower())
+                            except ValueError:
+                                domain_dict["primary_domain"] = BaseDomain.GENERAL
+                                
+                        if "knowledge_vertical" in domain_dict:
+                            try:
+                                domain_dict["knowledge_vertical"] = KnowledgeVertical(str(domain_dict["knowledge_vertical"]).lower())
+                            except ValueError:
+                                domain_dict["knowledge_vertical"] = KnowledgeVertical.GENERAL
+                                
+                        memory_dict["domain_context"] = DomainContext(**domain_dict)
+                    
+                    # Convert concepts and relationships to proper model instances with domain context
+                    if "concepts" in memory_dict:
+                        concepts = []
+                        for c in memory_dict["concepts"]:
+                            if isinstance(c, dict):
+                                # Ensure concept has domain context
+                                if "domain_context" not in c:
+                                    c["domain_context"] = memory_dict["domain_context"]
+                                # Ensure validation exists
+                                if "validation" not in c:
+                                    c["validation"] = {
+                                        "confidence": 0.9,
+                                        "supported_by": [],
+                                        "contradicted_by": [],
+                                        "needs_verification": []
+                                    }
+                                concepts.append(Concept(**c))
+                            else:
+                                concepts.append(c)
+                        memory_dict["concepts"] = concepts
+                        
+                    if "relationships" in memory_dict:
+                        relationships = []
+                        for r in memory_dict["relationships"]:
+                            if isinstance(r, dict):
+                                # Ensure relationship has domain context
+                                if "domain_context" not in r:
+                                    r["domain_context"] = memory_dict["domain_context"]
+                                relationships.append(Relationship(**r))
+                            else:
+                                relationships.append(r)
+                        memory_dict["relationships"] = relationships
+                        
+                    # Set defaults for required fields
+                    memory_dict.setdefault("type", MemoryType.EPISODIC.value)
+                    memory_dict.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
                     memory_dict.setdefault("context", {})
-                    memory_dict.setdefault("concepts", [])
-                    memory_dict.setdefault("relationships", [])
-                    memory_dict.setdefault("participants", [])
                     memory_dict.setdefault("importance", 0.0)
                     memory_dict.setdefault("metadata", {})
                     memory_dict.setdefault("consolidated", False)
                 
-                # Create EpisodicMemory instance
+            # Create EpisodicMemory instance with proper model validation
+            try:
                 memory = EpisodicMemory(**memory_dict)
                 content = memory.dict()
+            except Exception as e:
+                logger.error(f"Failed to create EpisodicMemory: {str(e)}")
+                raise ValueError(f"Invalid memory format: {str(e)}")
 
             vector_id = str(uuid.uuid4())
             # Store memory fields
@@ -506,25 +627,45 @@ def mock_neo4j_store():
                         logger.info(f"Created new node with ON CREATE SET: {existing_node}")
                     return MockAsyncResult([{"c": existing_node["properties"]}])
                 else:
-                    # Regular MERGE without ON CREATE SET
+                    # Regular MERGE without ON CREATE SET with enhanced validation
                     node = {
                         "name": params.get("name"),
                         "type": params.get("type", "concept"),
                         "description": params.get("description", ""),
                         "is_consolidation": params.get("is_consolidation", False),
-                        "validation": params.get("validation", {})
+                        "validation": params.get("validation_json", "{}"),  # Store validation as JSON string
+                        "access_domain": params.get("access_domain", "general"),
+                        "domain": params.get("domain", "general"),
+                        "confidence": params.get("confidence", 0.9),
+                        "validation_source": params.get("source", "system"),
+                        "validation_timestamp": params.get("timestamp", ""),
+                        "supported_by": params.get("supported_by", []),
+                        "contradicted_by": params.get("contradicted_by", []),
+                        "needs_verification": params.get("needs_verification", [])
                     }
                     
-                    # Parse validation if it's a string
+                    # Validate concept type with strict validation
+                    valid_types = ["entity", "action", "property", "event", "abstract"]
+                    if node["type"] not in valid_types:
+                        logger.error(f"Invalid concept type: {node['type']}")
+                        raise ValueError(f"Invalid concept type: {node['type']}. Must be one of: {', '.join(valid_types)}")
+                    
+                    # Parse and validate validation data with enhanced validation
                     if isinstance(node["validation"], str):
                         try:
-                            node["validation"] = json.loads(node["validation"])
+                            validation_data = json.loads(node["validation"])
+                            # Ensure validation has required fields
+                            validation_data.setdefault("confidence", 0.9)
+                            validation_data.setdefault("source", "system")
+                            validation_data.setdefault("access_domain", "general")
+                            validation_data.setdefault("domain", "general")
+                            validation_data.setdefault("supported_by", [])
+                            validation_data.setdefault("contradicted_by", [])
+                            validation_data.setdefault("needs_verification", [])
+                            node["validation"] = json.dumps(validation_data)
                         except json.JSONDecodeError:
                             logger.error(f"Failed to parse validation JSON: {node['validation']}")
-
-                    # Validate required fields
-                    if not node["name"]:
-                        raise Exception("Missing required parameter: name")
+                            raise ValueError("Invalid validation JSON format")
 
                     # Check if node already exists
                     existing_node = None
@@ -615,12 +756,24 @@ def mock_neo4j_store():
                             }
                             self.store.nodes[node_id] = target_node
                         
-                        # Create relationship
+                        # Create relationship with domain context
                         relationship = {
                             "from": source_name,
                             "to": rel_name,
                             "type": "RELATED_TO",
-                            "properties": {}
+                            "properties": {
+                                "domain_context": {
+                                    "primary_domain": BaseDomain.PROFESSIONAL.value,
+                                    "knowledge_vertical": KnowledgeVertical.GENERAL.value,
+                                    "confidence": 0.9
+                                },
+                                "validation": {
+                                    "confidence": 0.9,
+                                    "supported_by": [],
+                                    "contradicted_by": [],
+                                    "needs_verification": []
+                                }
+                            }
                         }
                         self.store.relationships.append(relationship)
                         
@@ -669,12 +822,24 @@ def mock_neo4j_store():
                         }
                         self.store.nodes[node_id] = target_node
                     
-                    # Create relationship
+                    # Create relationship with type and attributes
+                    rel_type = params.get("rel_type", "RELATED_TO")
+                    attributes = params.get("attributes", {})
+                    
+                    # Convert complex attributes to string representation
+                    processed_attributes = {}
+                    for k, v in attributes.items():
+                        if isinstance(v, (dict, list)):
+                            processed_attributes[k] = str(v)
+                        else:
+                            processed_attributes[k] = v
+                    
+                    # Store the relationship
                     self.store.relationships.append({
                         "from": params.get("name"),
                         "to": params.get("related_name"),
-                        "type": "RELATED_TO",
-                        "properties": {}
+                        "type": rel_type,
+                        "properties": processed_attributes
                     })
                     
                     return MockAsyncResult([{"c": source_node["properties"], "r": target_node["properties"]}])
@@ -728,8 +893,6 @@ def mock_neo4j_store():
         async def run_query(self, query: str) -> List[Dict]:
             # Mock query execution - return all nodes for now
             return [{"n": node} for node in self.nodes.values()]
-            
-    return MockNeo4jStore()
 
 @pytest.fixture
 def memory_system(mock_vector_store, mock_neo4j_store):
@@ -761,27 +924,48 @@ def memory_system(mock_vector_store, mock_neo4j_store):
         # Store concepts
         for concept in knowledge.get("concepts", []):
             logger.info(f"Storing concept: {concept}")
-            await system.semantic.store_concept(
-                name=concept["name"],
-                type=concept["type"],
-                description=concept["description"],
-                validation=concept["validation"],
-                is_consolidation=True
-            )
+            # Extract validation fields with full context
+            validation = concept.get("validation", {})
+            validation_fields = {
+                "confidence": validation.get("confidence", 0.0),
+                "source": validation.get("source", "system"),
+                "access_domain": validation.get("access_domain", "general"),
+                "domain": validation.get("domain", "general"),
+                "timestamp": validation.get("timestamp", datetime.now(timezone.utc).isoformat()),
+                "supported_by": validation.get("supported_by", []),
+                "contradicted_by": validation.get("contradicted_by", []),
+                "needs_verification": validation.get("needs_verification", [])
+            }
+            
+            # Add domain context if present
+            if "domain_context" in concept:
+                validation_fields["domain_context"] = concept["domain_context"]
+            
+            try:
+                logger.info(f"Storing concept with validation: {validation_fields}")
+                await system.semantic.store_concept(
+                    name=concept["name"],
+                    type=concept["type"],
+                    description=concept["description"],
+                    validation=validation_fields,
+                    is_consolidation=True
+                )
+                logger.info(f"Successfully stored concept: {concept['name']}")
+            except Exception as e:
+                logger.error(f"Failed to store concept {concept['name']}: {str(e)}")
+                raise
             
         # Store relationships
         for rel in knowledge.get("relationships", []):
             logger.info(f"Storing relationship: {rel}")
-            await system.semantic.run_query(
-                """
-                MERGE (c1:Concept {name: $from})
-                MERGE (c2:Concept {name: $to})
-                MERGE (c1)-[:RELATED_TO]->(c2)
-                """,
-                {"from": rel["from"], "to": rel["to"]}
+            await system.semantic.store_relationship(
+                source=rel["source"],
+                target=rel["target"],
+                rel_type=rel.get("type", "RELATED_TO"),
+                attributes=rel.get("attributes", {})
             )
-            
-        logger.info(f"Stored knowledge result: None")
+        
+        logger.info("Stored knowledge result: None")
         return None
         
     system.semantic.store_knowledge = logged_store_knowledge
