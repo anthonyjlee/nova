@@ -18,6 +18,14 @@ app = FastAPI(
     description="""
 Nova's analytics and orchestration API
 
+## Chat & Thread Endpoints
+
+### Thread Management (/api/chat/threads)
+- POST /threads/create - Create new thread
+- GET /threads/{thread_id} - Get thread details
+- POST /threads/{thread_id}/messages - Add message
+- GET /threads - List all threads
+
 ## WebSocket Endpoints
 
 ### Real-time Analytics (/api/ws/ws)
@@ -55,13 +63,13 @@ app.add_middleware(
 )
 
 # Include routers
-app.include_router(graph_router)
-app.include_router(agent_router)
-app.include_router(user_router)
-app.include_router(analytics_router)
-app.include_router(orchestration_router)
-app.include_router(chat_router)
-app.include_router(ws_router)
+app.include_router(chat_router)           # Chat and threads
+app.include_router(graph_router)          # Knowledge graph operations
+app.include_router(orchestration_router)  # Task orchestration
+app.include_router(agent_router)          # Agent management
+app.include_router(analytics_router)      # Analytics and insights
+app.include_router(user_router)           # User management
+app.include_router(ws_router)             # Real-time updates
 
 @app.get("/")
 async def root():

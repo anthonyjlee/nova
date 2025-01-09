@@ -78,7 +78,13 @@ from .models import (
     GraphHealthResponse,
     GraphOptimizeResponse,
     GraphStatisticsResponse,
-    GraphBackupResponse
+    GraphBackupResponse,
+    ThreadRequest,
+    ThreadResponse,
+    MessageRequest,
+    Message,  # Added Message model
+    MessageResponse,
+    ThreadListResponse
 )
 
 logger = logging.getLogger(__name__)
@@ -86,50 +92,184 @@ logger = logging.getLogger(__name__)
 # Create routers with dependencies
 graph_router = APIRouter(
     prefix="/api/graph",
-    tags=["graph"],
+    tags=["Knowledge Graph"],
     dependencies=[Depends(check_rate_limit)],
     responses={404: {"description": "Not found"}}
 )
 
 agent_router = APIRouter(
     prefix="/api/agents",
-    tags=["agents"],
+    tags=["Agent Management"],
     dependencies=[Depends(check_rate_limit)],
     responses={404: {"description": "Not found"}}
 )
 
 user_router = APIRouter(
     prefix="/api/users",
-    tags=["users"],
+    tags=["User Management"],
     dependencies=[Depends(check_rate_limit)],
     responses={404: {"description": "Not found"}}
 )
 
 analytics_router = APIRouter(
     prefix="/api/analytics",
-    tags=["analytics"],
+    tags=["Analytics & Insights"],
     dependencies=[Depends(check_rate_limit)],
     responses={404: {"description": "Not found"}}
 )
 
 orchestration_router = APIRouter(
     prefix="/api/orchestration",
-    tags=["orchestration"],
+    tags=["Task Orchestration"],
     dependencies=[Depends(check_rate_limit)],
     responses={404: {"description": "Not found"}}
 )
 
 chat_router = APIRouter(
     prefix="/api/chat",
-    tags=["chat"],
+    tags=["Chat & Threads"],
     dependencies=[Depends(check_rate_limit)],
     responses={404: {"description": "Not found"}}
 )
 
+@chat_router.post("/threads/create", response_model=ThreadResponse)
+async def create_thread(
+    request: ThreadRequest,
+    _: None = Depends(get_permission("write")),
+    memory_system: Any = Depends(get_memory_system)
+) -> ThreadResponse:
+    """Create a new chat thread."""
+    try:
+        thread_id = str(uuid.uuid4())
+        now = datetime.now().isoformat()
+        
+        thread = {
+            "id": thread_id,
+            "title": request.title,
+            "domain": request.domain,
+            "messages": [],
+            "created_at": now,
+            "updated_at": now,
+            "metadata": request.metadata or {}
+        }
+        
+        # Store thread in memory system
+        await memory_system.store_experience({
+            "type": "thread",
+            "content": thread,
+            "importance": 0.8,
+            "metadata": {
+                "domain": request.domain,
+                "thread_id": thread_id
+            }
+        })
+        
+        return ThreadResponse(**thread)
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@chat_router.get("/threads/{thread_id}", response_model=ThreadResponse)
+async def get_thread(
+    thread_id: str,
+    _: None = Depends(get_permission("read")),
+    memory_system: Any = Depends(get_memory_system)
+) -> ThreadResponse:
+    """Get thread details and messages."""
+    try:
+        # Retrieve thread from memory system
+        result = await memory_system.search_experiences({
+            "type": "thread",
+            "metadata.thread_id": thread_id
+        })
+        
+        if not result:
+            raise ResourceNotFoundError(f"Thread {thread_id} not found")
+            
+        thread = result[0]["content"]
+        return ThreadResponse(**thread)
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@chat_router.post("/threads/{thread_id}/messages", response_model=MessageResponse)
+async def add_message(
+    thread_id: str,
+    message: MessageRequest,
+    _: None = Depends(get_permission("write")),
+    memory_system: Any = Depends(get_memory_system)
+) -> MessageResponse:
+    """Add a message to a thread."""
+    try:
+        # Get existing thread
+        result = await memory_system.search_experiences({
+            "type": "thread",
+            "metadata.thread_id": thread_id
+        })
+        
+        if not result:
+            raise ResourceNotFoundError(f"Thread {thread_id} not found")
+            
+        thread = result[0]["content"]
+        now = datetime.now().isoformat()
+        
+        # Create new message
+        new_message = Message(
+            id=str(uuid.uuid4()),
+            content=message.content,
+            sender_type=message.sender_type,
+            sender_id=message.sender_id,
+            timestamp=now,
+            metadata=message.metadata
+        )
+        
+        # Update thread
+        thread["messages"].append(new_message.dict())
+        thread["updated_at"] = now
+        
+        # Store updated thread
+        await memory_system.store_experience({
+            "type": "thread",
+            "content": thread,
+            "importance": 0.8,
+            "metadata": {
+                "domain": thread.get("domain"),
+                "thread_id": thread_id
+            }
+        })
+        
+        return MessageResponse(
+            message=new_message,
+            thread_id=thread_id,
+            timestamp=now
+        )
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@chat_router.get("/threads", response_model=ThreadListResponse)
+async def list_threads(
+    _: None = Depends(get_permission("read")),
+    memory_system: Any = Depends(get_memory_system)
+) -> ThreadListResponse:
+    """List all chat threads."""
+    try:
+        # Retrieve all threads from memory system
+        results = await memory_system.search_experiences({
+            "type": "thread"
+        })
+        
+        threads = [ThreadResponse(**result["content"]) for result in results]
+        
+        return ThreadListResponse(
+            threads=threads,
+            total=len(threads),
+            timestamp=datetime.now().isoformat()
+        )
+    except Exception as e:
+        raise ServiceError(str(e))
+
 # Create WebSocket router without dependencies
 ws_router = APIRouter(
     prefix="/api/ws",
-    tags=["websocket"]
+    tags=["Real-time Updates"]
 )
 
 @ws_router.websocket("/ws")

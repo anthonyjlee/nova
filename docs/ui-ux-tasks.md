@@ -42,14 +42,18 @@ NIA's frontend will be built using SvelteKit, featuring a three-panel layout wit
   * Task dependency visualization
 - Real-time graph updates via WebSocket
 - Node types:
-  * Domain entities
+  * Domain entities (with name labels and descriptions)
   * Tasks
   * Agents
   * Resources
 - Edge types:
   * Dependencies
-  * Relationships
+  * Relationships (with descriptive labels)
   * Data flow
+- Node details panel:
+  * Primary information (name, type, category)
+  * Metadata display with description
+  * Domain and other attributes
 
 ### 4. Control Panel
 - System status indicators:

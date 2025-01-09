@@ -1,6 +1,6 @@
 # NIA (Nova Intelligence Architecture)
 
-> **Project Status (2025-01-09)**: Memory system testing and integration. Preparing for frontend development.
+> **Project Status (2025-01-10)**: Frontend development in progress. Graph visualization implemented, chat integration next.
 
 NIA is a sophisticated multi-agent system that combines:
 - Two-layer memory architecture (episodic/semantic)
@@ -262,6 +262,16 @@ pytest tests/nova/               # Nova tests
    - Purpose: Main application server
    - Port: 8000
    - Status Check: http://localhost:8000/docs
+
+5. **Frontend Server**
+   - Purpose: SvelteKit web interface
+   - Port: 5173
+   - Status Check: http://localhost:5173
+   - Features:
+     * Slack-inspired three-panel layout
+     * Real-time graph visualization
+     * WebSocket integration
+     * Dark theme support
 
 ## Architecture Diagram
 

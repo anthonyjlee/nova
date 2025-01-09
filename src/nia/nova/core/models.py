@@ -2,7 +2,53 @@
 
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional, Union, Any
+from datetime import datetime
 from nia.core.types.memory_types import AgentResponse  # Import AgentResponse instead of redefining it
+
+# Chat Models
+class ThreadRequest(BaseModel):
+    """Request to create a new chat thread."""
+    title: str = Field(..., description="Title of the thread")
+    domain: Optional[str] = Field(None, description="Domain for the thread")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+
+class MessageRequest(BaseModel):
+    """Request to add a message to a thread."""
+    content: str = Field(..., description="Message content")
+    sender_type: str = Field(..., description="Type of sender (user/agent)")
+    sender_id: str = Field(..., description="ID of the sender")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+
+class Message(BaseModel):
+    """A message in a thread."""
+    id: str = Field(..., description="Message ID")
+    content: str = Field(..., description="Message content")
+    sender_type: str = Field(..., description="Type of sender (user/agent)")
+    sender_id: str = Field(..., description="ID of the sender")
+    timestamp: str = Field(..., description="ISO format timestamp")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+
+class ThreadResponse(BaseModel):
+    """Response containing thread details."""
+    id: str = Field(..., description="Thread ID")
+    title: str = Field(..., description="Thread title")
+    domain: Optional[str] = Field(None, description="Thread domain")
+    messages: List[Message] = Field(default_factory=list, description="Messages in the thread")
+    created_at: str = Field(..., description="ISO format timestamp")
+    updated_at: str = Field(..., description="ISO format timestamp")
+    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+
+class MessageResponse(BaseModel):
+    """Response after adding a message."""
+    message: Message = Field(..., description="The added message")
+    thread_id: str = Field(..., description="ID of the thread")
+    timestamp: str = Field(..., description="ISO format timestamp")
+
+class ThreadListResponse(BaseModel):
+    """Response containing list of threads."""
+    threads: List[ThreadResponse] = Field(..., description="List of threads")
+    total: int = Field(..., description="Total number of threads")
+    timestamp: str = Field(..., description="ISO format timestamp")
 
 # Base Models
 class Concept(BaseModel):
