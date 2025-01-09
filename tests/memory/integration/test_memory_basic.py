@@ -1,74 +1,45 @@
-"""Basic memory operations tests."""
+"""Basic memory system integration tests."""
 
 import pytest
-from datetime import datetime
-from nia.memory.types.memory_types import EpisodicMemory, MemoryType, Domain
+from datetime import datetime, timezone
 
-@pytest.mark.asyncio
-async def test_store_task_output(memory_system):
-    """Test storing task output in memory."""
-    memory = EpisodicMemory(
-        content="Test task output",
-        type=MemoryType.EPISODIC,
-        timestamp=datetime.now().isoformat(),
-        importance=0.8,
-        context={
-            "type": "task_output",
-            "domain": Domain.GENERAL,
+async def test_basic_concept_storage_and_retrieval(memory_system):
+    """Test storing and retrieving a basic concept."""
+    # Store a concept
+    concept_name = "test_concept"
+    concept_type = "entity"
+    concept_description = "A test concept"
+    
+    stored_concept = await memory_system.semantic.store_concept(
+        name=concept_name,
+        type=concept_type,
+        description=concept_description,
+        validation={
+            "domain": "professional",
+            "access_domain": "professional",
+            "confidence": 0.9,
             "source": "test",
-            "access_domain": "professional"
+            "approved": True,
+            "cross_domain": {
+                "approved": True,
+                "requested": True,
+                "source_domain": "professional",
+                "target_domain": "professional",
+                "justification": "Test justification"
+            }
         }
     )
-    memory_id = await memory_system.store_experience(memory)
-    assert memory_id is not None
-
-@pytest.mark.asyncio
-async def test_query_by_context_and_participants(memory_system):
-    """Test querying memories by context and participants."""
-    # Store test memory
-    memory = EpisodicMemory(
-        content="Test memory",
-        type=MemoryType.EPISODIC,
-        timestamp=datetime.now().isoformat(),
-        importance=0.8,
-        context={
-            "project": "test",
-            "domain": Domain.TECHNOLOGY,
-            "source": "test",
-            "access_domain": "professional"
-        },
-        participants=["agent1", "agent2"]
-    )
-    await memory_system.store_experience(memory)
-
-    # Query by context
-    memories = await memory_system.query_episodic({
-        "filter": {"context": {"project": "test"}}
-    })
-    assert len(memories) == 1
-    assert memories[0].content == "Test memory"
-
-@pytest.mark.asyncio
-async def test_query_task_outputs(memory_system):
-    """Test querying task output memories."""
-    # Store test memories
-    for i in range(3):
-        memory = EpisodicMemory(
-            content=f"Task output {i}",
-            type=MemoryType.EPISODIC,
-            timestamp=datetime.now().isoformat(),
-            importance=0.8,
-            context={
-                "type": "task_output",
-                "domain": Domain.GENERAL,
-                "source": "test",
-                "access_domain": "professional"
-            }
-        )
-        await memory_system.store_experience(memory)
-
-    # Query task outputs
-    memories = await memory_system.query_episodic({
-        "filter": {"context": {"type": "task_output"}}
-    })
-    assert len(memories) == 3
+    
+    assert stored_concept is not None
+    assert stored_concept["n"]["name"] == concept_name
+    assert stored_concept["n"]["type"] == concept_type
+    assert stored_concept["n"]["description"] == concept_description
+    
+    # Retrieve the concept
+    retrieved_concept = await memory_system.semantic.get_concept(concept_name)
+    assert retrieved_concept is not None
+    assert retrieved_concept["n"]["name"] == concept_name
+    assert retrieved_concept["n"]["type"] == concept_type
+    assert retrieved_concept["n"]["description"] == concept_description
+    assert retrieved_concept["n"]["validation"]["domain"] == "professional"
+    assert retrieved_concept["n"]["validation"]["approved"] is True

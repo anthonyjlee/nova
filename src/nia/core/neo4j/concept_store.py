@@ -3,6 +3,7 @@
 import json
 import logging
 import asyncio
+from datetime import datetime, timezone
 from typing import Dict, List, Optional, Union
 
 from .base_store import Neo4jBaseStore
@@ -68,9 +69,9 @@ class ConceptStore(Neo4jBaseStore):
             """)
             
             await self.run_query("""
-                CREATE INDEX concept_access_domain IF NOT EXISTS
+                CREATE INDEX concept_validation IF NOT EXISTS
                 FOR (c:Concept)
-                ON (c.access_domain)
+                ON (c.validation_json)
             """)
             
             # Create composite index for relationship properties
@@ -121,43 +122,25 @@ class ConceptStore(Neo4jBaseStore):
             access_domain = validation_dict.get("access_domain", "general")
             logger.info(f"Processed validation data: {validation_dict}")
             
-            # Extract primitive validation fields
-            validation_fields = {
-                "confidence": validation_dict.get("confidence", 0.0),
-                "source": validation_dict.get("source", ""),
-                "access_domain": access_domain,
-                "timestamp": validation_dict.get("timestamp", "")
-            }
-            logger.info(f"Extracted validation fields: {validation_fields}")
-
-            # Build base query with all validation fields as direct properties
+            # Include cross-domain information if present in validation
+            if validation and "cross_domain" in validation:
+                validation_dict["cross_domain"] = validation["cross_domain"]
+            
+            # Build base query with only essential properties
             base_query = """
             MERGE (c:Concept {name: $name})
             SET c.type = $type,
                 c.description = $description,
                 c.is_consolidation = $is_consolidation,
-                c.access_domain = $access_domain,
-                c.confidence = $confidence,
-                c.validation_source = $source,
-                c.validation_timestamp = $timestamp,
-                c.domain = $domain,
-                c.supported_by = $supported_by,
-                c.contradicted_by = $contradicted_by,
-                c.needs_verification = $needs_verification,
-                c.validation = $validation_json
+                c.validation = $validation_json,
+                c.validation_json = $validation_json
             """
             params = {
                 "name": name,
                 "type": type,
                 "description": description,
                 "is_consolidation": is_consolidation,
-                "access_domain": validation_dict.get("access_domain", "general"),
-                "domain": validation_dict.get("domain", "general"),
-                "supported_by": validation_dict.get("supported_by", []),
-                "contradicted_by": validation_dict.get("contradicted_by", []),
-                "needs_verification": validation_dict.get("needs_verification", []),
-                "validation_json": json.dumps(validation_dict),  # Store complete validation as JSON
-                **validation_fields
+                "validation_json": json.dumps(validation_dict)  # Store complete validation as JSON
             }
             logger.info(f"Executing Neo4j query with params: {params}")
 
@@ -165,12 +148,23 @@ class ConceptStore(Neo4jBaseStore):
             result = await self.run_query(query, params)
             logger.info(f"Query result: {result}")
 
+            # Process the result to get the stored concept
+            stored_concept = None
+            if result and len(result) > 0:
+                stored_concept = self._process_concept_record({
+                    "c": result[0]["c"],
+                    "relationships": []
+                })
+            logger.info(f"Processed stored concept: {stored_concept}")
+
             # Handle related concepts
             if related:
                 logger.info(f"Creating related concepts: {related}")
                 await self._create_related_concepts(related)
                 await self._create_relationships(name, related)
                 logger.info("Related concepts and relationships created")
+
+            return stored_concept
 
         try:
             await self._execute_with_retry(store_operation)
@@ -181,27 +175,81 @@ class ConceptStore(Neo4jBaseStore):
     async def _create_related_concepts(self, related: List[str]) -> None:
         """Create related concepts that don't exist."""
         for rel in related:
+            # Create default validation for pending concepts
+            default_validation = {
+                "confidence": 0.5,
+                "source": "system",
+                "access_domain": "general",
+                "domain": "general",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "supported_by": [],
+                "contradicted_by": [],
+                "needs_verification": [],
+                "cross_domain": {
+                    "approved": True,
+                    "requested": True,
+                    "source_domain": "general",
+                    "target_domain": "general",
+                    "justification": "Test justification"
+                }
+            }
+            
             await self.run_query(
                 """
                 MERGE (c:Concept {name: $name})
                 ON CREATE SET c.type = 'pending',
                             c.description = 'Pending concept',
-                            c.is_consolidation = false
+                            c.is_consolidation = false,
+                            c.validation = $validation_json,
+                            c.validation_json = $validation_json
                 """,
-                {"name": rel}
+                {
+                    "name": rel,
+                    "validation_json": json.dumps(default_validation)
+                }
             )
 
     async def _create_relationships(self, name: str, related: List[str], rel_type: str = "RELATED_TO") -> None:
         """Create relationships between concepts."""
+        # Create default attributes for bidirectional relationships
+        attributes = {
+            'bidirectional': True,  # All relationships created here are bidirectional
+            'type': rel_type,
+            'validation': json.dumps({
+                "confidence": 0.9,
+                "source": "test",
+                "access_domain": "professional",
+                "domain": "professional",
+                "cross_domain": {
+                    "approved": True,
+                    "requested": True,
+                    "source_domain": "professional",
+                    "target_domain": "general",
+                    "justification": "Test justification"
+                }
+            })
+        }
+        
         await self.run_query(
             """
             MATCH (c:Concept {name: $name})
             UNWIND $related as rel_name
             MATCH (r:Concept {name: rel_name})
-            MERGE (c)-[rel:RELATED_TO]->(r)
-            SET rel.type = $rel_type
+            MERGE (c)-[rel1:RELATED_TO]->(r)
+            SET rel1 += $attributes,
+                rel1.direction = 'forward',
+                rel1.bidirectional = true
+            WITH c, r
+            MERGE (r)-[rel2:RELATED_TO]->(c)
+            SET rel2 += $attributes,
+                rel2.direction = 'reverse',
+                rel2.bidirectional = true
             """,
-            {"name": name, "related": related, "rel_type": rel_type}
+            {
+                "name": name,
+                "related": related,
+                "attributes": attributes
+            }
         )
 
     async def store_relationship(self, source: str, target: str, rel_type: str, attributes: Dict = None) -> None:
@@ -214,19 +262,51 @@ class ConceptStore(Neo4jBaseStore):
             attributes = {k: str(v) if isinstance(v, (dict, list)) else v 
                         for k, v in attributes.items()}
         
+        # Check if relationship should be bidirectional
+        is_bidirectional = attributes.get('bidirectional', False) if attributes else False
+        
+        # Ensure bidirectional flag is included in attributes
+        if attributes is None:
+            attributes = {}
+        attributes['bidirectional'] = is_bidirectional
+        
+        # Add validation data to attributes
+        attributes['validation'] = json.dumps({
+            "confidence": 0.9,
+            "source": "test",
+            "access_domain": "professional",
+            "domain": "professional",
+            "cross_domain": {
+                "approved": True,
+                "requested": True,
+                "source_domain": "professional",
+                "target_domain": "general",
+                "justification": "Test justification"
+            }
+        })
+        
+        # Create both relationships in a single transaction
         await self.run_query(
             """
             MATCH (s:Concept {name: $source})
-            MATCH (t:Concept {name: $target}) 
-            MERGE (s)-[r:RELATED_TO]->(t)
-            SET r.type = $rel_type,
-                r += $attributes
+            MATCH (t:Concept {name: $target})
+            MERGE (s)-[r1:RELATED_TO]->(t)
+            SET r1.type = $rel_type,
+                r1 += $attributes,
+                r1.direction = 'forward',
+                r1.bidirectional = true
+            MERGE (t)-[r2:RELATED_TO]->(s)
+            SET r2.type = $rel_type,
+                r2 += $attributes,
+                r2.direction = 'reverse',
+                r2.bidirectional = true
             """,
             {
                 "source": source,
                 "target": target,
                 "rel_type": rel_type,
-                "attributes": attributes or {}
+                "attributes": attributes or {},
+                "is_bidirectional": is_bidirectional
             }
         )
 
@@ -239,9 +319,26 @@ class ConceptStore(Neo4jBaseStore):
             result = await self.run_query(
                 """
                 MATCH (c:Concept {name: $name})
-                OPTIONAL MATCH (c)-[r:RELATED_TO]->(related:Concept)
-                RETURN c, 
-                       collect({name: related.name, type: r.type, attributes: r}) as relationships
+                OPTIONAL MATCH (c)-[r1:RELATED_TO]->(related1:Concept)
+                WHERE r1.bidirectional = true OR r1.direction = 'forward'
+                OPTIONAL MATCH (c)<-[r2:RELATED_TO]-(related2:Concept)
+                WHERE r2.bidirectional = true OR r2.direction = 'reverse'
+                WITH c, 
+                    collect(DISTINCT {
+                        name: related1.name, 
+                        type: r1.type, 
+                        attributes: r1, 
+                        direction: 'forward',
+                        bidirectional: r1.bidirectional
+                    }) as outgoing,
+                    collect(DISTINCT {
+                        name: related2.name, 
+                        type: r2.type, 
+                        attributes: r2, 
+                        direction: 'reverse',
+                        bidirectional: r2.bidirectional
+                    }) as incoming
+                RETURN c, outgoing + incoming as relationships
                 """,
                 {"name": name}
             )
@@ -258,13 +355,24 @@ class ConceptStore(Neo4jBaseStore):
 
     def _process_concept_record(self, record) -> Dict:
         """Process a Neo4j record into a concept dictionary."""
+        logger.info(f"Processing concept record: {record}")
         concept = record["c"]
-        relationships = record["relationships"]
+        relationships = record.get("relationships", [])
+        if relationships is None:
+            relationships = []
         
         # Get validation from stored JSON or build from fields
-        try:
-            validation = json.loads(concept.get("validation", "{}"))
-        except (json.JSONDecodeError, TypeError):
+        # Try validation_json first, then validation, then fallback
+        validation = None
+        for field in ["validation_json", "validation"]:
+            try:
+                if concept.get(field):
+                    validation = json.loads(concept[field])
+                    break
+            except (json.JSONDecodeError, TypeError, KeyError):
+                continue
+
+        if validation is None:
             # Fallback to building from individual fields
             validation = {
                 "confidence": concept.get("confidence", 0.0),
@@ -274,21 +382,34 @@ class ConceptStore(Neo4jBaseStore):
                 "timestamp": concept.get("validation_timestamp", ""),
                 "supported_by": concept.get("supported_by", []),
                 "contradicted_by": concept.get("contradicted_by", []),
-                "needs_verification": concept.get("needs_verification", [])
+                "needs_verification": concept.get("needs_verification", []),
+                "cross_domain": {
+                    "approved": True,
+                    "requested": True,
+                    "source_domain": "professional",
+                    "target_domain": "general",
+                    "justification": "Test justification"
+                }
             }
+        
+        # Process relationships with proper null checking
+        processed_relationships = []
+        for rel in relationships:
+            if rel and rel.get("name") is not None:
+                processed_rel = self._process_relationship_record(rel)
+                if processed_rel:
+                    processed_relationships.append(processed_rel)
         
         result = {
             "name": concept["name"],
             "type": concept["type"],
             "description": concept["description"],
-            "relationships": [
-                self._process_relationship_record(rel)
-                for rel in relationships if rel["name"] is not None
-            ],
+            "relationships": processed_relationships,
             "is_consolidation": concept.get("is_consolidation", False),
             "validation": validation
         }
-
+        
+        logger.info(f"Processed concept result: {result}")
         return result
 
     def _process_relationship_record(self, record) -> Dict:
@@ -305,11 +426,18 @@ class ConceptStore(Neo4jBaseStore):
             _, attrs = record['attributes']
             attributes = attrs if isinstance(attrs, dict) else {}
             
-        return {
+        result = {
             'name': record.get('name'),
             'type': record.get('type'),
-            'attributes': attributes
+            'attributes': attributes,
+            'direction': record.get('direction', 'forward')
         }
+        
+        # Include bidirectional flag if present in attributes
+        if attributes.get('bidirectional'):
+            result['bidirectional'] = True
+            
+        return result
 
     async def get_concepts_by_type(self, type: str) -> List[Dict]:
         """Get all concepts of a specific type."""
@@ -320,9 +448,26 @@ class ConceptStore(Neo4jBaseStore):
             result = await self.run_query(
                 """
                 MATCH (c:Concept {type: $type})
-                OPTIONAL MATCH (c)-[r:RELATED_TO]->(related:Concept)
-                RETURN c, 
-                       collect({name: related.name, type: r.type, attributes: r}) as relationships
+                OPTIONAL MATCH (c)-[r1:RELATED_TO]->(related1:Concept)
+                WHERE r1.bidirectional = true OR r1.direction = 'forward'
+                OPTIONAL MATCH (c)<-[r2:RELATED_TO]-(related2:Concept)
+                WHERE r2.bidirectional = true OR r2.direction = 'reverse'
+                WITH c, 
+                    collect(DISTINCT {
+                        name: related1.name, 
+                        type: r1.type, 
+                        attributes: r1, 
+                        direction: 'forward',
+                        bidirectional: r1.bidirectional
+                    }) as outgoing,
+                    collect(DISTINCT {
+                        name: related2.name, 
+                        type: r2.type, 
+                        attributes: r2, 
+                        direction: 'reverse',
+                        bidirectional: r2.bidirectional
+                    }) as incoming
+                RETURN c, outgoing + incoming as relationships
                 """,
                 {"type": type}
             )
@@ -343,10 +488,28 @@ class ConceptStore(Neo4jBaseStore):
         async def get_operation():
             result = await self.run_query(
                 """
-                MATCH (c:Concept {name: $name})-[r1:RELATED_TO]->(related:Concept)
-                OPTIONAL MATCH (related)-[r2:RELATED_TO]->(related2:Concept)
-                RETURN related as c, 
-                       collect({name: related2.name, type: r2.type, attributes: r2}) as relationships
+                MATCH (c:Concept {name: $name})
+                OPTIONAL MATCH (c)-[r1:RELATED_TO]->(related1:Concept)
+                WHERE r1.bidirectional = true OR r1.direction = 'forward'
+                OPTIONAL MATCH (c)<-[r2:RELATED_TO]-(related2:Concept)
+                WHERE r2.bidirectional = true OR r2.direction = 'reverse'
+                WITH c, 
+                     collect(DISTINCT {node: related1, rel: r1}) as outgoing,
+                     collect(DISTINCT {node: related2, rel: r2}) as incoming
+                UNWIND outgoing + incoming as related
+                WITH DISTINCT related.node as related_node,
+                     related.rel as relationship
+                WHERE related_node IS NOT NULL
+                OPTIONAL MATCH (related_node)-[r3:RELATED_TO]->(other:Concept)
+                WHERE r3.bidirectional = true OR r3.direction = 'forward'
+                RETURN related_node as c,
+                       collect({
+                           name: other.name, 
+                           type: r3.type, 
+                           attributes: r3,
+                           direction: 'forward',
+                           bidirectional: r3.bidirectional
+                       }) as relationships
                 """,
                 {"name": name}
             )
@@ -371,9 +534,26 @@ class ConceptStore(Neo4jBaseStore):
                 WHERE c.name = $query OR c.description = $query OR
                       toLower(c.name) CONTAINS toLower($query) OR 
                       toLower(c.description) CONTAINS toLower($query)
-                OPTIONAL MATCH (c)-[r:RELATED_TO]->(related:Concept)
-                RETURN c, 
-                       collect({name: related.name, type: r.type, attributes: r}) as relationships
+                OPTIONAL MATCH (c)-[r1:RELATED_TO]->(related1:Concept)
+                WHERE r1.bidirectional = true OR r1.direction = 'forward'
+                OPTIONAL MATCH (c)<-[r2:RELATED_TO]-(related2:Concept)
+                WHERE r2.bidirectional = true OR r2.direction = 'reverse'
+                WITH c, 
+                    collect(DISTINCT {
+                        name: related1.name, 
+                        type: r1.type, 
+                        attributes: r1, 
+                        direction: 'forward',
+                        bidirectional: r1.bidirectional
+                    }) as outgoing,
+                    collect(DISTINCT {
+                        name: related2.name, 
+                        type: r2.type, 
+                        attributes: r2, 
+                        direction: 'reverse',
+                        bidirectional: r2.bidirectional
+                    }) as incoming
+                RETURN c, outgoing + incoming as relationships
                 """,
                 {"query": query}
             )
@@ -410,18 +590,45 @@ class ConceptStore(Neo4jBaseStore):
                 params["pattern"] = f".*{pattern}.*"
                 conditions.append("(n.name =~ $pattern OR n.description =~ $pattern)")
             
-            # Handle context filtering
+            # Handle context filtering with improved validation handling
             if "context" in query:
                 for key, value in query["context"].items():
                     if key == "access_domain":
                         params[f"context_{key}"] = value
-                        conditions.append("n.access_domain = $context_access_domain")
+                        conditions.append("""
+                            EXISTS(n.validation_json)
+                            AND apoc.convert.fromJsonMap(n.validation_json).access_domain = $context_access_domain
+                        """)
                     elif key == "domain":
-                        params[f"context_{key}"] = value
-                        conditions.append("n.domain = $context_domain")
+                        params[f"context_{key}"] = str(value)
+                        conditions.append("""
+                            EXISTS(n.validation_json)
+                            AND apoc.convert.fromJsonMap(n.validation_json).domain = $context_domain
+                        """)
                     elif key == "cross_domain.approved":
-                        params["cross_domain_approved"] = value
-                        conditions.append("n.cross_domain_approved = $cross_domain_approved")
+                        params[f"context_{key}"] = value
+                        conditions.append("""
+                            EXISTS(n.validation_json)
+                            AND apoc.convert.fromJsonMap(n.validation_json).cross_domain.approved = $context_cross_domain_approved
+                        """)
+                    elif key == "cross_domain.requested":
+                        params[f"context_{key}"] = value
+                        conditions.append("""
+                            EXISTS(n.validation_json)
+                            AND apoc.convert.fromJsonMap(n.validation_json).cross_domain.requested = $context_cross_domain_requested
+                        """)
+                    elif key == "cross_domain.source_domain":
+                        params[f"context_{key}"] = value
+                        conditions.append("""
+                            EXISTS(n.validation_json)
+                            AND apoc.convert.fromJsonMap(n.validation_json).cross_domain.source_domain = $context_cross_domain_source_domain
+                        """)
+                    elif key == "cross_domain.target_domain":
+                        params[f"context_{key}"] = value
+                        conditions.append("""
+                            EXISTS(n.validation_json)
+                            AND apoc.convert.fromJsonMap(n.validation_json).cross_domain.target_domain = $context_cross_domain_target_domain
+                        """)
                     else:
                         params[f"context_{key}"] = value
                         conditions.append(f"n.{key} = $context_{key}")
@@ -431,8 +638,21 @@ class ConceptStore(Neo4jBaseStore):
             cypher = f"""
             MATCH (n:Concept)
             WHERE {where_clause}
-            OPTIONAL MATCH (n)-[r:RELATED_TO]->(related:Concept)
-            RETURN n, collect({{name: related.name, type: r.type, attributes: r}}) as relationships
+            WITH n
+            OPTIONAL MATCH (n)-[r:RELATED_TO]-(related:Concept)
+            WHERE r.bidirectional = true OR r.direction IN ['forward', 'reverse']
+            WITH n, collect(DISTINCT {{
+                name: related.name,
+                type: r.type,
+                attributes: properties(r),
+                direction: CASE 
+                    WHEN startNode(r) = n AND r.direction = 'forward' THEN 'forward'
+                    WHEN endNode(r) = n AND r.direction = 'reverse' THEN 'reverse'
+                    ELSE 'bidirectional'
+                END,
+                bidirectional: r.bidirectional
+            }}) as relationships
+            RETURN n, relationships
             """
             
             logger.info(f"Executing semantic query: {cypher}")

@@ -3,901 +3,564 @@
 import pytest
 import uuid
 import json
-from unittest.mock import Mock, AsyncMock
-from datetime import datetime, timezone
+import re
+import asyncio
 import logging
 from typing import Dict, List, Any, Optional
+from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
+@pytest.fixture(scope="session")
+def event_loop():
+    """Create an instance of the default event loop for the test session."""
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
+
 from nia.core.types.memory_types import (
-    Memory, MemoryType, EpisodicMemory,
-    Concept, Relationship, DomainContext, BaseDomain, KnowledgeVertical
+    Memory, MemoryType, EpisodicMemory, MockMemory,
+    Concept, Relationship, DomainContext, BaseDomain, KnowledgeVertical,
+    ValidationSchema, CrossDomainSchema
 )
-from nia.memory.neo4j.base_store import Neo4jBaseStore
-from nia.memory.two_layer import TwoLayerMemorySystem, SemanticLayer
 from nia.core.neo4j.concept_store import ConceptStore
+from nia.memory.two_layer import TwoLayerMemorySystem, SemanticLayer
 from nia.memory.consolidation import ConsolidationManager
 from nia.world.environment import NIAWorld
 from nia.nova.orchestrator import Nova
+from .mock_vector_store import MockVectorStore
 
-def format_timestamp():
-    """Helper to format timestamp consistently."""
-    dt = datetime.now(timezone.utc)
-    return dt.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+class MockRecord:
+    """Mock Neo4j record that provides dictionary-like access."""
+    
+    def __init__(self, data: dict):
+        """Initialize with record data."""
+        self._data = data
+        
+    def __getitem__(self, key):
+        """Support dictionary-style access."""
+        return self._data[key]
+        
+    def get(self, key, default=None):
+        """Support get with default."""
+        return self._data.get(key, default)
 
-@pytest.fixture
-def mock_vector_store():
-    """Mock vector store for testing."""
-    class MockVectorStore:
-        def __init__(self):
-            self.vectors = {}
-            
-        async def store_vector(self, content: Dict, metadata: Dict = None, layer: str = None) -> str:
-            # Convert content to proper memory format
-            memory_dict = None
-            
-            if isinstance(content, dict):
-                if "text" in content:
-                    # Create domain context
-                    domain_str = metadata.get("domain", "general")
-                    vertical_str = metadata.get("knowledge_vertical", "general")
-                    
-                    # Convert to proper enum values
-                    try:
-                        primary_domain = BaseDomain(domain_str.lower())
-                    except ValueError:
-                        primary_domain = BaseDomain.GENERAL
-                        
-                    try:
-                        knowledge_vertical = KnowledgeVertical(vertical_str.lower())
-                    except ValueError:
-                        knowledge_vertical = KnowledgeVertical.GENERAL
-                    
-                    domain_context = DomainContext(
-                        primary_domain=primary_domain,
-                        knowledge_vertical=knowledge_vertical,
-                        confidence=metadata.get("confidence", 1.0)
-                    )
-                    
-                    # Create memory dict
-                    memory_dict = {
-                        "content": content["text"],
-                        "type": MemoryType.EPISODIC.value,
-                        "timestamp": metadata.get("timestamp", datetime.now(timezone.utc).isoformat()),
-                        "context": metadata.get("context", {}),
-                        "importance": metadata.get("importance", 0.0),
-                        "metadata": metadata.get("metadata", {}),
-                        "consolidated": False,
-                        "domain_context": domain_context,
-                        "participants": metadata.get("participants", []),
-                        "concepts": [],
-                        "relationships": []
-                    }
-                    
-                    # Convert concepts if present
-                    if "concepts" in metadata:
-                        memory_dict["concepts"] = [
-                            Concept(
-                                name=c["name"],
-                                type=c["type"],
-                                description=c.get("description", ""),
-                                domain_context=domain_context,
-                                validation=c.get("validation", {})
-                            ) if isinstance(c, dict) else c
-                            for c in metadata["concepts"]
-                        ]
-                        
-                    # Convert relationships if present
-                    if "relationships" in metadata:
-                        memory_dict["relationships"] = [
-                            Relationship(
-                                from_=r["source"],
-                                to=r["target"],
-                                type=r["type"],
-                                domain_context=domain_context,
-                                confidence=r.get("confidence", 1.0),
-                                bidirectional=r.get("bidirectional", False)
-                            ) if isinstance(r, dict) else r
-                            for r in metadata["relationships"]
-                        ]
-                else:
-                    # Handle direct memory dict format with enhanced validation
-                    memory_dict = dict(content)
-                    
-                    # Ensure domain context is properly formatted
-                    if "domain_context" not in memory_dict:
-                        domain_str = memory_dict.get("context", {}).get("domain", "general")
-                        vertical_str = memory_dict.get("context", {}).get("knowledge_vertical", "general")
-                        
-                        # Convert to proper enum values
-                        try:
-                            primary_domain = BaseDomain(domain_str.lower())
-                        except ValueError:
-                            primary_domain = BaseDomain.GENERAL
-                            
-                        try:
-                            knowledge_vertical = KnowledgeVertical(vertical_str.lower())
-                        except ValueError:
-                            knowledge_vertical = KnowledgeVertical.GENERAL
-                            
-                        memory_dict["domain_context"] = DomainContext(
-                            primary_domain=primary_domain,
-                            knowledge_vertical=knowledge_vertical,
-                            confidence=0.9
-                        )
-                    elif isinstance(memory_dict["domain_context"], dict):
-                        # Convert string enums to proper enum values
-                        domain_dict = dict(memory_dict["domain_context"])
-                        if "primary_domain" in domain_dict:
-                            try:
-                                domain_dict["primary_domain"] = BaseDomain(str(domain_dict["primary_domain"]).lower())
-                            except ValueError:
-                                domain_dict["primary_domain"] = BaseDomain.GENERAL
-                                
-                        if "knowledge_vertical" in domain_dict:
-                            try:
-                                domain_dict["knowledge_vertical"] = KnowledgeVertical(str(domain_dict["knowledge_vertical"]).lower())
-                            except ValueError:
-                                domain_dict["knowledge_vertical"] = KnowledgeVertical.GENERAL
-                                
-                        memory_dict["domain_context"] = DomainContext(**domain_dict)
-                    
-                    # Convert concepts and relationships to proper model instances with domain context
-                    if "concepts" in memory_dict:
-                        concepts = []
-                        for c in memory_dict["concepts"]:
-                            if isinstance(c, dict):
-                                # Ensure concept has domain context
-                                if "domain_context" not in c:
-                                    c["domain_context"] = memory_dict["domain_context"]
-                                # Ensure validation exists
-                                if "validation" not in c:
-                                    c["validation"] = {
-                                        "confidence": 0.9,
-                                        "supported_by": [],
-                                        "contradicted_by": [],
-                                        "needs_verification": []
-                                    }
-                                concepts.append(Concept(**c))
-                            else:
-                                concepts.append(c)
-                        memory_dict["concepts"] = concepts
-                        
-                    if "relationships" in memory_dict:
-                        relationships = []
-                        for r in memory_dict["relationships"]:
-                            if isinstance(r, dict):
-                                # Ensure relationship has domain context
-                                if "domain_context" not in r:
-                                    r["domain_context"] = memory_dict["domain_context"]
-                                relationships.append(Relationship(**r))
-                            else:
-                                relationships.append(r)
-                        memory_dict["relationships"] = relationships
-                        
-                    # Set defaults for required fields
-                    memory_dict.setdefault("type", MemoryType.EPISODIC.value)
-                    memory_dict.setdefault("timestamp", datetime.now(timezone.utc).isoformat())
-                    memory_dict.setdefault("context", {})
-                    memory_dict.setdefault("importance", 0.0)
-                    memory_dict.setdefault("metadata", {})
-                    memory_dict.setdefault("consolidated", False)
-                
-            # Create EpisodicMemory instance with proper model validation
-            try:
-                memory = EpisodicMemory(**memory_dict)
-                content = memory.dict()
-            except Exception as e:
-                logger.error(f"Failed to create EpisodicMemory: {str(e)}")
-                raise ValueError(f"Invalid memory format: {str(e)}")
+class MockResult:
+    """Mock Neo4j result that never does network IO."""
+    
+    def __init__(self, records=None):
+        """Initialize with optional records."""
+        self._records = [MockRecord(r) for r in (records or [])]
+        logger.info(f"MockResult initialized with {len(self._records)} records")
+        if self._records:
+            logger.info(f"First record: {json.dumps(self._records[0]._data, indent=2)}")
+        
+    def __iter__(self):
+        """Support iteration over records."""
+        return iter(self._records)
+        
+    async def single(self, default=None):
+        """Get single record."""
+        if self._records:
+            logger.info(f"Returning single record: {json.dumps(self._records[0]._data, indent=2)}")
+            return self._records[0]
+        logger.info(f"No records found, returning default: {default}")
+        return default
+        
+    def single_record(self):
+        """Get single record synchronously."""
+        if self._records:
+            logger.info(f"Returning single record: {json.dumps(self._records[0]._data, indent=2)}")
+            return self._records[0]
+        logger.info("No records found")
+        return None
+        
+    async def consume(self):
+        """No-op consume."""
+        logger.info(f"Consuming {len(self._records)} records")
+        return {"summary": {"counters": {"nodes-created": len(self._records)}}}
+        
+    def consume_sync(self):
+        """No-op consume synchronously."""
+        logger.info(f"Consuming {len(self._records)} records")
+        return {"summary": {"counters": {"nodes-created": len(self._records)}}}
+        
+    def data(self):
+        """Get raw record data."""
+        data = [r._data for r in self._records]
+        logger.info(f"Returning {len(data)} records: {json.dumps(data, indent=2)}")
+        return data
+        
+    def validate_records(self):
+        """Validate record structure."""
+        for i, record in enumerate(self._records):
+            if not isinstance(record._data, dict):
+                logger.error(f"Record {i} is not a dictionary: {record._data}")
+                return False
+            if "n" not in record._data:
+                logger.error(f"Record {i} missing 'n' key: {record._data}")
+                return False
+            if "relationships" not in record._data:
+                logger.error(f"Record {i} missing 'relationships' key: {record._data}")
+                return False
+        logger.info("All records validated successfully")
+        return True
 
-            vector_id = str(uuid.uuid4())
-            # Store memory fields
-            if isinstance(content, dict):
-                if "text" in content:
-                    # Handle content dict format from EpisodicLayer.store_memory
-                    memory_dict = {
-                        "id": vector_id,
-                        "content": content["text"],
-                        "type": metadata.get("type", MemoryType.EPISODIC.value),
-                        "timestamp": metadata.get("timestamp", datetime.now().isoformat()),
-                        "context": metadata.get("context", {}),
-                        "concepts": [],
-                        "relationships": [],
-                        "participants": metadata.get("participants", []) if metadata else [],
-                        "importance": metadata.get("importance", 0.0),
-                        "metadata": metadata.get("metadata", {}),
-                        "consolidated": False
-                    }
-                else:
-                    # Handle direct memory dict format
-                    memory_dict = dict(content)
-                    memory_dict["id"] = vector_id
-                    memory_dict["consolidated"] = False
-                    memory_dict.setdefault("concepts", [])
-                    memory_dict.setdefault("relationships", [])
-                    memory_dict.setdefault("participants", [])
-            elif isinstance(content, EpisodicMemory):
-                memory_dict = dict(content.dict())
-                if isinstance(memory_dict.get("type"), MemoryType):
-                    memory_dict["type"] = memory_dict["type"].value
-                memory_dict["id"] = vector_id
-                memory_dict["consolidated"] = False
-            else:
-                memory_dict = dict(content)
-                if isinstance(memory_dict.get("type"), MemoryType):
-                    memory_dict["type"] = memory_dict["type"].value
-                memory_dict["id"] = vector_id
-                memory_dict["consolidated"] = False
-                memory_dict.setdefault("concepts", [])
-                memory_dict.setdefault("relationships", [])
-                memory_dict.setdefault("participants", [])
+class MockSession:
+    """Mock Neo4j session that never does network IO."""
+    
+    def __init__(self, store):
+        """Initialize mock session."""
+        self.store = store
+        logger.info("MockSession initialized")
+        
+    async def __aenter__(self):
+        """Context manager entry."""
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Context manager exit."""
+        pass
+        
+    async def run(self, query: str, parameters: dict = None):
+        """Mock query execution that returns results from store."""
+        logger.info(f"MockSession.run() called with query: {query}")
+        results = await self.store._query(query, parameters or {})
+        return MockResult(results)
+        
+    def close(self):
+        """No-op close."""
+        pass
 
-            # Extract fields from metadata if they exist
-            if metadata:
-                for field in ["concepts", "relationships", "participants", "importance", "context"]:
-                    if field in metadata:
-                        memory_dict[field] = metadata[field]
+class MockDriver:
+    """Mock Neo4j driver that never does network IO."""
+    
+    def __init__(self, store):
+        """Initialize with store reference."""
+        self.store = store
+        logger.info("MockDriver initialized")
+        
+    def session(self, database=None, default_access_mode=None):
+        """Create a mock session with store reference."""
+        logger.info(f"MockDriver.session() called with database={database}")
+        return MockSession(self.store)
+        
+    async def close(self):
+        """No-op close."""
+        logger.info("MockDriver.close() called")
+        pass
+        
+    async def verify_connectivity(self):
+        """No-op connectivity check."""
+        logger.info("MockDriver.verify_connectivity() called")
+        return True
 
-            # Ensure all required fields are present with proper types
-            if "concepts" not in memory_dict:
-                memory_dict["concepts"] = []
-            elif not isinstance(memory_dict["concepts"], list):
-                memory_dict["concepts"] = [memory_dict["concepts"]]
-            elif isinstance(memory_dict["concepts"], list):
-                # Convert each concept to a dict if it's not already
-                memory_dict["concepts"] = [
-                    c.dict() if hasattr(c, "dict") else c 
-                    for c in memory_dict["concepts"]
+def finalize_validation(validation: Any) -> dict:
+    """Convert validation schema to dictionary with consistent structure."""
+    # If already a dict, ensure required fields
+    if isinstance(validation, dict):
+        return {
+            "domain": validation.get("domain", "professional"),
+            "access_domain": validation.get("access_domain", "professional"),
+            "confidence": validation.get("confidence", 0.9),
+            "source": validation.get("source", "test"),
+            "approved": validation.get("approved", True),
+            "cross_domain": validation.get("cross_domain", {
+                "approved": True,
+                "requested": True,
+                "source_domain": "professional",
+                "target_domain": "professional",
+                "justification": "Test justification"
+            })
+        }
+    
+    # If string, try to parse as JSON
+    if isinstance(validation, str):
+        try:
+            return finalize_validation(json.loads(validation))
+        except json.JSONDecodeError:
+            logger.warning(f"Failed to parse validation JSON: {validation}")
+            return finalize_validation({})
+    
+    # If ValidationSchema, convert to dict and ensure all nested schemas are also converted
+    if isinstance(validation, ValidationSchema):
+        validation_dict = validation.dict()
+        # Convert any nested schemas to dicts
+        for key, value in validation_dict.items():
+            if isinstance(value, (ValidationSchema, CrossDomainSchema)):
+                validation_dict[key] = value.dict()
+            elif isinstance(value, list):
+                validation_dict[key] = [
+                    item.dict() if isinstance(item, (ValidationSchema, CrossDomainSchema)) else item
+                    for item in value
                 ]
-            
-            if "relationships" not in memory_dict:
-                memory_dict["relationships"] = []
-            elif not isinstance(memory_dict["relationships"], list):
-                memory_dict["relationships"] = [memory_dict["relationships"]]
-            elif isinstance(memory_dict["relationships"], list):
-                # Convert each relationship to a dict if it's not already
-                memory_dict["relationships"] = [
-                    r.dict() if hasattr(r, "dict") else r 
-                    for r in memory_dict["relationships"]
-                ]
-            
-            if "participants" not in memory_dict:
-                memory_dict["participants"] = []
-            elif not isinstance(memory_dict["participants"], list):
-                memory_dict["participants"] = [memory_dict["participants"]]
-            
-            if "importance" not in memory_dict:
-                memory_dict["importance"] = 0.0
-            elif not isinstance(memory_dict["importance"], (int, float)):
-                memory_dict["importance"] = float(memory_dict["importance"])
-            
-            if "context" not in memory_dict:
-                memory_dict["context"] = {}
-            elif not isinstance(memory_dict["context"], dict):
-                memory_dict["context"] = {"value": memory_dict["context"]}
-            
-            if "metadata" not in memory_dict:
-                memory_dict["metadata"] = {}
-            elif not isinstance(memory_dict["metadata"], dict):
-                memory_dict["metadata"] = {"value": memory_dict["metadata"]}
+        # Add required fields that might be missing
+        validation_dict.update({
+            "approved": validation_dict.get("approved", True),
+            "requested": validation_dict.get("requested", True),
+            "source_domain": validation_dict.get("source_domain", "professional"),
+            "target_domain": validation_dict.get("target_domain", "professional"),
+            "justification": validation_dict.get("justification", "Test justification")
+        })
+        return validation_dict
+    
+    # Default validation
+    return finalize_validation({})
 
-            self.vectors[vector_id] = {
-                "content": memory_dict,
-                "metadata": metadata or {}
-            }
-            return vector_id
+class MockNeo4jStore(ConceptStore):
+    """Mock Neo4j store for testing."""
+    
+    def __init__(self, uri="bolt://localhost:7687", *args, **kwargs):
+        """Initialize mock store."""
+        super().__init__(uri=uri)  # Initialize parent first
+        self.nodes = {}  # In-memory storage
+        self.relationships = []  # In-memory relationships
+        self._driver = None  # Initialize driver as None
+        self._uri = uri  # Store URI as protected attribute
+        logger.info(f"Initialized MockNeo4jStore with URI: {uri}")
+
+    @property
+    def uri(self):
+        """Get the Neo4j URI."""
+        return self._uri
+
+    @uri.setter
+    def uri(self, value):
+        """Set the Neo4j URI."""
+        self._uri = value
+
+    @property
+    def driver(self):
+        """Get the Neo4j driver instance."""
+        if self._driver is None:
+            self._driver = MockDriver(self)
+        return self._driver
+
+    @driver.setter
+    def driver(self, value):
+        """Set the Neo4j driver instance."""
+        self._driver = value
+        
+    async def connect(self):
+        """Override connect to prevent real connection attempts."""
+        logger.info("MockNeo4jStore.connect() called - no real connection needed")
+        return True
+        
+    async def close(self):
+        """Override close to prevent real connection cleanup."""
+        logger.info("MockNeo4jStore.close() called - no real connection to close")
+        return True
+        
+    async def disconnect(self):
+        """Alias for close() to maintain compatibility."""
+        return await self.close()
+        
+    async def _ensure_indexes(self):
+        """No-op for mock."""
+        return True
+        
+    async def store_concept(self, *args, **kwargs) -> dict | None:
+        """Store a concept with validation."""
+        # Extract parameters
+        name = kwargs.get("name")
+        type = kwargs.get("type")
+        description = kwargs.get("description", "")
+        validation = kwargs.get("validation", {})
+        
+        # Convert validation to consistent dictionary
+        validation_dict = finalize_validation(validation)
             
-        async def get_vector(self, vector_id: str) -> Dict:
-            vector = self.vectors.get(vector_id, {})
-            if not vector:
-                return None
-            return vector["content"]
+        # Store validation both as individual fields and complete JSON
+        node = {
+            # Core fields
+            "name": name,
+            "type": type,
+            "description": description,
             
-        async def search_vectors(self, content: Dict = None, filter: Dict = None, limit: int = None, score_threshold: float = None, layer: str = None) -> List[Dict]:
-            # Return all vectors for consolidation candidates
-            if content is None and filter is None:
-                return [v["content"] for v in self.vectors.values()]
+            # Required top-level fields
+            "domain": validation_dict["domain"],
+            "domains": [validation_dict["domain"]],  # Required for pattern matching
+            "from": name,  # Required for relationship pattern matching
+            "to": name,    # Required for relationship pattern matching
             
-            # Handle filtered search
-            results = []
-            for vector in self.vectors.values():
-                matches = True
+            # Validation data
+            "validation": validation_dict,  # Complete JSON
+            "validation_json": json.dumps(validation_dict),  # Backup JSON string
+            
+            # Individual validation fields at top level for direct access
+            "access_domain": validation_dict["access_domain"],
+            "confidence": validation_dict["confidence"],
+            "source": validation_dict["source"],
+            "approved": validation_dict["approved"],
+            "cross_domain": validation_dict["cross_domain"],
+            
+            # Additional required fields
+            "is_consolidation": kwargs.get("is_consolidation", False),
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        logger.info(f"Storing concept node: {json.dumps(node, indent=2)}")
+        
+        try:
+            # Store node
+            self.nodes[name] = node
+            logger.info(f"Successfully stored concept: {name}")
+            logger.info(f"Concept validation data: {json.dumps(node['validation'], indent=2)}")
+            
+            # Ensure validation is a dictionary
+            if isinstance(node["validation"], ValidationSchema):
+                node["validation"] = node["validation"].dict()
+            elif isinstance(node["validation"], str):
+                node["validation"] = json.loads(node["validation"])
                 
-                # Check content match if provided
-                if content:
-                    if isinstance(content, dict) and "text" in content:
-                        if content["text"] not in str(vector["content"].get("content", "")):
-                            matches = False
-                    elif isinstance(content, str):
-                        if content not in str(vector["content"].get("content", "")):
-                            matches = False
-                
-                # Check filter match if provided
-                if matches and filter:
-                    for key, value in filter.items():
-                        if isinstance(value, dict):
-                            # Handle nested dictionary filters (e.g., {"context": {"project": "A"}})
-                            if key not in vector["content"]:
-                                matches = False
-                                break
-                            current = vector["content"][key]
-                            for subkey, subvalue in value.items():
-                                if not isinstance(current, dict) or subkey not in current or current[subkey] != subvalue:
-                                    matches = False
-                                    break
-                        elif key == "type":
-                            # Handle type filter directly from content
-                            if vector["content"]["type"] != value:
-                                matches = False
-                        else:
-                            # Handle direct metadata filters
-                            if vector["metadata"].get(key) != value:
-                                matches = False
-                
-                if matches:
-                    # Get the stored memory data
-                    memory_data = vector["content"]
-                    if isinstance(memory_data, dict):
-                        # Create EpisodicMemory instance
-                        try:
-                            # Ensure participants is a list of strings
-                            participants = memory_data.get("participants", [])
-                            if not isinstance(participants, list):
-                                participants = [str(participants)]
-                            else:
-                                participants = [str(p) for p in participants if p is not None]
-
-                            # Get content from memory_data
-                            content = memory_data.get("content", "")
-                            if isinstance(content, dict):
-                                content = content.get("text", "")
-
-                            memory = EpisodicMemory(
-                                id=memory_data.get("id"),
-                                content=content,
-                                type=memory_data.get("type", MemoryType.EPISODIC.value),
-                                importance=memory_data.get("importance", 0.5),
-                                timestamp=memory_data.get("timestamp", datetime.now(timezone.utc).isoformat()),
-                                context=memory_data.get("context", {}),
-                                consolidated=memory_data.get("consolidated", False),
-                                participants=participants,
-                                concepts=memory_data.get("concepts", []),
-                                relationships=memory_data.get("relationships", []),
-                                emotions=memory_data.get("emotions", {}),
-                                related_memories=memory_data.get("related_memories", [])
-                            )
-                            results.append(memory)
-                        except Exception as e:
-                            logger.error(f"Failed to create EpisodicMemory: {str(e)}")
-            
-            # Apply limit if provided
-            if limit is not None and len(results) > limit:
-                results = results[:limit]
-                
-            return results
-            
-        async def update_metadata(self, vector_id: str, metadata: Dict):
-            if vector_id in self.vectors:
-                # Update consolidated flag in both content and metadata
-                if "consolidated" in metadata:
-                    self.vectors[vector_id]["content"]["consolidated"] = metadata["consolidated"]
-                    self.vectors[vector_id]["metadata"]["consolidated"] = metadata["consolidated"]
-                    
-                # Update other metadata
-                for key, value in metadata.items():
-                    if key != "consolidated":
-                        self.vectors[vector_id]["metadata"][key] = value
-                        
-        async def delete_vector(self, vector_id: str):
-            """Delete a vector from storage."""
-            if vector_id in self.vectors:
-                del self.vectors[vector_id]
-                return True
-            return False
-                
-    return MockVectorStore()
-
-@pytest.fixture(autouse=True)
-def mock_neo4j_store():
-    """Mock Neo4j store for testing. autouse=True ensures a fresh store for each test."""
-    class MockAsyncResult:
-        def __init__(self, data):
-            self._data = data
-            logger.info(f"Created MockAsyncResult with data: {data}")
-            
-        async def data(self):
-            logger.info(f"Returning data: {self._data}")
-            return self._data
-            
-        async def single(self):
-            """Get the first record."""
-            if self._data:
-                logger.info(f"Returning first record: {self._data[0]}")
-                return self._data[0]
-            logger.info("No records found")
-            return None
-
-        async def consume(self):
-            """Consume the result."""
-            logger.info(f"Consuming data: {self._data}")
-            return self._data
-            
-        def __aiter__(self):
-            """Make the result iterable."""
-            logger.info("Creating async iterator")
-            return self
-            
-        async def __anext__(self):
-            """Get next item for async iteration."""
-            if not hasattr(self, '_iter_index'):
-                self._iter_index = 0
-            if self._iter_index < len(self._data):
-                result = self._data[self._iter_index]
-                self._iter_index += 1
-                logger.info(f"Yielding next item: {result}")
-                return result
-            logger.info("No more items")
-            raise StopAsyncIteration
-
-    class MockSession:
-        def __init__(self, store):
-            self.store = store
-            
-        async def __aenter__(self):
-            return self
-            
-        async def __aexit__(self, exc_type, exc_val, exc_tb):
-            pass
-            
-        async def run(self, query: str, parameters=None, **kwargs):
-            # For UNWIND queries, prefer parameters over kwargs
-            if "UNWIND" in query:
-                params = parameters or {}
-            else:
-                # For other queries, combine parameters and kwargs
-                params = {}
-                if parameters:
-                    params.update(parameters)
-                if kwargs:
-                    params.update(kwargs)
-            if "MATCH (c:Concept {type: $type})" in query:
-                # Handle get_concepts_by_type query
-                matching_nodes = []
-                for node in self.store.nodes.values():
-                    if node["properties"]["type"] == params["type"]:
-                        matching_nodes.append({
-                            "c": node["properties"],
-                            "related": []  # Add empty related list as per query
-                        })
-                return MockAsyncResult(matching_nodes)
-            elif "WHERE" in query and "Concept" in query:
-                # Handle semantic query with pattern matching
-                matching_nodes = []
-                logger.info(f"Searching nodes with params: {params}")
-                logger.info(f"Current store nodes dict: {self.store.nodes}")
-                logger.info(f"Available nodes: {[n['properties'] for n in self.store.nodes.values()]}")
-                
-                # Parse names from query if present
-                names = None
-                if "names" in params:
-                    names = params["names"]
-                    if not isinstance(names, list):
-                        names = [names]
-                    names = [str(name) for name in names]
-                    logger.info(f"Searching for names: {names}")
-                elif "n.name IN" in query:
-                    # Extract names from the query string
-                    names_str = query.split("n.name IN [")[1].split("]")[0]
-                    names = [name.strip("'") for name in names_str.split(",")]
-                    logger.info(f"Extracted names from query: {names}")
-                
-                for node in self.store.nodes.values():
-                    props = node["properties"]
-                    matches = True
-                    logger.info(f"Checking node: {props}")
-                    
-                    # Check type if specified
-                    if "type" in params:
-                        if params["type"] == "concept":
-                            # Allow both "concept" and "entity" types since consolidation uses "entity"
-                            if props.get("type") not in ["concept", "entity"]:
-                                matches = False
-                                continue
-                        elif params["type"] == "entity":
-                            # Allow both "concept" and "entity" types since consolidation uses "entity"
-                            if props.get("type") not in ["concept", "entity"]:
-                                matches = False
-                                continue
-                        elif props.get("type") != params["type"]:
-                            matches = False
-                            continue
-                    
-                    # Check names list if present
-                    if names is not None:
-                        node_name = str(props.get("name", ""))
-                        logger.info(f"Checking if node name '{node_name}' is in {names}")
-                        if node_name not in names:
-                            logger.info(f"Node name '{node_name}' not found in {names}, skipping")
-                            matches = False
-                            continue
-                        else:
-                            logger.info(f"Node name '{node_name}' found in {names}, including in results")
-                    
-                    # Check text or pattern if specified
-                    elif "text" in params:
-                        text = params["text"]
-                        if text not in props.get("description", "") and text not in props.get("name", ""):
-                            matches = False
-                            continue
-                    elif "pattern" in params:
-                        pattern = params["pattern"]
-                        if pattern not in props.get("description", "") and pattern not in props.get("name", ""):
-                            matches = False
-                            continue
-                                
-                    # Check context if specified
-                    if "context" in params:
-                        context = params["context"]
-                        for key, value in context.items():
-                            if key == "access_domain":
-                                validation = props.get("validation", {})
-                                if isinstance(validation, str):
-                                    try:
-                                        validation = json.loads(validation)
-                                    except json.JSONDecodeError:
-                                        validation = {}
-                                if validation.get("access_domain") == value:
-                                    continue
-                                else:
-                                    matches = False
-                                    break
-                            else:
-                                if props.get(key) != value:
-                                    matches = False
-                                    break
-                    
-                    if matches:
-                        # Process the node through ConceptStore's _process_concept_record
-                        processed_node = {
-                            "name": props["name"],
-                            "type": props["type"],
-                            "description": props.get("description", ""),
-                            "is_consolidation": props.get("is_consolidation", False)
-                        }
-                        # Add validation if present
-                        validation = props.get("validation")
-                        if validation:
-                            if isinstance(validation, str):
-                                try:
-                                    validation = json.loads(validation)
-                                except json.JSONDecodeError:
-                                    validation = {}
-                            processed_node["validation"] = validation
-                        matching_nodes.append({"n": processed_node})
-                logger.info(f"Query returned nodes: {matching_nodes}")
-                return MockAsyncResult(matching_nodes)
-            elif "MERGE (c:Concept" in query:
-                logger.info(f"Processing MERGE query with params: {params}")
-                logger.info(f"Current store nodes dict before merge: {self.store.nodes}")
-                
-                # Extract parameters from the query if not in params
-                if "SET" in query:
-                    # This is a full concept creation/update
-                    if "name" not in params and "{name:" in query:
-                        name = query.split("{name: '")[1].split("'")[0]
-                        params["name"] = name
-                    if "type" not in params and "type:" in query:
-                        type_val = query.split("type: '")[1].split("'")[0]
-                        params["type"] = type_val
-                    if "description" not in params and "description:" in query:
-                        desc = query.split("description: '")[1].split("'")[0]
-                        params["description"] = desc
-                logger.info(f"Extracted params: {params}")
-
-                # Handle MERGE with ON CREATE SET
-                if "ON CREATE SET" in query:
-                    # Extract name from MERGE clause
-                    name = params.get("name")
-                    if not name:
-                        raise Exception("Missing required parameter: name")
-
-                    # Check if node already exists
-                    existing_node = None
-                    for n in self.store.nodes.values():
-                        if n["properties"]["name"] == name:
-                            existing_node = n
-                            break
-
-                    if not existing_node:
-                        # Create new node with ON CREATE SET properties
-                        node = {
-                            "name": name,
-                            "type": "pending",
-                            "description": "Pending concept",
-                            "is_consolidation": False
-                        }
-                        node_id = str(uuid.uuid4())
-                        self.store.nodes[node_id] = {
-                            "label": "Concept",
-                            "properties": node
-                        }
-                        existing_node = self.store.nodes[node_id]
-                        logger.info(f"Created new node with ON CREATE SET: {existing_node}")
-                    return MockAsyncResult([{"c": existing_node["properties"]}])
-                else:
-                    # Regular MERGE without ON CREATE SET with enhanced validation
-                    node = {
-                        "name": params.get("name"),
-                        "type": params.get("type", "concept"),
-                        "description": params.get("description", ""),
-                        "is_consolidation": params.get("is_consolidation", False),
-                        "validation": params.get("validation_json", "{}"),  # Store validation as JSON string
-                        "access_domain": params.get("access_domain", "general"),
-                        "domain": params.get("domain", "general"),
-                        "confidence": params.get("confidence", 0.9),
-                        "validation_source": params.get("source", "system"),
-                        "validation_timestamp": params.get("timestamp", ""),
-                        "supported_by": params.get("supported_by", []),
-                        "contradicted_by": params.get("contradicted_by", []),
-                        "needs_verification": params.get("needs_verification", [])
-                    }
-                    
-                    # Validate concept type with strict validation
-                    valid_types = ["entity", "action", "property", "event", "abstract"]
-                    if node["type"] not in valid_types:
-                        logger.error(f"Invalid concept type: {node['type']}")
-                        raise ValueError(f"Invalid concept type: {node['type']}. Must be one of: {', '.join(valid_types)}")
-                    
-                    # Parse and validate validation data with enhanced validation
-                    if isinstance(node["validation"], str):
-                        try:
-                            validation_data = json.loads(node["validation"])
-                            # Ensure validation has required fields
-                            validation_data.setdefault("confidence", 0.9)
-                            validation_data.setdefault("source", "system")
-                            validation_data.setdefault("access_domain", "general")
-                            validation_data.setdefault("domain", "general")
-                            validation_data.setdefault("supported_by", [])
-                            validation_data.setdefault("contradicted_by", [])
-                            validation_data.setdefault("needs_verification", [])
-                            node["validation"] = json.dumps(validation_data)
-                        except json.JSONDecodeError:
-                            logger.error(f"Failed to parse validation JSON: {node['validation']}")
-                            raise ValueError("Invalid validation JSON format")
-
-                    # Check if node already exists
-                    existing_node = None
-                    for n in self.store.nodes.values():
-                        if n["properties"]["name"] == node["name"]:
-                            existing_node = n
-                            break
-
-                    if not existing_node:
-                        node_id = str(uuid.uuid4())
-                        self.store.nodes[node_id] = {
-                            "label": "Concept",
-                            "properties": node
-                        }
-                        existing_node = self.store.nodes[node_id]
-                        logger.info(f"Created new node: {existing_node}")
-
-                    # Update existing node properties
-                    existing_node["properties"].update(node)
-                    logger.info(f"Updated node properties: {existing_node['properties']}")
-                    
-                    # Add to store's nodes if not already there
-                    if not any(n["properties"]["name"] == node["name"] for n in self.store.nodes.values()):
-                        node_id = str(uuid.uuid4())
-                        self.store.nodes[node_id] = {
-                            "label": "Concept",
-                            "properties": dict(node)
-                        }
-                        logger.info(f"Added new node to store with ID {node_id}: {self.store.nodes[node_id]}")
-                    
-                    logger.info(f"Final store nodes dict: {self.store.nodes}")
-                    return MockAsyncResult([{"c": existing_node["properties"]}])
-            elif "MATCH (c:Concept {name: $name})-[:RELATED_TO]->(r:Concept)" in query:
-                # Handle get_related_concepts query
-                matching_nodes = []
-                # Find all direct relationships
-                for rel in self.store.relationships:
-                    if rel["from"] == params["name"]:
-                        # Find the target node
-                        for node in self.store.nodes.values():
-                            if node["properties"]["name"] == rel["to"]:
-                                # Find any relationships from this target node
-                                secondary_relations = []
-                                for r2 in self.store.relationships:
-                                    if r2["from"] == rel["to"]:
-                                        secondary_relations.append(r2["to"])
-                                matching_nodes.append({
-                                    "c": node["properties"],
-                                    "related": secondary_relations
-                                })
-                                break  # Found the node, no need to continue searching
-                
-                return MockAsyncResult(matching_nodes)
-            elif "MERGE (c)-[:RELATED_TO]->(r)" in query or "MERGE (c1)-[:RELATED_TO" in query:
-                # Handle relationship creation
-                if "UNWIND" in query and "MERGE (c)-[:RELATED_TO]->(r)" in query:
-                    # Get parameters from parameters first, then kwargs
-                    source_name = parameters.get("name") if parameters else kwargs.get("name")
-                    related_names = parameters.get("related", []) if parameters else kwargs.get("related", [])
-                    if isinstance(related_names, str):
-                        related_names = [related_names]
-                    elif not isinstance(related_names, list):
-                        related_names = list(related_names)
-                    
-                    # Validate parameters
-                    if not source_name or not related_names:
-                        return MockAsyncResult([])
-
-                    # Create relationships and nodes
-                    results = []
-                    for rel_name in related_names:
-                        # Find or create target node
-                        target_node = None
-                        for node in self.store.nodes.values():
-                            if node["properties"]["name"] == rel_name:
-                                target_node = node
-                                break
-                        if not target_node:
-                            node_id = str(uuid.uuid4())
-                            target_node = {
-                                "label": "Concept",
-                                "properties": {
-                                    "name": rel_name,
-                                    "type": "pending",
-                                    "description": "Pending concept",
-                                    "is_consolidation": False
-                                }
-                            }
-                            self.store.nodes[node_id] = target_node
-                        
-                        # Create relationship with domain context
-                        relationship = {
-                            "from": source_name,
-                            "to": rel_name,
-                            "type": "RELATED_TO",
-                            "properties": {
-                                "domain_context": {
-                                    "primary_domain": BaseDomain.PROFESSIONAL.value,
-                                    "knowledge_vertical": KnowledgeVertical.GENERAL.value,
-                                    "confidence": 0.9
-                                },
-                                "validation": {
-                                    "confidence": 0.9,
-                                    "supported_by": [],
-                                    "contradicted_by": [],
-                                    "needs_verification": []
-                                }
-                            }
-                        }
-                        self.store.relationships.append(relationship)
-                        
-                        # Add target node to results
-                        results.append({
-                            "c": target_node["properties"],
-                            "related": []
-                        })
-                    
-                    return MockAsyncResult(results)
-                    
-                else:
-                    # Create direct relationship
-                    # Find or create source node
-                    source_node = None
-                    target_node = None
-                    for node in self.store.nodes.values():
-                        if node["properties"]["name"] == params.get("name"):
-                            source_node = node
-                        if node["properties"]["name"] == params.get("related_name"):
-                            target_node = node
-                    
-                    if not source_node:
-                        node_id = str(uuid.uuid4())
-                        source_node = {
-                            "label": "Concept",
-                            "properties": {
-                                "name": params.get("name"),
-                                "type": params.get("type", "concept"),
-                                "description": "",
-                                "is_consolidation": False
-                            }
-                        }
-                        self.store.nodes[node_id] = source_node
-                    
-                    if not target_node:
-                        node_id = str(uuid.uuid4())
-                        target_node = {
-                            "label": "Concept",
-                            "properties": {
-                                "name": params.get("related_name"),
-                                "type": params.get("type", "concept"),
-                                "description": "",
-                                "is_consolidation": False
-                            }
-                        }
-                        self.store.nodes[node_id] = target_node
-                    
-                    # Create relationship with type and attributes
-                    rel_type = params.get("rel_type", "RELATED_TO")
-                    attributes = params.get("attributes", {})
-                    
-                    # Convert complex attributes to string representation
-                    processed_attributes = {}
-                    for k, v in attributes.items():
-                        if isinstance(v, (dict, list)):
-                            processed_attributes[k] = str(v)
-                        else:
-                            processed_attributes[k] = v
-                    
-                    # Store the relationship
-                    self.store.relationships.append({
-                        "from": params.get("name"),
-                        "to": params.get("related_name"),
-                        "type": rel_type,
-                        "properties": processed_attributes
-                    })
-                    
-                    return MockAsyncResult([{"c": source_node["properties"], "r": target_node["properties"]}])
-            elif "MATCH ()-[r:RELATED_TO]->() RETURN count" in query:
-                # Handle relationship count query
-                return MockAsyncResult([{"count": len(self.store.relationships)}])
-            return MockAsyncResult([])
-
-    class MockNeo4jStore(Neo4jBaseStore):
-        def __init__(self):
-            super().__init__("bolt://127.0.0.1:7687", user="neo4j", password="password")
-            self.nodes = {}
-            self.relationships = []  # List to store relationships
-            self.beliefs = []
-            self.driver = self
-            logger.info("Initialized MockNeo4jStore with empty nodes dict")
-            
-        def session(self, database=None, default_access_mode=None):
-            """Create a mock session."""
-            return MockSession(self)
-            
-        async def close(self):
-            """Close the mock store."""
-            pass
-            
-        async def create_concept_node(self, label: str, properties: Dict):
-            node_id = str(uuid.uuid4())
-            self.nodes[node_id] = {
-                "label": label,
-                "properties": properties
-            }
-            return node_id
-            
-        async def create_relationship(self, start_node: str, end_node: str, type: str, properties: Dict = None):
-            relationship = {
-                "from": start_node,
-                "to": end_node,
-                "type": type,
-                "properties": properties or {}
-            }
-            self.relationships.append(relationship)
-            
-        async def create_belief(self, subject: str, predicate: str, object: str, confidence: float = 1.0):
-            self.beliefs.append({
-                "subject": subject,
-                "predicate": predicate,
-                "object": object,
-                "confidence": confidence
+            return {"n": node, "relationships": []}
+        except Exception as e:
+            logger.error(f"Failed to store concept {name}: {str(e)}")
+            raise
+        
+    async def store_relationship(self, source: str, target: str, rel_type: str = "RELATED_TO", bidirectional: bool = True) -> None:
+        """Store a relationship between concepts."""
+        try:
+            # Create validation data
+            validation_dict = finalize_validation({
+                "domain": "professional",
+                "approved": True,
+                "cross_domain": {
+                    "approved": True,
+                    "requested": True,
+                    "source_domain": "professional",
+                    "target_domain": "professional",
+                    "justification": "Test justification"
+                }
             })
             
-        async def run_query(self, query: str) -> List[Dict]:
-            # Mock query execution - return all nodes for now
-            return [{"n": node} for node in self.nodes.values()]
+            # Create relationship with all required fields
+            rel = {
+                # Core fields
+                "type": rel_type,
+                
+                # Required source/target fields (both naming conventions)
+                "source": source,  # For episodic layer
+                "target": target,
+                "from": source,    # For semantic layer
+                "to": target,
+                
+                # Required domain fields
+                "domain": validation_dict["domain"],
+                "domains": ["professional"],  # Required field
+                
+                # Validation data
+                "validation": validation_dict,  # Complete JSON
+                "validation_json": json.dumps(validation_dict),  # Backup JSON string
+                
+                # Individual validation fields at top level
+                "access_domain": validation_dict["access_domain"],
+                "confidence": validation_dict["confidence"],
+                "source": validation_dict["source"],
+                "approved": validation_dict["approved"],
+                "cross_domain": validation_dict["cross_domain"],
+                
+                # Additional required fields
+                "bidirectional": bidirectional,
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "is_consolidation": True  # Mark as consolidated relationship
+            }
+            
+            # Ensure validation is a dictionary
+            if isinstance(rel["validation"], ValidationSchema):
+                rel["validation"] = rel["validation"].dict()
+            elif isinstance(rel["validation"], str):
+                rel["validation"] = json.loads(rel["validation"])
+            logger.info(f"Creating relationship: {json.dumps(rel, indent=2)}")
+            logger.info(f"Relationship validation data: {json.dumps(rel['validation'], indent=2)}")
+            self.relationships.append(rel)
+        
+            # Create reverse relationship if bidirectional
+            if bidirectional:
+                reverse_rel = {
+                    "source": target,  # Keep source/target for episodic layer
+                    "target": source,
+                    "from": target,    # Add from/to for semantic layer
+                    "to": source,
+                    "type": rel_type,
+                    "domains": ["professional"],  # Required field
+                    "validation": validation_dict,  # Complete JSON
+                    "validation_json": json.dumps(validation_dict),  # Backup JSON string
+                    "domain": validation_dict["domain"],  # Individual fields
+                    "access_domain": validation_dict["access_domain"],
+                    "confidence": validation_dict["confidence"],
+                    "approved": validation_dict["approved"]
+                }
+                logger.info(f"Creating reverse relationship: {json.dumps(reverse_rel, indent=2)}")
+                self.relationships.append(reverse_rel)
+                
+            logger.info(f"Successfully created relationship from {source} to {target}")
+        except Exception as e:
+            logger.error(f"Failed to create relationship from {source} to {target}: {str(e)}")
+            raise
+            
+    async def _query(self, query: str, params: dict = None) -> List[Dict]:
+        """Execute query and return results."""
+        logger.info(f"Query: {query}, params: {params}")
+        params = params or {}
+        
+        try:
+            # Handle concept search by name
+            if "WHERE c.name = $query" in query or "WHERE n.name = $query" in query:
+                name = params.get("query")
+                if name in self.nodes:
+                    node = self.nodes[name]
+                    relationships = self._get_relationships_for_node(name)
+                    logger.info(f"Found concept by name: {name}")
+                    key = "c" if "WHERE c.name" in query else "n"
+                    # Match Neo4j record structure expected by SemanticLayer
+                    processed_node = {
+                        "name": node["name"],
+                        "type": node["type"],
+                        "description": node.get("description", ""),
+                        "validation": node["validation"],
+                        "validation_json": node.get("validation_json", json.dumps(node["validation"])),
+                        "is_consolidation": node.get("is_consolidation", False),
+                        "relationships": relationships
+                    }
+                    return [processed_node]
+                return []
+            
+            # Handle concept search by pattern
+            elif "MATCH (n:Concept)" in query or "MATCH (c:Concept)" in query:
+                results = []
+                pattern = params.get("pattern", ".*")
+                logger.info(f"Searching for concepts matching pattern: {pattern}")
+                
+                for name, node in self.nodes.items():
+                    if re.match(pattern, node.get("name", "")):  # Match against node's name property
+                        logger.info(f"Found matching node: {name}")
+                        relationships = self._get_relationships_for_node(name)
+                        key = "c" if "MATCH (c:Concept)" in query else "n"
+                        
+                        # Ensure validation is a dictionary
+                        if isinstance(node.get("validation"), ValidationSchema):
+                            node["validation"] = node["validation"].dict()
+                        elif isinstance(node.get("validation"), str):
+                            node["validation"] = json.loads(node["validation"])
+                        
+                        # Ensure validation in relationships
+                        for rel in relationships:
+                            if isinstance(rel.get("validation"), ValidationSchema):
+                                rel["validation"] = rel["validation"].dict()
+                            elif isinstance(rel.get("validation"), str):
+                                rel["validation"] = json.loads(rel["validation"])
+                        
+                        # Match Neo4j record structure expected by SemanticLayer
+                        processed_node = {
+                            "name": node["name"],
+                            "type": node["type"],
+                            "description": node.get("description", ""),
+                            "validation": node["validation"],
+                            "validation_json": node.get("validation_json", json.dumps(node["validation"])),
+                            "is_consolidation": node.get("is_consolidation", False),
+                            "relationships": relationships
+                        }
+                        logger.info(f"Created result record: {json.dumps(processed_node, indent=2)}")
+                        results.append(processed_node)
+                
+                logger.info(f"Returning {len(results)} results")
+                return results
+            
+            # Handle relationship creation
+            elif "MERGE (c1:Concept" in query or "CREATE (c1:Concept" in query:
+                # Just return empty result for relationship creation
+                return []
+            
+            # Handle get concepts by type
+            elif "WHERE n.type = $type" in query or "WHERE c.type = $type" in query:
+                results = []
+                type_value = params.get("type")
+                for node in self.nodes.values():
+                    if node.get("type") == type_value:
+                        relationships = self._get_relationships_for_node(node["name"])
+                        key = "c" if "WHERE c.type" in query else "n"
+                        # Match Neo4j record structure expected by SemanticLayer
+                        processed_node = {
+                            "name": node["name"],
+                            "type": node["type"],
+                            "description": node.get("description", ""),
+                            "validation": node["validation"],
+                            "validation_json": node.get("validation_json", json.dumps(node["validation"])),
+                            "is_consolidation": node.get("is_consolidation", False),
+                            "relationships": relationships
+                        }
+                        results.append(processed_node)
+                return results
+            
+            # Default case
+            logger.info("Query did not match any known patterns")
+            return []
+            
+        except Exception as e:
+            logger.error(f"Error executing query: {str(e)}")
+            raise
+            
+    def _get_relationships_for_node(self, node_name: str) -> List[Dict]:
+        """Get relationships for a node."""
+        relationships = []
+        for rel in self.relationships:
+            if rel["source"] == node_name or rel["from"] == node_name:
+                logger.info(f"Found outgoing relationship: {rel['type']} -> {rel['to']}")
+                # Ensure validation is a dictionary
+                validation = rel["validation"]
+                if isinstance(validation, ValidationSchema):
+                    validation = validation.dict()
+                elif isinstance(validation, str):
+                    validation = json.loads(validation)
+                    
+                relationships.append({
+                    "name": rel["to"],
+                    "type": rel["type"],
+                    "domains": rel["domains"],
+                    "validation": validation,
+                    "domain_context": {
+                        "primary_domain": validation["domain"],
+                        "knowledge_vertical": "general"
+                    },
+                    "is_consolidation": True
+                })
+            elif (rel["target"] == node_name or rel["to"] == node_name) and rel.get("bidirectional", True):
+                logger.info(f"Found incoming relationship: {rel['from']} -> {rel['type']}")
+                # Ensure validation is a dictionary
+                validation = rel["validation"]
+                if isinstance(validation, ValidationSchema):
+                    validation = validation.dict()
+                elif isinstance(validation, str):
+                    validation = json.loads(validation)
+                    
+                relationships.append({
+                    "name": rel["from"],
+                    "type": rel["type"],
+                    "domains": rel["domains"],
+                    "validation": validation,
+                    "domain_context": {
+                        "primary_domain": validation["domain"],
+                        "knowledge_vertical": "general"
+                    },
+                    "is_consolidation": True
+                })
+        return relationships
 
-@pytest.fixture
-def memory_system(mock_vector_store, mock_neo4j_store):
+@pytest.fixture(scope="function")
+def mock_vector_store():
+    """Mock vector store for testing."""
+    return MockVectorStore()
+
+@pytest.fixture(scope="function")
+def mock_neo4j_store():
+    """Mock Neo4j store fixture."""
+    return MockNeo4jStore()
+
+@pytest.fixture(scope="function", autouse=True)
+async def memory_system(mock_vector_store, mock_neo4j_store, event_loop):
     """Create memory system with mock stores."""
-    system = TwoLayerMemorySystem(neo4j_uri="bolt://127.0.0.1:7687", vector_store=mock_vector_store)
+    # Use mock store's URI property
+    system = TwoLayerMemorySystem(neo4j_uri=mock_neo4j_store.uri, vector_store=mock_vector_store)
     system.semantic = SemanticLayer(mock_neo4j_store)
     system.consolidation_manager = ConsolidationManager(system.episodic, system.semantic)
     
@@ -905,125 +568,75 @@ def memory_system(mock_vector_store, mock_neo4j_store):
     system.episodic.store = mock_vector_store
     system.semantic.driver = mock_neo4j_store
     
-    # Add logging for semantic layer ID
-    logger.info(f"Created memory system with semantic layer ID: {id(system.semantic)}")
+    # Initialize system
+    await system.initialize()
     
-    # Patch store_concept to add logging
-    original_store_concept = system.semantic.store_concept
-    async def logged_store_concept(*args, **kwargs):
-        logger.info(f"Storing concept with args: {args}, kwargs: {kwargs}")
-        result = await original_store_concept(*args, **kwargs)
-        logger.info(f"Stored concept result: {result}")
-        return result
-    system.semantic.store_concept = logged_store_concept
-
-    # Patch store_knowledge to add logging and implementation
-    async def logged_store_knowledge(knowledge):
-        logger.info(f"Storing knowledge with args: ({knowledge},) kwargs: {{}}")
-        
-        # Store concepts
-        for concept in knowledge.get("concepts", []):
-            logger.info(f"Storing concept: {concept}")
-            # Extract validation fields with full context
-            validation = concept.get("validation", {})
-            validation_fields = {
-                "confidence": validation.get("confidence", 0.0),
-                "source": validation.get("source", "system"),
-                "access_domain": validation.get("access_domain", "general"),
-                "domain": validation.get("domain", "general"),
-                "timestamp": validation.get("timestamp", datetime.now(timezone.utc).isoformat()),
-                "supported_by": validation.get("supported_by", []),
-                "contradicted_by": validation.get("contradicted_by", []),
-                "needs_verification": validation.get("needs_verification", [])
-            }
-            
-            # Add domain context if present
-            if "domain_context" in concept:
-                validation_fields["domain_context"] = concept["domain_context"]
-            
-            try:
-                logger.info(f"Storing concept with validation: {validation_fields}")
-                await system.semantic.store_concept(
-                    name=concept["name"],
-                    type=concept["type"],
-                    description=concept["description"],
-                    validation=validation_fields,
-                    is_consolidation=True
-                )
-                logger.info(f"Successfully stored concept: {concept['name']}")
-            except Exception as e:
-                logger.error(f"Failed to store concept {concept['name']}: {str(e)}")
-                raise
-            
-        # Store relationships
-        for rel in knowledge.get("relationships", []):
-            logger.info(f"Storing relationship: {rel}")
-            await system.semantic.store_relationship(
-                source=rel["source"],
-                target=rel["target"],
-                rel_type=rel.get("type", "RELATED_TO"),
-                attributes=rel.get("attributes", {})
-            )
-        
-        logger.info("Stored knowledge result: None")
-        return None
-        
-    system.semantic.store_knowledge = logged_store_knowledge
+    logger.info(f"Created memory system with mock stores. Neo4j URI: {mock_neo4j_store.uri}")
+    yield system
     
-    return system
+    # Cleanup
+    await system.cleanup()
 
-@pytest.fixture
-def world(memory_system):
+@pytest.fixture(scope="function", autouse=True)
+async def world(memory_system, event_loop):
     """Create world environment for testing."""
-    return NIAWorld(memory_system=memory_system)
+    world = NIAWorld(memory_system=memory_system)
+    yield world
 
-@pytest.fixture
-def nova(memory_system, world):
+@pytest.fixture(scope="function", autouse=True)
+async def nova(memory_system, world, event_loop):
     """Create Nova orchestrator for testing."""
     nova = Nova(memory_system=memory_system, world=world)
     
     # Set up mock memory behaviors
     def create_memory_mock(content, memory_type="episodic", context=None, metadata=None, concepts=None, relationships=None):
-        timestamp = format_timestamp()
-        memory_dict = {
-            "content": content,
-            "type": memory_type,
-            "timestamp": timestamp,
-            "context": context or {},
-            "metadata": metadata or {},
-            "concepts": concepts or [],
-            "relationships": relationships or [],
-            "consolidated": False,
-            "archived": False
-        }
-        
-        memory = Mock(spec=EpisodicMemory)
-        memory.content = content
-        memory.type = memory_type
-        memory.timestamp = timestamp
-        memory.context = memory_dict["context"]
-        memory.metadata = memory_dict["metadata"]
-        memory.concepts = memory_dict["concepts"]
-        memory.relationships = memory_dict["relationships"]
-        memory.consolidated = False
-        memory.archived = False
-        memory.id = f"memory_{timestamp}"
-        
-        # Set up dictionary-like behavior
-        memory.get = Mock(side_effect=memory_dict.get)
-        memory.keys = Mock(return_value=list(memory_dict.keys()))
-        memory.__getitem__ = lambda s, key: memory_dict[key]
-        memory.__iter__ = lambda s: iter(memory_dict.items())
-        memory.__contains__ = lambda s, key: key in memory_dict
-        memory.__len__ = lambda s: len(memory_dict)
-        memory.items = lambda: memory_dict.items()
-        
-        # Set up async behavior
-        memory.__aiter__ = AsyncMock(return_value=memory_dict.items())
-        memory.__await__ = AsyncMock(return_value=memory_dict)
-        
+        """Create a mock memory using MockMemory class."""
+        # Create validation with consistent structure
+        validation_dict = finalize_validation({
+            "domain": "professional",
+            "access_domain": "professional",
+            "confidence": 0.9,
+            "source": "professional",
+            "supported_by": [],
+            "contradicted_by": [],
+            "needs_verification": [],
+            "cross_domain": {
+                "approved": True,
+                "requested": True,
+                "source_domain": "professional",
+                "target_domain": "professional",
+                "justification": "Test justification"
+            },
+            "approved": True
+        })
+
+        # Create validation schema from dict
+        validation = ValidationSchema(**validation_dict)
+
+        # Create domain context
+        domain_context = DomainContext(
+            primary_domain="professional",
+            knowledge_vertical="general",
+            validation=validation
+        )
+
+        # Create memory instance
+        memory = MockMemory(
+            content=content,
+            type=memory_type,
+            timestamp=datetime.now(timezone.utc),
+            context=context or {},
+            metadata=metadata or {},
+            concepts=concepts or [],
+            relationships=relationships or [],
+            consolidated=False,
+            domain_context=domain_context,
+            validation=validation,
+            validation_data=validation_dict  # Use finalized validation dict
+        )
+
+        memory.id = f"memory_{datetime.now(timezone.utc).isoformat()}"
         return memory
     
     nova.create_memory_mock = create_memory_mock
-    
     return nova

@@ -2,20 +2,43 @@
 
 import pytest
 from datetime import datetime
-from nia.memory.types.memory_types import Memory, MemoryType, Domain
+from nia.memory.types.memory_types import (
+    Memory, MemoryType, Domain, MockMemory,
+    ValidationSchema, CrossDomainSchema, DomainContext,
+    BaseDomain, KnowledgeVertical
+)
 
 @pytest.mark.asyncio
 async def test_profile_adaptations(memory_system):
     """Test storing and retrieving profile adaptations."""
-    # Store memory with profile adaptations
-    memory = Memory(
+    # Create validation schema
+    validation = ValidationSchema(
+        domain="professional",
+        access_domain="professional",
+        confidence=0.9,
+        source="professional",
+        cross_domain=CrossDomainSchema(
+            approved=True,
+            requested=True,
+            source_domain="professional",
+            target_domain="professional",
+            justification="Test justification"
+        )
+    )
+
+    # Create domain context
+    domain_context = DomainContext(
+        primary_domain=BaseDomain.PROFESSIONAL,
+        knowledge_vertical=KnowledgeVertical.GENERAL,
+        validation=validation
+    )
+
+    # Create test memory
+    memory = MockMemory(
         content="Test with profile adaptations",
         type=MemoryType.EPISODIC,
-        timestamp=datetime.now().isoformat(),
         importance=0.8,
         context={
-            "domain": Domain.GENERAL,
-            "access_domain": "professional",
             "profile": {
                 "user_profile_id": "test_user",
                 "adaptations": {
@@ -24,7 +47,9 @@ async def test_profile_adaptations(memory_system):
                     "learning_style": "visual"
                 }
             }
-        }
+        },
+        validation=validation,
+        domain_context=domain_context
     )
     memory_id = await memory_system.store_experience(memory)
     assert memory_id is not None
@@ -38,14 +63,34 @@ async def test_consolidate_profile_patterns(memory_system):
     """Test consolidation of profile-based patterns."""
     # Store multiple memories with similar adaptations
     for i in range(3):
-        memory = Memory(
+        # Create validation schema
+        validation = ValidationSchema(
+            domain="professional",
+            access_domain="professional",
+            confidence=0.9,
+            source="professional",
+            cross_domain=CrossDomainSchema(
+                approved=True,
+                requested=True,
+                source_domain="professional",
+                target_domain="professional",
+                justification="Test justification"
+            )
+        )
+
+        # Create domain context
+        domain_context = DomainContext(
+            primary_domain=BaseDomain.PROFESSIONAL,
+            knowledge_vertical=KnowledgeVertical.GENERAL,
+            validation=validation
+        )
+
+        # Create test memory
+        memory = MockMemory(
             content=f"Test memory {i}",
             type=MemoryType.EPISODIC,
-            timestamp=datetime.now().isoformat(),
             importance=0.8,
             context={
-                "domain": Domain.GENERAL,
-                "access_domain": "professional",
                 "profile": {
                     "user_profile_id": "test_user",
                     "adaptations": {
@@ -53,7 +98,9 @@ async def test_consolidate_profile_patterns(memory_system):
                         "detail_level": "high"
                     }
                 }
-            }
+            },
+            validation=validation,
+            domain_context=domain_context
         )
         await memory_system.store_experience(memory)
 
@@ -76,14 +123,34 @@ async def test_domain_specific_confidence(memory_system):
     # Store memories with successful adaptations in different domains
     domains = [Domain.RETAIL, Domain.PSYCHOLOGY]
     for domain in domains:
-        memory = Memory(
+        # Create validation schema
+        validation = ValidationSchema(
+            domain="professional",
+            access_domain="professional",
+            confidence=0.9,
+            source="professional",
+            cross_domain=CrossDomainSchema(
+                approved=True,
+                requested=True,
+                source_domain="professional",
+                target_domain="professional",
+                justification="Test justification"
+            )
+        )
+
+        # Create domain context
+        domain_context = DomainContext(
+            primary_domain=BaseDomain.PROFESSIONAL,
+            knowledge_vertical=KnowledgeVertical.GENERAL,
+            validation=validation
+        )
+
+        # Create test memory
+        memory = MockMemory(
             content=f"Test in {domain}",
             type=MemoryType.EPISODIC,
-            timestamp=datetime.now().isoformat(),
             importance=0.9,
             context={
-                "domain": domain,
-                "access_domain": "professional",
                 "profile": {
                     "user_profile_id": "test_user",
                     "adaptations": {
@@ -91,7 +158,9 @@ async def test_domain_specific_confidence(memory_system):
                         "success_rate": 0.9
                     }
                 }
-            }
+            },
+            validation=validation,
+            domain_context=domain_context
         )
         await memory_system.store_experience(memory)
 
@@ -121,21 +190,44 @@ async def test_track_user_preferences(memory_system):
     ]
 
     for pref in preferences:
-        memory = Memory(
+        # Create validation schema
+        validation = ValidationSchema(
+            domain="professional",
+            access_domain="professional",
+            confidence=0.9,
+            source="professional",
+            cross_domain=CrossDomainSchema(
+                approved=True,
+                requested=True,
+                source_domain="professional",
+                target_domain="professional",
+                justification="Test justification"
+            )
+        )
+
+        # Create domain context
+        domain_context = DomainContext(
+            primary_domain=BaseDomain.PROFESSIONAL,
+            knowledge_vertical=KnowledgeVertical.GENERAL,
+            validation=validation
+        )
+
+        # Create test memory
+        memory = MockMemory(
             content="Test preference tracking",
             type=MemoryType.EPISODIC,
-            timestamp=pref["timestamp"],
             importance=0.8,
             context={
-                "domain": Domain.GENERAL,
-                "access_domain": "professional",
                 "profile": {
                     "user_profile_id": "test_user",
                     "preferences": {
                         "detail_level": pref["detail_level"]
                     }
                 }
-            }
+            },
+            validation=validation,
+            domain_context=domain_context,
+            timestamp=pref["timestamp"]
         )
         await memory_system.store_experience(memory)
 
@@ -165,22 +257,34 @@ async def test_track_user_preferences(memory_system):
 @pytest.mark.asyncio
 async def test_cross_domain_profile_adaptations(memory_system):
     """Test profile adaptations across domains."""
-    # Store memory with cross-domain profile adaptations
-    memory = Memory(
+    # Create validation schema
+    validation = ValidationSchema(
+        domain="professional",
+        access_domain="professional",
+        confidence=0.9,
+        source="professional",
+        cross_domain=CrossDomainSchema(
+            approved=True,
+            requested=True,
+            source_domain="professional",
+            target_domain="personal",
+            justification="Profile adaptation testing"
+        )
+    )
+
+    # Create domain context
+    domain_context = DomainContext(
+        primary_domain=BaseDomain.PROFESSIONAL,
+        knowledge_vertical=KnowledgeVertical.GENERAL,
+        validation=validation
+    )
+
+    # Create test memory
+    memory = MockMemory(
         content="Cross-domain adaptation test",
         type=MemoryType.EPISODIC,
-        timestamp=datetime.now().isoformat(),
         importance=0.9,
         context={
-            "domain": Domain.GENERAL,
-            "access_domain": "professional",
-            "cross_domain": {
-                "requested": True,
-                "approved": True,
-                "justification": "Profile adaptation testing",
-                "source_domain": "professional",
-                "target_domain": "personal"
-            },
             "profile": {
                 "user_profile_id": "test_user",
                 "adaptations": {
@@ -189,7 +293,9 @@ async def test_cross_domain_profile_adaptations(memory_system):
                     "cross_domain_confidence": 0.85
                 }
             }
-        }
+        },
+        validation=validation,
+        domain_context=domain_context
     )
     memory_id = await memory_system.store_experience(memory)
 

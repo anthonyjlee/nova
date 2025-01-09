@@ -2,7 +2,7 @@
 
 from enum import Enum
 from typing import Dict, Optional, Any, List, Union, TypeVar, Protocol
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
 from datetime import datetime, timezone
 
 from typing import runtime_checkable
@@ -33,6 +33,66 @@ class KnowledgeVertical(str, Enum):
 
     def __str__(self):
         return self.value
+
+class CrossDomainSchema(BaseModel):
+    """Schema for cross-domain validation."""
+    approved: bool = Field(default=False)
+    requested: bool = Field(default=False)
+    source_domain: Optional[str] = Field(default="general")
+    target_domain: Optional[str] = Field(default="general")
+    justification: Optional[str] = Field(default="")
+    approval_timestamp: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc))
+    approval_source: Optional[str] = Field(default="system")
+
+    def dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        d = super().dict()
+        if self.source_domain:
+            d["source_domain"] = str(self.source_domain)
+        if self.target_domain:
+            d["target_domain"] = str(self.target_domain)
+        if self.approval_timestamp:
+            d["approval_timestamp"] = self.approval_timestamp.isoformat()
+        return d
+
+    @validator("source_domain", "target_domain", pre=True)
+    def validate_domain(cls, v):
+        """Validate domain values."""
+        if v is None:
+            return "general"
+        try:
+            return str(BaseDomain(str(v).lower()))
+        except ValueError:
+            return str(v)
+
+class ValidationSchema(BaseModel):
+    """Schema for validation data."""
+    cross_domain: CrossDomainSchema = Field(default_factory=CrossDomainSchema)
+    domain: str = Field(default="professional")
+    access_domain: str = Field(default="professional")
+    confidence: float = Field(default=0.9, ge=0.0, le=1.0)
+    source: str = Field(default="system")
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    supported_by: List[str] = Field(default_factory=list)
+    contradicted_by: List[str] = Field(default_factory=list)
+    needs_verification: List[str] = Field(default_factory=list)
+
+    def dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        d = super().dict()
+        if self.cross_domain:
+            d["cross_domain"] = self.cross_domain.dict()
+        return d
+
+    @validator("domain", "access_domain", pre=True)
+    def validate_domain_fields(cls, v):
+        """Validate domain and access_domain values."""
+        if v is None:
+            return "professional"
+        try:
+            return str(BaseDomain(str(v).lower()))
+        except ValueError:
+            return str(v)
 
 class DomainTransfer(BaseModel):
     """Model for cross-domain transfer requests."""
@@ -81,13 +141,7 @@ class DomainContext(BaseModel):
         le=1.0,
         description="Confidence score for domain assignment"
     )
-    validation: Optional[Dict[str, Any]] = Field(
-        default_factory=lambda: {
-            "last_validated": datetime.now(timezone.utc).isoformat(),
-            "validation_source": "system",
-            "validation_rules": []
-        }
-    )
+    validation: ValidationSchema = Field(default_factory=ValidationSchema)
     access_control: Dict[str, Any] = Field(
         default_factory=lambda: {
             "read": ["system"],
@@ -105,7 +159,20 @@ class DomainContext(BaseModel):
             d["knowledge_vertical"] = str(self.knowledge_vertical)
         if self.cross_domain:
             d["cross_domain"] = self.cross_domain.dict()
+        if self.validation:
+            d["validation"] = self.validation.dict()
         return d
+
+    @validator("validation", pre=True)
+    def validate_validation_data(cls, v):
+        """Ensure validation data is properly structured."""
+        if isinstance(v, dict):
+            # Convert dict to ValidationSchema
+            return ValidationSchema(**v)
+        elif isinstance(v, ValidationSchema):
+            return v
+        else:
+            return ValidationSchema()
 
     def validate_transfer(
         self,
@@ -154,21 +221,27 @@ class Concept(BaseModel):
     description: str
     attributes: Dict[str, Any] = {}
     domain_context: DomainContext
-    validation: Optional[Dict[str, Any]] = Field(
-        default_factory=lambda: {
-            "confidence": 1.0,
-            "supported_by": [],
-            "contradicted_by": [],
-            "needs_verification": []
-        }
-    )
+    validation: ValidationSchema = Field(default_factory=ValidationSchema)
 
     def dict(self) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
         d = super().dict()
         if self.domain_context:
             d["domain_context"] = self.domain_context.dict()
+        if self.validation:
+            d["validation"] = self.validation.dict()
         return d
+
+    @validator("validation", pre=True)
+    def validate_validation_data(cls, v):
+        """Ensure validation data is properly structured."""
+        if isinstance(v, dict):
+            # Convert dict to ValidationSchema
+            return ValidationSchema(**v)
+        elif isinstance(v, ValidationSchema):
+            return v
+        else:
+            return ValidationSchema()
 
 class Relationship(BaseModel):
     """A relationship between concepts."""
@@ -179,13 +252,27 @@ class Relationship(BaseModel):
     domain_context: DomainContext
     confidence: float = 1.0
     bidirectional: bool = False
+    validation: ValidationSchema = Field(default_factory=ValidationSchema)
 
     def dict(self) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
         d = super().dict()
         if self.domain_context:
             d["domain_context"] = self.domain_context.dict()
+        if self.validation:
+            d["validation"] = self.validation.dict()
         return d
+
+    @validator("validation", pre=True)
+    def validate_validation_data(cls, v):
+        """Ensure validation data is properly structured."""
+        if isinstance(v, dict):
+            # Convert dict to ValidationSchema
+            return ValidationSchema(**v)
+        elif isinstance(v, ValidationSchema):
+            return v
+        else:
+            return ValidationSchema()
 
 class Memory(BaseModel):
     """Base memory model."""
@@ -234,16 +321,58 @@ class EpisodicMemory(Memory):
 class SemanticMemory(Memory):
     """Semantic memory model."""
     type: MemoryType = MemoryType.SEMANTIC
-    concepts: List[str] = []
-    relationships: List[Dict[str, str]] = []
+    concepts: List[Concept] = Field(default_factory=list)
+    relationships: List[Relationship] = Field(default_factory=list)
     confidence: float = 1.0
+    validation: ValidationSchema = Field(default_factory=ValidationSchema)
+
+    def dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        d = super().dict()
+        if self.concepts:
+            d["concepts"] = [c.dict() for c in self.concepts]
+        if self.relationships:
+            d["relationships"] = [r.dict() for r in self.relationships]
+        if self.validation:
+            d["validation"] = self.validation.dict()
+        return d
+
+    @validator("validation", pre=True)
+    def validate_validation_data(cls, v):
+        """Ensure validation data is properly structured."""
+        if isinstance(v, dict):
+            # Convert dict to ValidationSchema
+            return ValidationSchema(**v)
+        elif isinstance(v, ValidationSchema):
+            return v
+        else:
+            return ValidationSchema()
 
 class ProceduralMemory(Memory):
     """Procedural memory model."""
     type: MemoryType = MemoryType.PROCEDURAL
-    steps: List[str] = []
-    prerequisites: List[str] = []
-    success_criteria: List[str] = []
+    steps: List[str] = Field(default_factory=list)
+    prerequisites: List[str] = Field(default_factory=list)
+    success_criteria: List[str] = Field(default_factory=list)
+    validation: ValidationSchema = Field(default_factory=ValidationSchema)
+
+    def dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        d = super().dict()
+        if self.validation:
+            d["validation"] = self.validation.dict()
+        return d
+
+    @validator("validation", pre=True)
+    def validate_validation_data(cls, v):
+        """Ensure validation data is properly structured."""
+        if isinstance(v, dict):
+            # Convert dict to ValidationSchema
+            return ValidationSchema(**v)
+        elif isinstance(v, ValidationSchema):
+            return v
+        else:
+            return ValidationSchema()
 
 class AgentResponse(BaseModel):
     """Response from an agent."""
@@ -325,13 +454,18 @@ class ConsolidationRule(BaseModel):
     actions: List[str] = []
     priority: int = 0
     domain_context: DomainContext
-    cross_domain_rules: Optional[Dict[str, Any]] = Field(
-        default_factory=lambda: {
-            "allowed_verticals": [],
-            "requires_approval": True,
-            "validation_rules": {}
-        }
-    )
+    cross_domain_rules: ValidationSchema = Field(default_factory=ValidationSchema)
+
+    @validator("cross_domain_rules", pre=True)
+    def validate_cross_domain_rules(cls, v):
+        """Ensure cross domain rules are properly structured."""
+        if isinstance(v, dict):
+            # Convert dict to ValidationSchema
+            return ValidationSchema(**v)
+        elif isinstance(v, ValidationSchema):
+            return v
+        else:
+            return ValidationSchema()
 
     def dict(self) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
@@ -352,3 +486,116 @@ class MemoryBatch(BaseModel):
         if self.memories:
             d["memories"] = [m.dict() for m in self.memories]
         return d
+
+class MockMemory(EpisodicMemory):
+    """Mock memory for testing."""
+    content: str
+    importance: float = 0.8
+    knowledge: Dict[str, Any] = Field(default_factory=dict)
+    type: MemoryType = MemoryType.EPISODIC
+    context: Dict[str, Any] = Field(default_factory=lambda: {
+        "domain": "professional",
+        "source": "professional",
+        "access_domain": "professional",
+        "cross_domain": {
+            "approved": True,
+            "requested": True,
+            "source_domain": "professional",
+            "target_domain": "general",
+            "justification": "Test justification"
+        }
+    })
+    validation: ValidationSchema = Field(default_factory=ValidationSchema)
+    validation_data: Dict[str, Any] = Field(default_factory=lambda: {
+        "domain": "professional",
+        "access_domain": "professional",
+        "confidence": 0.9,
+        "source": "professional",
+        "supported_by": [],
+        "contradicted_by": [],
+        "needs_verification": [],
+        "cross_domain": {
+            "approved": True,
+            "requested": True,
+            "source_domain": "professional",
+            "target_domain": "general",
+            "justification": "Test justification"
+        }
+    })
+
+    def dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        d = super().dict()
+        if self.validation:
+            d["validation"] = self.validation.dict()
+        return d
+
+    @validator("validation", pre=True)
+    def validate_validation_data(cls, v):
+        """Ensure validation data is properly structured."""
+        if isinstance(v, dict):
+            # Convert dict to ValidationSchema
+            return ValidationSchema(**v)
+        elif isinstance(v, ValidationSchema):
+            return v
+        else:
+            return ValidationSchema()
+
+    @validator("knowledge")
+    def validate_knowledge(cls, v, values):
+        """Validate knowledge field and map to concepts/relationships."""
+        from nia.core.types.concept_utils.validation import validate_concept_structure
+        
+        if not isinstance(v, dict):
+            raise ValueError("Knowledge must be a dictionary")
+            
+        # Handle concepts
+        if "concepts" in v:
+            if not isinstance(v["concepts"], list):
+                raise ValueError("Concepts must be a list")
+                
+            validated_concepts = []
+            for concept in v["concepts"]:
+                try:
+                    # Create domain context from validation data
+                    domain_context = DomainContext(
+                        primary_domain=concept.get("validation", {}).get("domain", "professional"),
+                        knowledge_vertical=concept.get("validation", {}).get("knowledge_vertical", "general"),
+                        validation=ValidationSchema(**concept.get("validation", {}))
+                    )
+                    
+                    # Validate concept structure
+                    validated_concept = validate_concept_structure(concept)
+                    validated_concept["domain_context"] = domain_context.dict()
+                    validated_concepts.append(validated_concept)
+                except ValueError as e:
+                    raise ValueError(str(e))
+                    
+            v["concepts"] = validated_concepts
+            values["concepts"] = [Concept(**c) for c in validated_concepts]
+            
+        # Handle relationships
+        if "relationships" in v:
+            if not isinstance(v["relationships"], list):
+                raise ValueError("Relationships must be a list")
+                
+            validated_relationships = []
+            for rel in v["relationships"]:
+                if not isinstance(rel, dict):
+                    raise ValueError("Each relationship must be a dictionary")
+                    
+                # Create domain context from validation data
+                domain_context = DomainContext(
+                    primary_domain=rel.get("validation", {}).get("domain", "professional"),
+                    knowledge_vertical=rel.get("validation", {}).get("knowledge_vertical", "general"),
+                    validation=ValidationSchema(**rel.get("validation", {}))
+                )
+                
+                # Add domain context to relationship
+                rel["domain_context"] = domain_context.dict()
+                validated_relationships.append(rel)
+                
+            v["relationships"] = validated_relationships
+            values["relationships"] = [Relationship(**r) for r in validated_relationships]
+            
+        return v

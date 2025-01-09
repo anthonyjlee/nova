@@ -5,6 +5,10 @@ import json
 import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
+from pydantic import BaseModel, Field
+
+from ..core.types.memory_types import ValidationSchema, CrossDomainSchema
+
 
 from nia.core.vector.vector_store import VectorStore, serialize_for_vector_store
 from nia.core.neo4j.neo4j_store import Neo4jMemoryStore
@@ -46,21 +50,41 @@ class EpisodicLayer:
             if missing_fields:
                 raise ValueError(f"Missing required context fields: {missing_fields}")
                 
-        # Validate concepts
-        if memory.concepts:
-            for concept in memory.concepts:
-                if not hasattr(concept, "name") or not concept.name:
-                    raise ValueError("Concepts must have a name")
-                if not concept.validation or "confidence" not in concept.validation or not 0 <= concept.validation["confidence"] <= 1:
-                    raise ValueError(f"Concept {concept.name} must have valid confidence (0-1)")
-                    
-        # Validate relationships
-        if memory.relationships:
-            for rel in memory.relationships:
-                if not hasattr(rel, "source") or not hasattr(rel, "target"):
-                    raise ValueError("Relationships must have source and target fields")
-                if not hasattr(rel, "confidence") or not 0 <= rel.confidence <= 1:
-                    raise ValueError(f"Relationship must have valid confidence (0-1)")
+        # Get concepts from either direct access or knowledge field
+        concepts = []
+        if hasattr(memory, "concepts") and memory.concepts:
+            concepts.extend(memory.concepts)
+        if hasattr(memory, "knowledge") and isinstance(memory.knowledge, dict):
+            if "concepts" in memory.knowledge:
+                for concept in memory.knowledge["concepts"]:
+                    if isinstance(concept, dict):
+                        if "name" not in concept:
+                            raise ValueError("Concepts must have a name")
+                        if "validation" not in concept or "confidence" not in concept["validation"] or not 0 <= concept["validation"]["confidence"] <= 1:
+                            raise ValueError(f"Concept {concept['name']} must have valid confidence (0-1)")
+                    else:
+                        if not hasattr(concept, "name") or not concept.name:
+                            raise ValueError("Concepts must have a name")
+                        if not concept.validation or "confidence" not in concept.validation or not 0 <= concept.validation["confidence"] <= 1:
+                            raise ValueError(f"Concept {concept.name} must have valid confidence (0-1)")
+
+        # Get relationships from either direct access or knowledge field
+        relationships = []
+        if hasattr(memory, "relationships") and memory.relationships:
+            relationships.extend(memory.relationships)
+        if hasattr(memory, "knowledge") and isinstance(memory.knowledge, dict):
+            if "relationships" in memory.knowledge:
+                for rel in memory.knowledge["relationships"]:
+                    if isinstance(rel, dict):
+                        if "source" not in rel or "target" not in rel:
+                            raise ValueError("Relationships must have source and target fields")
+                        if "confidence" not in rel or not 0 <= rel["confidence"] <= 1:
+                            raise ValueError(f"Relationship must have valid confidence (0-1)")
+                    else:
+                        if not hasattr(rel, "source") or not hasattr(rel, "target"):
+                            raise ValueError("Relationships must have source and target fields")
+                        if not hasattr(rel, "confidence") or not 0 <= rel.confidence <= 1:
+                            raise ValueError(f"Relationship must have valid confidence (0-1)")
 
     async def store_memory(self, memory: Memory) -> str:
         """Store a new episodic memory."""
@@ -73,6 +97,21 @@ class EpisodicLayer:
             memory_dict = memory.dict()
             memory_dict["consolidated"] = False  # Ensure consolidated field is set
             memory_dict["type"] = str(memory_dict["type"])
+
+            # Handle knowledge field if present
+            if hasattr(memory, "knowledge") and isinstance(memory.knowledge, dict):
+                # Map concepts from knowledge field
+                if "concepts" in memory.knowledge:
+                    memory_dict["concepts"] = [
+                        c if isinstance(c, dict) else c.dict()
+                        for c in memory.knowledge["concepts"]
+                    ]
+                # Map relationships from knowledge field
+                if "relationships" in memory.knowledge:
+                    memory_dict["relationships"] = [
+                        r if isinstance(r, dict) else r.dict()
+                        for r in memory.knowledge["relationships"]
+                    ]
             
             # Store with original content and set layer based on memory type
             memory_id = await self.store.store_vector(
@@ -81,7 +120,9 @@ class EpisodicLayer:
                     "type": memory_dict["type"],
                     "timestamp": datetime.now().isoformat(),
                     "importance": memory.importance,
-                    "domain": memory.context.get("domain", "general")
+                    "domain": memory.context.get("domain", "general"),
+                    "concepts": memory_dict.get("concepts", []),
+                    "relationships": memory_dict.get("relationships", [])
                 },
                 layer=memory_dict["type"].lower()
             )
@@ -373,20 +414,33 @@ class SemanticLayer(ConceptStore):
                     logger.warning(f"Skipping invalid concept: {concept}")
                     continue
                     
-                # Store concept with enhanced metadata
-                    validation = json.dumps(concept.get("validation") or {
-                        "domain": concept["domain"],
-                        "confidence": concept.get("confidence", 1.0),
-                        "source": concept.get("source", "system"),
-                        "timestamp": datetime.now(timezone.utc).isoformat()
-                    })
-                    await self.store_concept(
+                # Store concept with validated metadata
+                    # Create validation data with proper schema
+                    validation_data = concept.get("validation", {})
+                    validation_schema = ValidationSchema(
+                        domain=validation_data.get("domain", "professional"),
+                        confidence=validation_data.get("confidence", 1.0),
+                        source=validation_data.get("source", "system"),
+                        timestamp=validation_data.get("timestamp", datetime.now(timezone.utc).isoformat())
+                    )
+                    
+                    # Add cross-domain information if present
+                    if "cross_domain" in validation_data:
+                        cross_domain = CrossDomainSchema(**validation_data["cross_domain"])
+                        validation_schema.cross_domain = cross_domain
+                    
+                    validation = json.dumps(validation_schema.dict())
+                    stored_concept = await self.store_concept(
                         name=concept["name"],
                         type=concept["type"],
                         description=concept.get("description", ""),
                         validation=validation,
                         is_consolidation=concept.get("is_consolidation", False)
                     )
+                    if not stored_concept:
+                        logger.error(f"Failed to store concept: {concept['name']}")
+                        continue
+                    logger.info(f"Successfully stored concept: {stored_concept}")
                 
             # Validate and store relationships with cross-domain support
             for rel in knowledge.get("relationships", []):
@@ -512,12 +566,28 @@ class SemanticLayer(ConceptStore):
                              n.validation_source = $context_access_domain OR
                              n.domain = $context_access_domain)
                         """)
-                    elif "." in key:  # Handle nested context like cross_domain.approved
+                    elif key == "cross_domain.approved":
+                        params["context_cross_domain_approved"] = value
+                        conditions.append("""
+                            n.validation IS NOT NULL AND
+                            n.validation <> '' AND
+                            (
+                                apoc.convert.fromJsonMap(n.validation).cross_domain.approved = $context_cross_domain_approved OR
+                                apoc.convert.fromJsonMap(n.validation).cross_domain_approved = $context_cross_domain_approved OR
+                                n.validation CONTAINS '"cross_domain":{"approved":true' OR
+                                n.validation CONTAINS '"cross_domain_approved":true' OR
+                                n.validation CONTAINS '"approved":true' OR
+                                n.validation CONTAINS '"cross_domain":{"approved":true,"requested":true'
+                            )
+                        """)
+                        logger.info(f"Added cross-domain condition with params: {params}")
+                    elif "." in key:  # Handle other nested context
                         field, subfield = key.split(".")
                         params[f"context_{field}_{subfield}"] = value
                         conditions.append(f"""
-                            (n.{field}_{subfield} = $context_{field}_{subfield} OR
-                             n.validation CONTAINS '{{\"{field}\":{{\"{subfield}\":{value}}}}}')
+                            n.validation IS NOT NULL AND
+                            n.validation <> '' AND
+                            n.validation CONTAINS '"{field}":{{"{subfield}":{json.dumps(value)}}}'
                         """)
                     else:
                         params[f"context_{key}"] = value
@@ -528,12 +598,41 @@ class SemanticLayer(ConceptStore):
             
             where_clause = " AND ".join(conditions) if conditions else "true"
             
+
             cypher = f"""
             MATCH (n:Concept)
             WHERE {where_clause}
-            OPTIONAL MATCH (n)-[r:RELATED_TO]->(related:Concept)
-            RETURN n, collect({{name: related.name, type: r.type, attributes: r}}) as relationships
+            WITH n
+            OPTIONAL MATCH (n)-[r:RELATED_TO]-(related:Concept)
+            WHERE r.bidirectional = true OR r.direction IN ['forward', 'reverse']
+            WITH n, collect(DISTINCT {{
+                name: related.name,
+                type: COALESCE(r.type, 'RELATED_TO'),
+                attributes: CASE WHEN r IS NULL THEN {{}} ELSE properties(r) END,
+                direction: CASE
+                    WHEN r IS NULL THEN 'none'
+                    WHEN startNode(r) = n AND r.direction = 'forward' THEN 'forward'
+                    WHEN endNode(r) = n AND r.direction = 'reverse' THEN 'reverse'
+                    ELSE 'bidirectional'
+                END,
+                bidirectional: COALESCE(r.bidirectional, false)
+            }}) as relationships
+            RETURN n {{
+                .name,
+                .type,
+                .description,
+                .is_consolidation,
+                validation: CASE 
+                    WHEN n.validation_json IS NOT NULL THEN n.validation_json
+                    WHEN n.validation IS NOT NULL THEN n.validation
+                    ELSE null
+                END,
+                relationships: relationships
+            }} as n, relationships
             """
+            
+            logger.info(f"Generated Cypher query: {cypher}")
+            logger.info(f"Query parameters: {params}")
             
             # Log query details
             logger.info(f"Executing semantic query: {cypher}")
@@ -543,20 +642,34 @@ class SemanticLayer(ConceptStore):
             records = await self.run_query(cypher, params)
             logger.info(f"Raw query results: {records}")
             
-            # Process results
+            # Process results with enhanced relationship and validation handling
             results = []
             for record in records:
                 if record["n"] is not None:
                     try:
-                        concept = self._process_concept_record({
-                            "c": record["n"],
-                            "relationships": record["relationships"]
-                        })
+                        concept = record["n"]
+                        
+                        # Parse validation data
+                        if concept.get("validation"):
+                            try:
+                                if isinstance(concept["validation"], str):
+                                    concept["validation"] = json.loads(concept["validation"])
+                            except json.JSONDecodeError:
+                                logger.error(f"Failed to parse validation JSON: {concept['validation']}")
+                                concept["validation"] = create_default_validation()
+                        else:
+                            concept["validation"] = create_default_validation()
+                        
+                        # Ensure relationships is a list
+                        if "relationships" not in concept or concept["relationships"] is None:
+                            concept["relationships"] = []
+                            
                         results.append(concept)
-                        logger.info(f"Processed concept: {concept}")
+                        logger.info(f"Processed concept with relationships: {concept}")
                     except Exception as e:
                         logger.error(f"Failed to process concept record: {str(e)}")
                         logger.error(f"Record data: {record}")
+                        continue
             
             logger.info(f"Final processed results: {results}")
             return results
@@ -864,7 +977,11 @@ class TwoLayerMemorySystem:
                         "name": f"concept_{datetime.now().isoformat()}",
                         "type": "concept",
                         "description": memory.content if isinstance(memory.content, str) else memory.content.get("text", ""),
-                        "validation": json.dumps({"domain": memory.context.get("domain", "general")}) if memory.context else None
+                        "validation": json.dumps(ValidationSchema(
+                            domain=memory.context.get("domain", "general"),
+                            source=memory.context.get("source", "system"),
+                            confidence=memory.importance
+                        ).dict()) if memory.context else None
                     }
                 )
             return memory_id

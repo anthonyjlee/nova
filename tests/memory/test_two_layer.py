@@ -16,7 +16,9 @@ from nia.memory.neo4j.base_store import Neo4jBaseStore
 from nia.memory.types.memory_types import (
     Memory, TaskOutput, GraphNode, GraphEdge,
     MemoryType, OutputType, TaskStatus, Domain,
-    EpisodicMemory, Concept, Relationship
+    EpisodicMemory, MockMemory, Concept, Relationship,
+    ValidationSchema, CrossDomainSchema, DomainContext,
+    BaseDomain, KnowledgeVertical
 )
 from nia.memory.types.json_utils import validate_json_structure
 from nia.memory.types.concept_utils import validate_concept_structure
@@ -122,7 +124,7 @@ def mock_vector_store():
                     
                     # Ensure domains list
                     if "domains" not in rel_dict:
-                        rel_dict["domains"] = ["general"]
+                        rel_dict["domains"] = ["professional"]
                     elif not isinstance(rel_dict["domains"], list):
                         rel_dict["domains"] = [rel_dict["domains"]]
                     
@@ -141,15 +143,15 @@ def mock_vector_store():
             
             # Validate context structure
             if "context" not in memory_dict:
-                memory_dict["context"] = {"domain": "general", "source": "system"}
+                memory_dict["context"] = {"domain": "professional", "source": "professional"}
             elif not isinstance(memory_dict["context"], dict):
                 memory_dict["context"] = {"value": memory_dict["context"]}
             else:
                 # Ensure required context fields
                 if "domain" not in memory_dict["context"]:
-                    memory_dict["context"]["domain"] = "general"
+                    memory_dict["context"]["domain"] = "professional"
                 if "source" not in memory_dict["context"]:
-                    memory_dict["context"]["source"] = "system"
+                    memory_dict["context"]["source"] = "professional"
             
             if "metadata" not in memory_dict:
                 memory_dict["metadata"] = {}
@@ -520,7 +522,7 @@ def mock_neo4j_store():
                         "to": params.get("related_name"),
                         "type": params.get("type", "RELATED_TO"),
                         "properties": {
-                            "domains": params.get("domains", ["general"]),
+                            "domains": params.get("domains", ["professional"]),
                             "confidence": params.get("confidence", 1.0),
                             "bidirectional": params.get("bidirectional", False),
                             "created_at": datetime.now(timezone.utc).isoformat(),
@@ -536,7 +538,7 @@ def mock_neo4j_store():
                             "to": params.get("name"),
                             "type": params.get("type", "RELATED_TO"),
                             "properties": {
-                                "domains": params.get("domains", ["general"]),
+                                "domains": params.get("domains", ["professional"]),
                                 "confidence": params.get("confidence", 1.0),
                                 "bidirectional": True,
                                 "created_at": datetime.now(timezone.utc).isoformat(),
@@ -582,7 +584,7 @@ def mock_neo4j_store():
             
         async def create_relationship(self, start_node: str, end_node: str, type: str, properties: Dict = None):
             print(f"\nCreating relationship: {start_node} -> {end_node}")
-            print(f"Relationships before: {self.relationships}")
+            print(f"Relationships before: {self.store.relationships}")
             relationship = {
                 "from": start_node,
                 "to": end_node,
@@ -601,7 +603,7 @@ def mock_neo4j_store():
             confidence: float = 1.0,
             domains: List[str] = None,
             context: Dict = None,
-            source: str = "system"
+            source: str = "professional"
         ):
             """Create a belief with enhanced metadata."""
             # Validate confidence
@@ -610,7 +612,7 @@ def mock_neo4j_store():
                 
             # Ensure domains list
             if domains is None:
-                domains = ["general"]
+                domains = ["professional"]
                 
             # Ensure context dict
             if context is None:
@@ -646,21 +648,46 @@ def memory_system(mock_vector_store, mock_neo4j_store):
 async def test_importance_based_consolidation(memory_system):
     """Test consolidation triggered by importance."""
     # Create important memory
-    memory = EpisodicMemory(
+    # Create validation schema
+    validation = ValidationSchema(
+        domain="professional",
+        access_domain="professional",
+        confidence=0.9,
+        source="professional",
+        cross_domain=CrossDomainSchema(
+            approved=True,
+            requested=True,
+            source_domain="professional",
+            target_domain="professional",
+            justification="Test justification"
+        )
+    )
+
+    # Create domain context
+    domain_context = DomainContext(
+        primary_domain=BaseDomain.PROFESSIONAL,
+        knowledge_vertical=KnowledgeVertical.GENERAL,
+        validation=validation
+    )
+
+    # Create test memory
+    memory = MockMemory(
         content="Critical system update",
         type=MemoryType.EPISODIC,
-        timestamp=datetime.now().isoformat(),
         importance=0.9,
-        concepts=[
-            Concept(
-                name="System Update",
-                type="Maintenance",
-                category="Maintenance",
-                description="Critical system maintenance update",
-                attributes={"priority": "high"},
-                confidence=0.9
-            )
-        ]
+        knowledge={
+            "concepts": [
+                {
+                    "name": "System Update",
+                    "type": "entity",
+                    "description": "Critical system maintenance update",
+                    "validation": validation.dict(),
+                    "domain_context": domain_context.dict()
+                }
+            ]
+        },
+        validation=validation,
+        domain_context=domain_context
     )
     
     # Store memory
@@ -673,40 +700,67 @@ async def test_importance_based_consolidation(memory_system):
 async def test_memory_querying(memory_system):
     """Test memory querying capabilities."""
     # Store test memories
+    # Create validation schema
+    validation = ValidationSchema(
+        domain="professional",
+        access_domain="professional",
+        confidence=0.9,
+        source="professional",
+        cross_domain=CrossDomainSchema(
+            approved=True,
+            requested=True,
+            source_domain="professional",
+            target_domain="professional",
+            justification="Test justification"
+        )
+    )
+
+    # Create domain context
+    domain_context = DomainContext(
+        primary_domain=BaseDomain.PROFESSIONAL,
+        knowledge_vertical=KnowledgeVertical.GENERAL,
+        validation=validation
+    )
+
+    # Create test memories
     memories = [
-        EpisodicMemory(
+        MockMemory(
             content="Meeting about project A",
             type=MemoryType.EPISODIC,
-            timestamp=datetime.now().isoformat(),
             context={"project": "A"},
             participants=["Alice", "Bob"],
-            concepts=[
-                Concept(
-                    name="Project A",
-                    type="Project",
-                    category="Project",
-                    description="Project A meeting and discussion",
-                    attributes={"status": "active"},
-                    confidence=0.8
-                )
-            ]
+            knowledge={
+                "concepts": [
+                    {
+                        "name": "Project A",
+                        "type": "entity",
+                        "description": "Project A meeting and discussion",
+                        "validation": validation.dict(),
+                        "domain_context": domain_context.dict()
+                    }
+                ]
+            },
+            validation=validation,
+            domain_context=domain_context
         ),
-        EpisodicMemory(
+        MockMemory(
             content="Meeting about project B",
             type=MemoryType.EPISODIC,
-            timestamp=datetime.now().isoformat(),
             context={"project": "B"},
             participants=["Charlie", "David"],
-            concepts=[
-                Concept(
-                    name="Project B",
-                    type="Project",
-                    category="Project",
-                    description="Project B meeting and discussion",
-                    attributes={"status": "active"},
-                    confidence=0.8
-                )
-            ]
+            knowledge={
+                "concepts": [
+                    {
+                        "name": "Project B",
+                        "type": "entity",
+                        "description": "Project B meeting and discussion",
+                        "validation": validation.dict(),
+                        "domain_context": domain_context.dict()
+                    }
+                ]
+            },
+            validation=validation,
+            domain_context=domain_context
         )
     ]
     
@@ -727,84 +781,201 @@ async def test_validation_errors(memory_system):
     """Test validation error handling."""
     # Test invalid concept type
     with pytest.raises(ValueError, match="type"):
-        memory = EpisodicMemory(
+        # Create validation schema
+        validation = ValidationSchema(
+            domain="professional",
+            access_domain="professional",
+            confidence=0.9,
+            source="professional",
+            cross_domain=CrossDomainSchema(
+                approved=True,
+                requested=True,
+                source_domain="professional",
+                target_domain="professional",
+                justification="Test justification"
+            )
+        )
+
+        # Create domain context
+        domain_context = DomainContext(
+            primary_domain=BaseDomain.PROFESSIONAL,
+            knowledge_vertical=KnowledgeVertical.GENERAL,
+            validation=validation
+        )
+
+        # Create test memory
+        memory = MockMemory(
             content="Invalid concept",
             type=MemoryType.EPISODIC,
-            timestamp=datetime.now().isoformat(),
             importance=0.8,
-            context={"domain": "professional", "source": "test"},
-            concepts=[
-                Concept(
-                    name="Test",
-                    type="invalid_type",  # Should fail validation
-                    description="Test concept",
-                    confidence=0.9
-                )
-            ]
+            knowledge={
+                "concepts": [
+                    {
+                        "name": "Test",
+                        "type": "invalid_type",  # Should fail validation
+                        "description": "Test concept",
+                        "validation": validation.dict(),
+                        "domain_context": domain_context.dict()
+                    }
+                ]
+            },
+            validation=validation,
+            domain_context=domain_context
         )
         await memory_system.store_experience(memory)
 
     # Test invalid confidence value
     with pytest.raises(ValueError, match="confidence"):
-        memory = EpisodicMemory(
+        # Create validation schema
+        validation = ValidationSchema(
+            domain="professional",
+            access_domain="professional",
+            confidence=0.9,
+            source="professional",
+            cross_domain=CrossDomainSchema(
+                approved=True,
+                requested=True,
+                source_domain="professional",
+                target_domain="professional",
+                justification="Test justification"
+            )
+        )
+
+        # Create domain context
+        domain_context = DomainContext(
+            primary_domain=BaseDomain.PROFESSIONAL,
+            knowledge_vertical=KnowledgeVertical.GENERAL,
+            validation=validation
+        )
+
+        # Create test memory
+        memory = MockMemory(
             content="Invalid confidence",
             type=MemoryType.EPISODIC,
-            timestamp=datetime.now().isoformat(),
             importance=0.8,
-            context={"domain": "professional", "source": "test"},
-            concepts=[
-                Concept(
-                    name="Test",
-                    type="entity",
-                    description="Test concept",
-                    confidence=1.5  # Should fail validation
-                )
-            ]
+            knowledge={
+                "concepts": [
+                    {
+                        "name": "Test",
+                        "type": "entity",
+                        "description": "Test concept",
+                        "validation": validation.dict(),
+                        "domain_context": domain_context.dict(),
+                        "confidence": 1.5  # Should fail validation
+                    }
+                ]
+            },
+            validation=validation,
+            domain_context=domain_context
         )
         await memory_system.store_experience(memory)
 
     # Test missing required context fields
     with pytest.raises(ValueError, match="context"):
-        memory = EpisodicMemory(
+        # Create validation schema
+        validation = ValidationSchema(
+            domain="professional",
+            access_domain="professional",
+            confidence=0.9,
+            source="professional",
+            cross_domain=CrossDomainSchema(
+                approved=True,
+                requested=True,
+                source_domain="professional",
+                target_domain="professional",
+                justification="Test justification"
+            )
+        )
+
+        # Create domain context
+        domain_context = DomainContext(
+            primary_domain=BaseDomain.PROFESSIONAL,
+            knowledge_vertical=KnowledgeVertical.GENERAL,
+            validation=validation
+        )
+
+        # Create test memory
+        memory = MockMemory(
             content="Missing context",
             type=MemoryType.EPISODIC,
-            timestamp=datetime.now().isoformat(),
             importance=0.8,
             context={},  # Missing required fields
-            concepts=[
-                Concept(
-                    name="Test",
-                    type="entity",
-                    description="Test concept",
-                    confidence=0.9
-                )
-            ]
+            knowledge={
+                "concepts": [
+                    {
+                        "name": "Test",
+                        "type": "entity",
+                        "description": "Test concept",
+                        "validation": validation.dict(),
+                        "domain_context": domain_context.dict()
+                    }
+                ]
+            },
+            validation=validation,
+            domain_context=domain_context
         )
         await memory_system.store_experience(memory)
 
 @pytest.mark.asyncio
 async def test_bidirectional_relationships(memory_system):
     """Test bidirectional relationship handling."""
-    memory = EpisodicMemory(
+    # Create validation schema
+    validation = ValidationSchema(
+        domain="professional",
+        access_domain="professional",
+        confidence=0.9,
+        source="professional",
+        cross_domain=CrossDomainSchema(
+            approved=True,
+            requested=True,
+            source_domain="professional",
+            target_domain="professional",
+            justification="Test justification"
+        )
+    )
+
+    # Create domain context
+    domain_context = DomainContext(
+        primary_domain=BaseDomain.PROFESSIONAL,
+        knowledge_vertical=KnowledgeVertical.GENERAL,
+        validation=validation
+    )
+
+    # Create test memory
+    memory = MockMemory(
         content="System architecture",
         type=MemoryType.EPISODIC,
-        timestamp=datetime.now().isoformat(),
         importance=0.8,
-        context={"domain": "professional", "source": "architecture"},
-        concepts=[
-            Concept(name="Frontend", type="entity", description="Frontend system", confidence=0.9),
-            Concept(name="Backend", type="entity", description="Backend system", confidence=0.9)
-        ],
-        relationships=[
-            Relationship(
-                from_="Frontend",
-                to="Backend",
-                type="communicates_with",
-                domains=["professional"],
-                confidence=0.9,
-                bidirectional=True
-            )
-        ]
+        knowledge={
+            "concepts": [
+                {
+                    "name": "Frontend",
+                    "type": "entity",
+                    "description": "Frontend system",
+                    "validation": validation.dict(),
+                    "domain_context": domain_context.dict()
+                },
+                {
+                    "name": "Backend",
+                    "type": "entity",
+                    "description": "Backend system",
+                    "validation": validation.dict(),
+                    "domain_context": domain_context.dict()
+                }
+            ],
+            "relationships": [
+                {
+                    "source": "Frontend",
+                    "target": "Backend",
+                    "type": "communicates_with",
+                    "domain_context": domain_context.dict(),
+                    "confidence": 0.9,
+                    "bidirectional": True
+                }
+            ]
+        },
+        validation=validation,
+        domain_context=domain_context
     )
     
     # Store memory
@@ -830,7 +1001,7 @@ async def test_bidirectional_relationships(memory_system):
         if "Backend" in str(result) and "Frontend" in str(result):
             found_reverse = True
     
-    assert found_forward and found_reverse
+    assert found_forward and found_reverse, "Bidirectional relationship not properly established"
 
 if __name__ == "__main__":
     pytest.main([__file__])

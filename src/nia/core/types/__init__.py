@@ -4,7 +4,8 @@ from .memory_types import (
     Memory, MemoryType, Concept, Relationship, BaseDomain, KnowledgeVertical,
     DomainContext, SemanticMemory, EpisodicMemory, ProceduralMemory,
     AgentResponse, DialogueMessage, DialogueContext,
-    Belief, MemoryQuery, ConsolidationRule, MemoryBatch
+    Belief, MemoryQuery, ConsolidationRule, MemoryBatch, MockMemory,
+    ValidationSchema, CrossDomainSchema
 )
 
 __all__ = [
@@ -24,5 +25,8 @@ __all__ = [
     'Belief',
     'MemoryQuery',
     'ConsolidationRule',
-    'MemoryBatch'
+    'MemoryBatch',
+    'MockMemory',
+    'ValidationSchema',
+    'CrossDomainSchema'
 ]

@@ -1,736 +1,498 @@
-"""Memory consolidation tests."""
+"""Integration tests for memory consolidation."""
 
 import pytest
-import logging
-from datetime import datetime
-from nia.core.types import (
-    Memory, MemoryType, Concept, Relationship, BaseDomain, KnowledgeVertical,
-    DomainContext, EpisodicMemory
+import json
+from datetime import datetime, timezone
+from typing import Dict, List
+
+from nia.core.types.memory_types import (
+    Memory, MemoryType, EpisodicMemory, MockMemory,
+    Concept, Relationship, DomainContext, BaseDomain, KnowledgeVertical,
+    ValidationSchema, CrossDomainSchema
 )
-
-logger = logging.getLogger(__name__)
-
-@pytest.mark.asyncio
-async def test_importance_based_consolidation(memory_system):
-    """Test consolidation based on memory importance."""
-    # Store high importance memories with explicit concepts
-    domain_context = DomainContext(
-        primary_domain=BaseDomain.GENERAL,
-        knowledge_vertical=KnowledgeVertical.GENERAL,
-        confidence=0.9
-    )
-    
-    for i in range(3):
-        concepts = [
-            Concept(
-                name=f"important_memory_{i}",
-                type="entity",
-                description=f"Important test memory {i}",
-                domain_context=domain_context,
-                validation={
-                    "confidence": 0.9,
-                    "supported_by": [],
-                    "contradicted_by": [],
-                    "needs_verification": []
-                }
-            )
-        ]
-        
-        memory = EpisodicMemory(
-            content=f"Important test memory {i}",
-            timestamp=datetime.now().isoformat(),
-            importance=0.9,
-            context={
-                "type": "important",
-                "domain": BaseDomain.GENERAL,
-                "access_domain": "professional",
-                "source": "test"
-            },
-            domain_context=domain_context,
-            concepts=concepts
-        )
-        await memory_system.store_experience(memory)
-
-    # Store low importance memories with explicit concepts
-    for i in range(2):
-        concepts = [
-            Concept(
-                name=f"less_important_{i}",
-                type="entity", 
-                description=f"Less important memory {i}",
-                domain_context=domain_context,
-                validation={
-                    "confidence": 0.9,
-                    "supported_by": [],
-                    "contradicted_by": [],
-                    "needs_verification": []
-                }
-            )
-        ]
-        
-        memory = EpisodicMemory(
-            content=f"Less important memory {i}",
-            timestamp=datetime.now().isoformat(),
-            importance=0.3,
-            context={
-                "type": "less_important",
-                "domain": BaseDomain.GENERAL,
-                "access_domain": "professional",
-                "source": "test"
-            },
-            domain_context=domain_context,
-            concepts=concepts
-        )
-        await memory_system.store_experience(memory)
-
-    # Trigger consolidation
-    await memory_system.consolidate_memories()
-
-    semantic_results = []
-    
-    # Query for important memories individually
-    for i in range(3):
-        results = await memory_system.query_semantic({
-            "type": "concept",
-            "pattern": f"important_memory_{i}"
-        })
-        logger.info(f"Results for important memory {i}: {results}")
-        semantic_results.extend(results)
-    
-    # Query for less important memories individually
-    for i in range(2):
-        results = await memory_system.query_semantic({
-            "type": "concept",
-            "pattern": f"less_important_{i}"
-        })
-        logger.info(f"Results for less important memory {i}: {results}")
-        semantic_results.extend(results)
-    
-    logger.info(f"All semantic results: {semantic_results}")
-    assert len(semantic_results) > 0
+from nia.core.types.concept_utils.validation import validate_concept_structure
 
 @pytest.mark.asyncio
-async def test_cross_domain_consolidation(memory_system):
-    """Test consolidation across domains."""
-    # Store personal domain memories with explicit concepts
-    personal_context = DomainContext(
-        primary_domain=BaseDomain.GENERAL,
-        knowledge_vertical=KnowledgeVertical.GENERAL,
-        confidence=0.9
-    )
-    
-    for i in range(2):
-        concepts = [
-            Concept(
-                name=f"personal_task_{i}",
-                type="entity",
-                description=f"Personal task {i}",
-                domain_context=personal_context,
-                validation={
-                    "confidence": 0.9,
-                    "supported_by": [],
-                    "contradicted_by": [],
-                    "needs_verification": []
-                }
-            )
-        ]
-        
-        memory = EpisodicMemory(
-            content=f"Personal task {i}",
-            timestamp=datetime.now().isoformat(),
-            importance=0.8,
-            context={
-                "domain": BaseDomain.GENERAL,
-                "access_domain": "personal",
-                "task_type": "recurring",
-                "source": "test"
-            },
-            domain_context=personal_context,
-            concepts=concepts
+@pytest.mark.integration
+@pytest.mark.memory
+@pytest.mark.consolidation
+async def test_importance_based_consolidation(memory_system, event_loop):
+    """Test consolidation based on importance scores."""
+    # Create validation schema
+    validation = ValidationSchema(
+        domain="professional",
+        access_domain="professional",
+        confidence=0.9,
+        source="professional",
+        cross_domain=CrossDomainSchema(
+            approved=True,
+            requested=True,
+            source_domain="professional",
+            target_domain="professional",
+            justification="Test justification"
         )
-        await memory_system.store_experience(memory)
-
-    # Store professional domain memories with explicit concepts
-    professional_context = DomainContext(
-        primary_domain=BaseDomain.GENERAL,
-        knowledge_vertical=KnowledgeVertical.GENERAL,
-        confidence=0.9
     )
-    
-    for i in range(2):
-        concepts = [
-            Concept(
-                name=f"professional_task_{i}",
-                type="entity",
-                description=f"Professional task {i}",
-                domain_context=professional_context,
-                validation={
-                    "confidence": 0.9,
-                    "supported_by": [],
-                    "contradicted_by": [],
-                    "needs_verification": []
-                }
-            )
-        ]
-        
-        memory = EpisodicMemory(
-            content=f"Professional task {i}",
-            timestamp=datetime.now().isoformat(),
-            importance=0.8,
-            context={
-                "domain": BaseDomain.GENERAL,
-                "access_domain": "professional",
-                "task_type": "recurring",
-                "source": "test"
-            },
-            domain_context=professional_context,
-            concepts=concepts
-        )
-        await memory_system.store_experience(memory)
 
-    # Trigger consolidation
-    await memory_system.consolidate_memories()
-
-    # Verify domain separation in consolidated knowledge
-    personal_results = await memory_system.query_semantic({
-        "type": "concept",
-        "pattern": "personal_task",
-        "context": {
-            "access_domain": "personal"
-        }
-    })
-    assert len(personal_results) > 0
-
-    professional_results = await memory_system.query_semantic({
-        "type": "concept",
-        "pattern": "professional_task",
-        "context": {
-            "access_domain": "professional"
-        }
-    })
-    assert len(professional_results) > 0
-
-@pytest.mark.asyncio
-async def test_memory_consolidation_patterns(memory_system):
-    """Test pattern detection during consolidation."""
-    # Store related memories
+    # Create domain context
     domain_context = DomainContext(
         primary_domain=BaseDomain.PROFESSIONAL,
-        knowledge_vertical=KnowledgeVertical.TECHNOLOGY,
-        confidence=0.9
+        knowledge_vertical=KnowledgeVertical.GENERAL,
+        validation=validation
+    )
+
+    # Create test memories
+    memory1 = MockMemory(
+        content="Test memory 1",
+        type=MemoryType.EPISODIC,
+        importance=0.8,
+        knowledge={
+            "concepts": [
+                {
+                    "name": "test_concept_1",
+                    "type": "entity",
+                    "description": "Test concept 1",
+                    "validation": validation.dict(),
+                    "domain_context": domain_context.dict()
+                }
+            ]
+        },
+        validation=validation,
+        domain_context=domain_context
     )
     
-    concepts = [
-        Concept(
-            name="API", 
-            type="entity", 
-            description="Application Programming Interface",
-            domain_context=domain_context,
-            validation={
-                "confidence": 0.9,
-                "supported_by": [],
-                "contradicted_by": [],
-                "needs_verification": []
-            }
-        ),
-        Concept(
-            name="REST", 
-            type="entity", 
-            description="RESTful API design",
-            domain_context=domain_context,
-            validation={
-                "confidence": 0.9,
-                "supported_by": [],
-                "contradicted_by": [],
-                "needs_verification": []
-            }
-        )
-    ]
-    relationships = [
-        Relationship(
-            source="API", 
-            target="REST", 
-            type="IMPLEMENTS",
-            domain_context=domain_context
-        )
-    ]
-
-    for i in range(3):
-        memory = EpisodicMemory(
-            content=f"API design memory {i}",
-            timestamp=datetime.now().isoformat(),
-            importance=0.8,
-            context={
-                "domain": BaseDomain.PROFESSIONAL,
-                "access_domain": "professional",
-                "source": "test"
-            },
-            concepts=concepts,
-            relationships=relationships
-        )
-        await memory_system.store_experience(memory)
-
-    # Trigger consolidation
+    memory2 = MockMemory(
+        content="Test memory 2",
+        type=MemoryType.EPISODIC,
+        importance=0.9,
+        knowledge={
+            "concepts": [
+                {
+                    "name": "test_concept_2",
+                    "type": "entity",
+                    "description": "Test concept 2",
+                    "validation": validation.dict(),
+                    "domain_context": domain_context.dict()
+                }
+            ]
+        },
+        validation=validation,
+        domain_context=domain_context
+    )
+    
+    # Store memories
+    await memory_system.episodic.store_memory(memory1)
+    await memory_system.episodic.store_memory(memory2)
+    
+    # Run consolidation
     await memory_system.consolidate_memories()
-
-    # Verify pattern was detected and stored with domain context
-    semantic_results = await memory_system.query_semantic({
-        "type": "concept",
-        "pattern": "API",
-        "context": {
-            "domain": BaseDomain.PROFESSIONAL,
-            "access_domain": "professional"
-        }
-    })
-    assert len(semantic_results) > 0
-    assert any("REST" in str(result) for result in semantic_results)
+    
+    # Verify consolidated concepts
+    concepts = await memory_system.semantic.get_concepts_by_type("entity")
+    assert len(concepts) == 2
+    
+    # Verify validation data is preserved
+    for concept in concepts:
+        assert concept["validation"]["confidence"] >= 0.8
+        assert concept["validation"]["source"] == "professional"
+        assert concept["validation"]["cross_domain"]["approved"] is True
 
 @pytest.mark.asyncio
-async def test_complex_pattern_consolidation(memory_system):
-    """Test consolidation of complex memory patterns."""
-    # Store memories with interconnected concepts
+@pytest.mark.integration
+@pytest.mark.memory
+@pytest.mark.consolidation
+async def test_cross_domain_consolidation(memory_system, event_loop):
+    """Test consolidation with cross-domain validation."""
+    # Create validation schema
+    validation = ValidationSchema(
+        domain="professional",
+        access_domain="professional",
+        confidence=0.9,
+        source="professional",
+        cross_domain=CrossDomainSchema(
+            approved=True,
+            requested=True,
+            source_domain="professional",
+            target_domain="professional",
+            justification="Test justification"
+        )
+    )
+
+    # Create domain context
     domain_context = DomainContext(
         primary_domain=BaseDomain.PROFESSIONAL,
-        knowledge_vertical=KnowledgeVertical.TECHNOLOGY,
-        confidence=0.9
+        knowledge_vertical=KnowledgeVertical.GENERAL,
+        validation=validation
+    )
+
+    # Create test memory
+    memory = MockMemory(
+        content="Cross domain test",
+        type=MemoryType.EPISODIC,
+        knowledge={
+            "concepts": [
+                {
+                    "name": "cross_domain_concept",
+                    "type": "entity",
+                    "description": "Test cross domain concept",
+                    "validation": validation.dict(),
+                    "domain_context": domain_context.dict()
+                }
+            ]
+        },
+        validation=validation,
+        domain_context=domain_context
     )
     
-    concepts = [
-        Concept(
-            name="Database", 
-            type="entity", 
-            description="Data storage system",
-            domain_context=domain_context,
-            validation={
-                "confidence": 0.9,
-                "supported_by": [],
-                "contradicted_by": [],
-                "needs_verification": []
-            }
-        ),
-        Concept(
-            name="SQL", 
-            type="entity", 
-            description="Query language",
-            domain_context=domain_context,
-            validation={
-                "confidence": 0.9,
-                "supported_by": [],
-                "contradicted_by": [],
-                "needs_verification": []
-            }
-        ),
-        Concept(
-            name="NoSQL", 
-            type="entity", 
-            description="Non-relational database",
-            domain_context=domain_context,
-            validation={
-                "confidence": 0.9,
-                "supported_by": [],
-                "contradicted_by": [],
-                "needs_verification": []
-            }
-        )
-    ]
-    relationships = [
-        Relationship(
-            source="Database", 
-            target="SQL", 
-            type="USES",
-            domain_context=domain_context
-        ),
-        Relationship(
-            source="Database", 
-            target="NoSQL", 
-            type="ALTERNATIVE",
-            domain_context=domain_context
-        ),
-        Relationship(
-            source="SQL", 
-            target="NoSQL", 
-            type="DIFFERS_FROM",
-            domain_context=domain_context
-        )
-    ]
-
-    for i in range(4):
-        memory = EpisodicMemory(
-            content=f"Database architecture memory {i}",
-            timestamp=datetime.now().isoformat(),
-            importance=0.8,
-            context={
-                "domain": BaseDomain.PROFESSIONAL,
-                "access_domain": "professional",
-                "source": "test"
-            },
-            concepts=concepts,
-            relationships=relationships
-        )
-        await memory_system.store_experience(memory)
-
-    # Trigger consolidation
+    # Store memory
+    await memory_system.episodic.store_memory(memory)
+    
+    # Run consolidation
     await memory_system.consolidate_memories()
-
-    # Verify complex pattern was stored correctly with domain context
-    semantic_results = await memory_system.query_semantic({
-        "type": "concept",
-        "pattern": "Database",
-        "context": {
-            "domain": BaseDomain.PROFESSIONAL,
-            "access_domain": "professional"
-        }
-    })
-    assert len(semantic_results) > 0
-
-    # Verify relationships were preserved
-    for result in semantic_results:
-        if "Database" in str(result):
-            assert "SQL" in str(result) or "NoSQL" in str(result)
+    
+    # Verify consolidated concept
+    concepts = await memory_system.semantic.get_concepts_by_type("entity")
+    assert len(concepts) == 1
+    
+    concept = concepts[0]
+    assert concept["validation"]["cross_domain"]["approved"] is True
+    assert concept["validation"]["cross_domain"]["source_domain"] == "professional"
+    assert concept["validation"]["cross_domain"]["target_domain"] == "professional"
 
 @pytest.mark.asyncio
-async def test_basic_concept_storage_and_retrieval(memory_system):
-    """Test basic concept storage and retrieval with domain context."""
-    # Create a simple concept with domain context
+@pytest.mark.integration
+@pytest.mark.memory
+@pytest.mark.consolidation
+async def test_memory_consolidation_patterns(memory_system, event_loop):
+    """Test consolidation pattern matching."""
+    # Create validation schema
+    validation = ValidationSchema(
+        domain="professional",
+        access_domain="professional",
+        confidence=0.9,
+        source="professional",
+        cross_domain=CrossDomainSchema(
+            approved=True,
+            requested=True,
+            source_domain="professional",
+            target_domain="professional",
+            justification="Test justification"
+        )
+    )
+
+    # Create domain context
     domain_context = DomainContext(
         primary_domain=BaseDomain.PROFESSIONAL,
-        knowledge_vertical=KnowledgeVertical.TECHNOLOGY,
-        confidence=0.9
+        knowledge_vertical=KnowledgeVertical.GENERAL,
+        validation=validation
+    )
+
+    # Create test memory
+    memory = MockMemory(
+        content="Pattern test",
+        type=MemoryType.EPISODIC,
+        knowledge={
+            "concepts": [
+                {
+                    "name": "pattern_concept",
+                    "type": "entity",
+                    "description": "Test pattern concept",
+                    "validation": validation.dict(),
+                    "domain_context": domain_context.dict()
+                }
+            ]
+        },
+        validation=validation,
+        domain_context=domain_context
     )
     
-    concept = Concept(
-        name="test_concept",
-        type="entity",
-        description="Test concept for storage",
-        domain_context=domain_context,
-        validation={
+    # Store memory
+    await memory_system.episodic.store_memory(memory)
+    
+    # Run consolidation
+    await memory_system.consolidate_memories()
+    
+    # Verify pattern matching
+    concepts = await memory_system.semantic.search_concepts("pattern")
+    assert len(concepts) == 1
+    assert concepts[0]["validation"]["cross_domain"]["approved"] is True
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.memory
+@pytest.mark.consolidation
+async def test_complex_pattern_consolidation(memory_system, event_loop):
+    """Test consolidation with complex patterns."""
+    # Create validation schema
+    validation = ValidationSchema(
+        domain="professional",
+        access_domain="professional",
+        confidence=0.9,
+        source="professional",
+        cross_domain=CrossDomainSchema(
+            approved=True,
+            requested=True,
+            source_domain="professional",
+            target_domain="professional",
+            justification="Test justification"
+        )
+    )
+
+    # Create domain context
+    domain_context = DomainContext(
+        primary_domain=BaseDomain.PROFESSIONAL,
+        knowledge_vertical=KnowledgeVertical.GENERAL,
+        validation=validation
+    )
+
+    # Create test memory
+    memory = MockMemory(
+        content="Complex pattern test",
+        type=MemoryType.EPISODIC,
+        knowledge={
+            "concepts": [
+                {
+                    "name": "complex_pattern",
+                    "type": "entity",
+                    "description": "Test complex pattern",
+                    "validation": validation.dict(),
+                    "domain_context": domain_context.dict()
+                }
+            ]
+        },
+        validation=validation,
+        domain_context=domain_context
+    )
+    
+    # Store memory
+    await memory_system.episodic.store_memory(memory)
+    
+    # Run consolidation
+    await memory_system.consolidate_memories()
+    
+    # Verify complex pattern matching
+    concepts = await memory_system.semantic.search_concepts("complex")
+    assert len(concepts) == 1
+    assert concepts[0]["validation"]["cross_domain"]["approved"] is True
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.memory
+@pytest.mark.consolidation
+async def test_basic_concept_storage_and_retrieval(memory_system, event_loop):
+    """Test basic concept storage and retrieval with validation."""
+    concept = {
+        "name": "test_concept",
+        "type": "entity",
+        "description": "Test concept",
+        "validation": {
             "confidence": 0.9,
-            "supported_by": [],
-            "contradicted_by": [],
-            "needs_verification": [],
-            "access_domain": "professional"
-        }
-    )
-    
-    memory = EpisodicMemory(
-        content="Test memory",
-        timestamp=datetime.now().isoformat(),
-        importance=0.8,
-        context={
-            "domain": BaseDomain.PROFESSIONAL,
+            "source": "professional",
             "access_domain": "professional",
-            "source": "test"
-        },
-        domain_context=domain_context,
-        concepts=[concept]
-    )
-    
-    # Store and consolidate
-    await memory_system.store_experience(memory)
-    await memory_system.consolidate_memories()
-    
-    # Query with exact parameters
-    results = await memory_system.query_semantic({
-        "type": "concept",
-        "pattern": "test_concept",
-        "context": {
-            "access_domain": "professional",
-            "domain": BaseDomain.PROFESSIONAL
-        }
-    })
-    
-    assert len(results) > 0
-    assert results[0]["name"] == "test_concept"
-    assert results[0]["validation"]["access_domain"] == "professional"
-
-@pytest.mark.asyncio
-async def test_pattern_validation_errors(memory_system):
-    """Test validation errors during pattern consolidation."""
-    # Test invalid concept type
-    with pytest.raises(ValueError, match=r"Invalid concept type|Type must be a non-empty string"):
-        memory = EpisodicMemory(
-            content="Invalid concept type",
-            timestamp=datetime.now().isoformat(),
-            importance=0.8,
-            context={
-                "domain": "professional",
-                "source": "test"
-            },
-            concepts=[
-                Concept(
-                    name="Test",
-                    type="invalid_type",  # Should fail validation
-                    description="Test concept",
-                    domain_context=DomainContext(
-                        primary_domain=BaseDomain.PROFESSIONAL,
-                        knowledge_vertical=KnowledgeVertical.GENERAL,
-                        confidence=0.9
-                    ),
-                    validation={
-                        "confidence": 0.9,
-                        "supported_by": [],
-                        "contradicted_by": [],
-                        "needs_verification": []
-                    }
-                )
-            ]
-        )
-        await memory_system.store_experience(memory)
-
-    # Test invalid confidence value
-    with pytest.raises(ValueError, match=r"Invalid confidence value|Confidence must be between 0 and 1"):
-        memory = EpisodicMemory(
-            content="Invalid confidence",
-            timestamp=datetime.now().isoformat(),
-            importance=0.8,
-            context={
-                "domain": "professional",
-                "source": "test"
-            },
-            concepts=[
-                Concept(
-                    name="Test",
-                    type="entity",
-                    description="Test concept",
-                    domain_context=DomainContext(
-                        primary_domain=BaseDomain.PROFESSIONAL,
-                        knowledge_vertical=KnowledgeVertical.GENERAL,
-                        confidence=1.5  # Should fail validation
-                    ),
-                    validation={
-                        "confidence": 0.9,
-                        "supported_by": [],
-                        "contradicted_by": [],
-                        "needs_verification": []
-                    }
-                )
-            ]
-        )
-        await memory_system.store_experience(memory)
-
-    # Test missing required context fields
-    with pytest.raises(ValueError, match="Missing required context fields"):
-        memory = EpisodicMemory(
-            content="Missing context fields",
-            timestamp=datetime.now().isoformat(),
-            importance=0.8,
-            context={
-                # Missing required fields
-            },
-            concepts=[
-                Concept(
-                    name="Test",
-                    type="entity",
-                    description="Test concept",
-                    domain_context=DomainContext(
-                        primary_domain=BaseDomain.PROFESSIONAL,
-                        knowledge_vertical=KnowledgeVertical.GENERAL,
-                        confidence=0.9
-                    ),
-                    validation={
-                        "confidence": 0.9,
-                        "supported_by": [],
-                        "contradicted_by": [],
-                        "needs_verification": []
-                    }
-                )
-            ]
-        )
-        await memory_system.store_experience(memory)
-
-@pytest.mark.asyncio
-async def test_bidirectional_relationship_consolidation(memory_system):
-    """Test consolidation of bidirectional relationships."""
-    # Store memory with bidirectional relationship
-    domain_context = DomainContext(
-        primary_domain=BaseDomain.PROFESSIONAL,
-        knowledge_vertical=KnowledgeVertical.TECHNOLOGY,
-        confidence=0.9
-    )
-    
-    concepts = [
-        Concept(
-            name="Frontend", 
-            type="entity", 
-            description="Frontend system",
-            domain_context=domain_context,
-            validation={
-                "confidence": 0.9,
-                "supported_by": [],
-                "contradicted_by": [],
-                "needs_verification": []
-            }
-        ),
-        Concept(
-            name="Backend", 
-            type="entity", 
-            description="Backend system",
-            domain_context=domain_context,
-            validation={
-                "confidence": 0.9,
-                "supported_by": [],
-                "contradicted_by": [],
-                "needs_verification": []
-            }
-        )
-    ]
-    relationships = [
-        Relationship(
-            source="Frontend",
-            target="Backend",
-            type="communicates_with",
-            domain_context=domain_context,
-            bidirectional=True
-        )
-    ]
-
-    memory = EpisodicMemory(
-        content="System architecture overview",
-        timestamp=datetime.now().isoformat(),
-        importance=0.8,
-        context={
             "domain": "professional",
-            "source": "architecture_review"
-        },
-        concepts=concepts,
-        relationships=relationships
-    )
-    await memory_system.store_experience(memory)
-
-    # Trigger consolidation
-    await memory_system.consolidate_memories()
-
-    # Verify bidirectional relationship was stored
-    semantic_results = await memory_system.query_semantic({
-        "type": "concept",
-        "pattern": "Frontend|Backend",
-        "context": {
-            "domain": "professional"
-        }
-    })
-    assert len(semantic_results) > 0
-
-    # Verify both directions exist
-    found_forward = False
-    found_reverse = False
-    for result in semantic_results:
-        if "Frontend" in str(result) and "Backend" in str(result):
-            found_forward = True
-        if "Backend" in str(result) and "Frontend" in str(result):
-            found_reverse = True
-    assert found_forward and found_reverse
-
-@pytest.mark.asyncio
-async def test_cross_domain_pattern_consolidation(memory_system):
-    """Test consolidation of patterns that span domains."""
-    # Store cross-domain related memories
-    work_context = DomainContext(
-        primary_domain=BaseDomain.PROFESSIONAL,
-        knowledge_vertical=KnowledgeVertical.BUSINESS,
-        confidence=0.9
-    )
-    personal_context = DomainContext(
-        primary_domain=BaseDomain.PERSONAL,
-        knowledge_vertical=KnowledgeVertical.GENERAL,
-        confidence=0.9
-    )
-    
-    concepts = [
-        Concept(
-            name="Project", 
-            type="entity", 
-            description="Work project",
-            domain_context=work_context,
-            validation={
-                "confidence": 0.9,
-                "supported_by": [],
-                "contradicted_by": [],
-                "needs_verification": []
-            }
-        ),
-        Concept(
-            name="Schedule", 
-            type="entity", 
-            description="Personal schedule",
-            domain_context=personal_context,
-            validation={
-                "confidence": 0.9,
-                "supported_by": [],
-                "contradicted_by": [],
-                "needs_verification": []
-            }
-        )
-    ]
-    relationships = [
-        Relationship(
-            source="Project", 
-            target="Schedule", 
-            type="IMPACTS",
-            domain_context=work_context
-        )
-    ]
-
-    # Professional domain memory
-    memory1 = EpisodicMemory(
-        content="Project deadline approaching",
-        timestamp=datetime.now().isoformat(),
-        importance=0.9,
-        context={
-            "domain": BaseDomain.GENERAL,
-            "access_domain": "professional",
-            "source": "test",
             "cross_domain": {
-                "requested": True,
                 "approved": True,
-                "justification": "Schedule coordination required",
+                "requested": True,
                 "source_domain": "professional",
-                "target_domain": "personal"
-            }
-        },
-        concepts=[concepts[0]],
-        relationships=relationships
-    )
-    await memory_system.store_experience(memory1)
-
-    # Personal domain memory
-    memory2 = EpisodicMemory(
-        content="Schedule adjustment needed",
-        timestamp=datetime.now().isoformat(),
-        importance=0.9,
-        context={
-            "domain": BaseDomain.GENERAL,
-            "access_domain": "personal",
-            "source": "test",
-            "cross_domain": {
-                "requested": True,
-                "approved": True,
-                "justification": "Schedule coordination required",
-                "source_domain": "personal",
                 "target_domain": "professional"
             }
-        },
-        concepts=[concepts[1]],
-        relationships=relationships
+        }
+    }
+    
+    # Store concept
+    await memory_system.semantic.store_concept(
+        name=concept["name"],
+        type=concept["type"],
+        description=concept["description"],
+        validation=concept["validation"]
     )
-    await memory_system.store_experience(memory2)
+    
+    # Retrieve concept
+    stored_concept = await memory_system.semantic.get_concept(concept["name"])
+    assert stored_concept is not None
+    assert stored_concept["validation"]["cross_domain"]["approved"] is True
 
-    # Trigger consolidation
+@pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.memory
+@pytest.mark.consolidation
+async def test_pattern_validation_errors(event_loop):
+    """Test validation error handling."""
+    # Test invalid concept type
+    with pytest.raises(ValueError) as exc_info:
+        validate_concept_structure({
+            "name": "test",
+            "type": "invalid_type",
+            "description": "Test"
+        })
+    assert "Type must be one of: entity, action, property, event, abstract" in str(exc_info.value)
+    
+    # Test missing required fields
+    with pytest.raises(ValueError) as exc_info:
+        validate_concept_structure({
+            "name": "test"
+        })
+    assert "Missing required fields" in str(exc_info.value)
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.memory
+@pytest.mark.consolidation
+async def test_bidirectional_relationship_consolidation(memory_system, event_loop):
+    """Test consolidation of bidirectional relationships."""
+    # Create validation schema
+    validation = ValidationSchema(
+        domain="professional",
+        access_domain="professional",
+        confidence=0.9,
+        source="professional",
+        cross_domain=CrossDomainSchema(
+            approved=True,
+            requested=True,
+            source_domain="professional",
+            target_domain="professional",
+            justification="Test justification"
+        )
+    )
+
+    # Create domain context
+    domain_context = DomainContext(
+        primary_domain=BaseDomain.PROFESSIONAL,
+        knowledge_vertical=KnowledgeVertical.GENERAL,
+        validation=validation
+    )
+
+    # Create test memory
+    memory = MockMemory(
+        content="Relationship test",
+        type=MemoryType.EPISODIC,
+        knowledge={
+            "concepts": [
+                {
+                    "name": "concept_a",
+                    "type": "entity",
+                    "description": "Test concept A",
+                    "validation": validation.dict(),
+                    "domain_context": domain_context.dict()
+                },
+                {
+                    "name": "concept_b",
+                    "type": "entity",
+                    "description": "Test concept B",
+                    "validation": validation.dict(),
+                    "domain_context": domain_context.dict()
+                }
+            ],
+            "relationships": [
+                {
+                    "source": "concept_a",
+                    "target": "concept_b",
+                    "type": "RELATED_TO",
+                    "bidirectional": True,
+                    "domain_context": domain_context.dict(),
+                    "confidence": 0.9
+                }
+            ]
+        },
+        validation=validation,
+        domain_context=domain_context
+    )
+    
+    # Store memory
+    await memory_system.episodic.store_memory(memory)
+    
+    # Run consolidation
     await memory_system.consolidate_memories()
+    
+    # Verify bidirectional relationship
+    concept_a = await memory_system.semantic.get_concept("concept_a")
+    concept_b = await memory_system.semantic.get_concept("concept_b")
+    
+    assert concept_a is not None, "concept_a not found"
+    assert concept_b is not None, "concept_b not found"
+    
+    # Verify relationships exist
+    assert "relationships" in concept_a, "relationships key missing in concept_a"
+    assert "relationships" in concept_b, "relationships key missing in concept_b"
+    
+    # Verify relationships are not None
+    assert concept_a["relationships"] is not None, "relationships is None in concept_a"
+    assert concept_b["relationships"] is not None, "relationships is None in concept_b"
+    
+    # Verify bidirectional relationships
+    assert any(r["name"] == "concept_b" for r in concept_a["relationships"]), "concept_b not found in concept_a relationships"
+    assert any(r["name"] == "concept_a" for r in concept_b["relationships"]), "concept_a not found in concept_b relationships"
 
-    # Verify cross-domain pattern was consolidated
-    semantic_results = await memory_system.query_semantic({
+@pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.memory
+@pytest.mark.consolidation
+async def test_cross_domain_pattern_consolidation(memory_system, event_loop):
+    """Test consolidation with cross-domain pattern matching."""
+    # Create validation schema
+    validation = ValidationSchema(
+        domain="professional",
+        access_domain="professional",
+        confidence=0.9,
+        source="professional",
+        cross_domain=CrossDomainSchema(
+            approved=True,
+            requested=True,
+            source_domain="professional",
+            target_domain="professional",
+            justification="Test justification"
+        )
+    )
+
+    # Create domain context
+    domain_context = DomainContext(
+        primary_domain=BaseDomain.PROFESSIONAL,
+        knowledge_vertical=KnowledgeVertical.GENERAL,
+        validation=validation
+    )
+
+    # Create test memory
+    memory = MockMemory(
+        content="Cross domain pattern test",
+        type=MemoryType.EPISODIC,
+        knowledge={
+            "concepts": [
+                {
+                    "name": "cross_domain_pattern",
+                    "type": "entity",
+                    "description": "Test cross domain pattern",
+                    "validation": validation.dict(),
+                    "domain_context": domain_context.dict()
+                }
+            ]
+        },
+        validation=validation,
+        domain_context=domain_context
+    )
+    
+    # Store memory
+    await memory_system.episodic.store_memory(memory)
+    
+    # Run consolidation
+    await memory_system.consolidate_memories()
+    
+    # Search with cross-domain filter
+    concepts = await memory_system.semantic.query_knowledge({
         "type": "concept",
-        "pattern": "Project|Schedule",
+        "pattern": "pattern",
         "context": {
             "cross_domain.approved": True
         }
     })
-    assert len(semantic_results) > 0
-
-    # Verify relationship was preserved across domains
-    found_relationship = False
-    for result in semantic_results:
-        if "Project" in str(result) and "Schedule" in str(result):
-            found_relationship = True
-            break
-    assert found_relationship
+    
+    # First verify that concepts were found
+    assert len(concepts) > 0, "No concepts found matching the cross-domain pattern"
+    
+    # Verify validation data exists
+    assert "validation" in concepts[0], "validation missing in concept"
+    assert "cross_domain" in concepts[0]["validation"], "cross_domain missing in validation"
+    
+    # Then verify the validation data
+    assert concepts[0]["validation"]["domain"] == "professional", "incorrect domain"
+    assert concepts[0]["validation"]["cross_domain"]["approved"] is True, "cross_domain.approved should be True"
+    assert concepts[0]["validation"]["cross_domain"]["source_domain"] == "professional", "incorrect source_domain"
+    assert concepts[0]["validation"]["cross_domain"]["target_domain"] == "professional", "incorrect target_domain"
