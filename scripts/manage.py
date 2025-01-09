@@ -46,30 +46,46 @@ class ServiceManager:
         except requests.RequestException:
             return False
     
+    def check_docker(self):
+        """Check if Docker is running."""
+        try:
+            subprocess.run(
+                ["docker", "info"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True
+            )
+            return True
+        except subprocess.CalledProcessError:
+            print("❌ Docker is not running")
+            print("Please start Docker Desktop")
+            return False
+
     def start_docker_services(self):
         """Start Neo4j and Qdrant containers."""
         print("\n🐳 Starting Docker services...")
+        
+        # Check Docker first
+        if not self.check_docker():
+            sys.exit(1)
+            
         try:
+            # Start containers
             subprocess.run(
                 ["docker", "compose", "-f", self.docker_compose_file, "up", "-d"],
                 check=True
             )
             
-            # Wait for Neo4j
-            print("⏳ Waiting for Neo4j to start...")
-            time.sleep(self.services["neo4j"]["startup_time"])
-            if self.check_service("neo4j", self.services["neo4j"]["health_url"]):
-                print("✅ Neo4j is running")
-            else:
-                print("⚠️  Neo4j may not be ready")
+            # Wait for services with longer timeout
+            services_ready = True
+            for service in ["neo4j", "qdrant"]:
+                if not self.wait_for_service(service, timeout=60):
+                    services_ready = False
             
-            # Wait for Qdrant
-            print("⏳ Waiting for Qdrant to start...")
-            time.sleep(self.services["qdrant"]["startup_time"])
-            if self.check_service("qdrant", self.services["qdrant"]["health_url"]):
-                print("✅ Qdrant is running")
-            else:
-                print("⚠️  Qdrant may not be ready")
+            if not services_ready:
+                print("❌ Some Docker services failed to start")
+                self.stop_services()
+                sys.exit(1)
                 
         except subprocess.CalledProcessError as e:
             print(f"❌ Error starting Docker services: {e}")
@@ -88,27 +104,139 @@ class ServiceManager:
             print("3. Start the local server")
             sys.exit(1)
     
+    def check_dependencies(self):
+        """Check if required Python packages are installed."""
+        try:
+            import uvicorn
+            import fastapi
+            import tinytroupe
+            return True
+        except ImportError as e:
+            print(f"❌ Missing dependencies: {e}")
+            print("Please run: pdm install")
+            return False
+
+    def check_tinytroupe_config(self):
+        """Check TinyTroupe configuration."""
+        site_packages_config = Path(".venv/lib/python3.12/site-packages/tinytroupe/config.ini")
+        custom_config = Path("config.ini")
+        
+        print("\n🔍 Checking TinyTroupe configuration...")
+        print(f"Site packages config: {site_packages_config.absolute()}")
+        print(f"Custom config: {custom_config.absolute()}")
+        
+        # Try to read configs to verify they're valid
+        configs_valid = False
+        
+        if site_packages_config.exists():
+            try:
+                with open(site_packages_config) as f:
+                    content = f.read()
+                    if "[DEFAULT]" in content and "[MEMORY]" in content:
+                        print("✅ Site packages config is valid")
+                        configs_valid = True
+                    else:
+                        print("⚠️  Site packages config is invalid")
+            except Exception as e:
+                print(f"⚠️  Error reading site packages config: {e}")
+        
+        if custom_config.exists():
+            try:
+                with open(custom_config) as f:
+                    content = f.read()
+                    if "[DEFAULT]" in content and "[MEMORY]" in content:
+                        print("✅ Custom config is valid")
+                        configs_valid = True
+                    else:
+                        print("⚠️  Custom config is invalid")
+            except Exception as e:
+                print(f"⚠️  Error reading custom config: {e}")
+        
+        if not configs_valid:
+            print("\n⚠️  No valid TinyTroupe configuration found")
+            print("Creating default config.ini...")
+            
+            config_content = """[DEFAULT]
+model_api_type = lmstudio
+model_api_base = http://localhost:1234/v1
+model_name = local-model
+
+[MEMORY]
+consolidation_interval = 300
+importance_threshold = 0.5
+"""
+            try:
+                with open(custom_config, "w") as f:
+                    f.write(config_content)
+                print(f"✅ Created default config.ini at {custom_config.absolute()}")
+                print("Please customize if needed, especially:")
+                print("- model_api_type")
+                print("- model_api_base")
+                print("- model_name")
+            except Exception as e:
+                print(f"❌ Failed to create config.ini: {e}")
+                sys.exit(1)
+
+    def wait_for_service(self, name: str, timeout: int = 30, interval: int = 1):
+        """Wait for service to be ready with timeout."""
+        print(f"⏳ Waiting for {name} to start...")
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            if self.check_service(name, self.services[name]["health_url"]):
+                print(f"✅ {name} is running")
+                return True
+            time.sleep(interval)
+        print(f"⚠️  {name} did not start within {timeout} seconds")
+        return False
+
     def start_fastapi(self):
         """Start FastAPI server."""
         print("\n🚀 Starting FastAPI server...")
+        
+        # Check dependencies first
+        if not self.check_dependencies():
+            sys.exit(1)
+            
+        # Check and create TinyTroupe config
+        self.check_tinytroupe_config()
+            
         try:
-            subprocess.Popen(
+            # Set up environment
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(Path.cwd())
+            
+            # Start server with output
+            process = subprocess.Popen(
                 ["python", "scripts/run_server.py"],
+                env=env,
                 stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE
+                stderr=subprocess.PIPE,
+                text=True
             )
             
-            # Wait for server
-            print("⏳ Waiting for FastAPI to start...")
-            time.sleep(self.services["fastapi"]["startup_time"])
-            if self.check_service("fastapi", self.services["fastapi"]["health_url"]):
-                print("✅ FastAPI is running")
-            else:
-                print("⚠️  FastAPI may not be ready")
+            # Check for immediate startup errors
+            time.sleep(1)
+            if process.poll() is not None:
+                _, stderr = process.communicate()
+                print(f"❌ FastAPI failed to start:\n{stderr}")
+                sys.exit(1)
+                
+            # Wait for server to be ready
+            if not self.wait_for_service("fastapi"):
+                print("❌ FastAPI server failed to respond")
+                self.stop_fastapi()
+                sys.exit(1)
                 
         except Exception as e:
             print(f"❌ Error starting FastAPI server: {e}")
             sys.exit(1)
+            
+    def stop_fastapi(self):
+        """Stop FastAPI server."""
+        try:
+            subprocess.run(["pkill", "-f", "scripts/run_server.py"], check=False)
+        except Exception as e:
+            print(f"Warning: Error stopping FastAPI: {e}")
     
     def stop_services(self):
         """Stop all services."""
@@ -178,6 +306,7 @@ def main():
     if args.action == "start":
         manager.start_docker_services()
         manager.check_lmstudio()
+        manager.check_tinytroupe_config()
         manager.start_fastapi()
         print("\n✨ All services started!")
         
@@ -189,6 +318,7 @@ def main():
         time.sleep(2)
         manager.start_docker_services()
         manager.check_lmstudio()
+        manager.check_tinytroupe_config()
         manager.start_fastapi()
         print("\n✨ All services restarted!")
         
