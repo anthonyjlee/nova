@@ -35,6 +35,11 @@ class ServiceManager:
                 "port": 8000,
                 "health_url": "http://localhost:8000/docs",
                 "startup_time": 3
+            },
+            "frontend": {
+                "port": 5173,
+                "health_url": "http://localhost:5173",
+                "startup_time": 2
             }
         }
     
@@ -238,6 +243,47 @@ importance_threshold = 0.5
         except Exception as e:
             print(f"Warning: Error stopping FastAPI: {e}")
     
+    def start_frontend(self):
+        """Start frontend development server."""
+        print("\n🎨 Starting frontend server...")
+        try:
+            # Set up environment
+            env = os.environ.copy()
+            
+            # Start server with output
+            process = subprocess.Popen(
+                ["npm", "run", "dev"],
+                cwd="frontend",
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            # Check for immediate startup errors
+            time.sleep(1)
+            if process.poll() is not None:
+                _, stderr = process.communicate()
+                print(f"❌ Frontend server failed to start:\n{stderr}")
+                sys.exit(1)
+                
+            # Wait for server to be ready
+            if not self.wait_for_service("frontend"):
+                print("❌ Frontend server failed to respond")
+                self.stop_frontend()
+                sys.exit(1)
+                
+        except Exception as e:
+            print(f"❌ Error starting frontend server: {e}")
+            sys.exit(1)
+
+    def stop_frontend(self):
+        """Stop frontend server."""
+        try:
+            subprocess.run(["pkill", "-f", "vite"], check=False)
+        except Exception as e:
+            print(f"Warning: Error stopping frontend: {e}")
+
     def stop_services(self):
         """Stop all services."""
         print("\n🛑 Stopping services...")
@@ -251,6 +297,10 @@ importance_threshold = 0.5
             )
         except Exception as e:
             print(f"Warning: Error stopping FastAPI: {e}")
+        
+        # Stop frontend server
+        print("Stopping frontend server...")
+        self.stop_frontend()
         
         # Stop Docker services
         print("Stopping Docker services...")
@@ -290,6 +340,13 @@ importance_threshold = 0.5
             self.services["fastapi"]["health_url"]
         ) else "❌ Not running"
         print(f"FastAPI: {status}")
+        
+        # Check Frontend
+        status = "✅ Running" if self.check_service(
+            "frontend",
+            self.services["frontend"]["health_url"]
+        ) else "❌ Not running"
+        print(f"Frontend: {status}")
 
 def main():
     """Run service manager."""
@@ -308,6 +365,7 @@ def main():
         manager.check_lmstudio()
         manager.check_tinytroupe_config()
         manager.start_fastapi()
+        manager.start_frontend()
         print("\n✨ All services started!")
         
     elif args.action == "stop":
@@ -320,6 +378,7 @@ def main():
         manager.check_lmstudio()
         manager.check_tinytroupe_config()
         manager.start_fastapi()
+        manager.start_frontend()
         print("\n✨ All services restarted!")
         
     elif args.action == "status":

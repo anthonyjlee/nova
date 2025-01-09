@@ -1,0 +1,95 @@
+/* Import Tailwind CSS */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Global styles */
+html, body {
+  @apply h-full overflow-hidden;
+}
+
+/* Ensure dark mode by default */
+:root {
+  color-scheme: dark;
+}
+
+/* Prevent text selection in UI elements */
+.no-select {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+/* Custom scrollbar for webkit browsers */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background-color: var(--slack-border-dim);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background-color: var(--slack-border-active);
+}
+
+/* Focus styles */
+:focus {
+  outline: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--slack-accent-primary);
+  outline-offset: -2px;
+}
+
+/* Transition defaults */
+* {
+  @apply transition-colors duration-100 ease-in-out;
+}
+
+/* Input placeholder styles */
+[contenteditable=true]:empty:before {
+  content: attr(data-placeholder);
+  color: var(--slack-text-muted);
+  cursor: text;
+}
+
+[contenteditable=true]:focus {
+  outline: none;
+  border-color: var(--slack-accent-primary) !important;
+  box-shadow: 0 0 0 1px var(--slack-accent-primary);
+}
+
+/* Active channel styles */
+.channel-active {
+  background-color: var(--slack-active-item) !important;
+  color: white !important;
+}
+
+/* Search input styles */
+.search-input {
+  background-color: var(--slack-bg-tertiary);
+  border: 1px solid var(--slack-border-dim);
+  color: var(--slack-text-primary);
+  padding: 6px 12px;
+  border-radius: 4px;
+  width: 100%;
+}
+
+.search-input:focus {
+  outline: none;
+  border-color: var(--slack-accent-primary);
+  box-shadow: 0 0 0 1px var(--slack-accent-primary);
+}
+
+.search-input::placeholder {
+  color: var(--slack-text-muted);
+}

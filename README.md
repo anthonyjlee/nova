@@ -224,12 +224,21 @@ python scripts/manage.py start
 
 ### Development
 ```bash
+# Start all services (Neo4j, Qdrant, FastAPI, Frontend)
+python scripts/manage.py start
+
+# Check service status
+python scripts/manage.py status
+
+# Stop all services
+python scripts/manage.py stop
+
+# Restart all services
+python scripts/manage.py restart
+
 # Run tests
 pytest tests/memory/integration/  # Memory tests
 pytest tests/nova/               # Nova tests
-
-# Check services
-python scripts/manage.py status
 ```
 
 ### Service Dependencies

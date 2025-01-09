@@ -18,6 +18,13 @@ API_KEYS: Dict[str, Dict] = {
             "requests": 100,
             "window": 60  # seconds
         }
+    },
+    "development": {
+        "permissions": ["read", "write"],
+        "rate_limit": {
+            "requests": 1000,
+            "window": 60  # seconds
+        }
     }
 }
 
@@ -96,10 +103,14 @@ def extract_api_key_from_headers(headers: List[Tuple[bytes, bytes]]) -> Optional
     return None
 
 async def get_ws_api_key(websocket: WebSocket) -> str:
-    """Get API key from WebSocket headers."""
-    # Extract API key from headers
-    headers = dict(websocket.headers)
-    api_key = headers.get("x-api-key")
+    """Get API key from WebSocket headers or query parameters."""
+    # Try to get API key from query parameters first
+    api_key = websocket.query_params.get("api_key")
+    
+    # If not in query params, try headers
+    if not api_key:
+        headers = dict(websocket.headers)
+        api_key = headers.get("x-api-key")
     
     if not api_key:
         await websocket.close(code=4000, reason="API key is required")
@@ -217,10 +228,14 @@ def validate_api_key(api_key: str) -> bool:
 # Custom WebSocket dependency
 async def ws_auth(websocket: Union[WebSocket, Request]) -> str:
     """Custom WebSocket authentication dependency."""
-    # Extract API key from headers
     if isinstance(websocket, WebSocket):
-        headers = dict(websocket.headers)
-        api_key = headers.get("x-api-key")
+        # Try to get API key from query parameters first
+        api_key = websocket.query_params.get("api_key")
+        
+        # If not in query params, try headers
+        if not api_key:
+            headers = dict(websocket.headers)
+            api_key = headers.get("x-api-key")
         
         if not api_key:
             await websocket.close(code=4000, reason="API key is required")
@@ -231,7 +246,12 @@ async def ws_auth(websocket: Union[WebSocket, Request]) -> str:
             return None
     else:
         # Handle Request object
-        api_key = websocket.headers.get("x-api-key")
+        # Try query parameters first
+        api_key = websocket.query_params.get("api_key")
+        
+        # If not in query params, try headers
+        if not api_key:
+            api_key = websocket.headers.get("x-api-key")
         
         if not api_key:
             raise HTTPException(

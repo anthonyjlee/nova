@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 import uuid
 
 from ..core.neo4j.base_store import Neo4jBaseStore
+from ..nova.core.websocket import manager
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +68,9 @@ class GraphStore(Neo4jBaseStore):
             """
             
             await self.run_query(prune_query, parameters=parameters)
+            
+            # Get updated graph data and broadcast
+            graph_data = await self.get_graph_data()
             
             if count_result and count_result[0]:
                 return {
@@ -254,6 +258,9 @@ class GraphStore(Neo4jBaseStore):
                 
                 await self.run_query(dedup_query)
                 
+                # Get updated graph data and broadcast
+                graph_data = await self.get_graph_data()
+                
                 # Get space saved
                 final_metrics = await self.get_statistics()
                 edge_reduction = initial_metrics["edge_count"] - final_metrics["edge_count"]
@@ -288,6 +295,101 @@ class GraphStore(Neo4jBaseStore):
                 "improvements": {}
             }
     
+    async def get_graph_data(self) -> Dict[str, Any]:
+        """Get complete knowledge graph data.
+        
+        Returns:
+            Dict containing nodes and edges
+        """
+        try:
+            # Get all nodes and relationships
+            query = """
+            MATCH (n)
+            WITH n, labels(n) as nlabels
+            OPTIONAL MATCH (n)-[r]->(m)
+            WITH n, nlabels, r, m,
+                 CASE 
+                   WHEN 'Concept' IN nlabels THEN 'concept'
+                   WHEN 'Brand' IN nlabels THEN 'brand'
+                   WHEN 'Policy' IN nlabels THEN 'policy'
+                   WHEN 'Customer' IN nlabels THEN 'customer'
+                   ELSE 'unknown'
+                 END as category,
+                 CASE
+                   WHEN 'Concept' IN nlabels THEN null
+                   WHEN n.domain IS NOT NULL THEN toString(n.domain)
+                   ELSE null
+                 END as domain,
+                 n.name as name,
+                 CASE
+                   WHEN 'Concept' IN nlabels THEN null
+                   WHEN n.created_at IS NOT NULL THEN toString(n.created_at)
+                   ELSE null
+                 END as created_at,
+                 CASE
+                   WHEN 'Concept' IN nlabels THEN null
+                   WHEN n.updated_at IS NOT NULL THEN toString(n.updated_at)
+                   ELSE null
+                 END as updated_at,
+                 n.description as description
+            RETURN {
+                nodes: collect(DISTINCT {
+                    id: toString(elementId(n)),
+                    label: n.name,
+                    type: 'knowledge',
+                    category: category,
+                    domain: domain,
+                    metadata: {
+                        created_at: created_at,
+                        updated_at: updated_at,
+                        description: n.description,
+                        type: n.type,
+                        domain: n.domain
+                    }
+                }),
+                edges: collect(DISTINCT CASE WHEN r IS NOT NULL THEN {
+                    id: toString(elementId(r)),
+                    source: toString(elementId(n)),
+                    target: toString(elementId(m)),
+                    type: type(r),
+                    label: CASE
+                        WHEN r.name IS NOT NULL THEN toString(r.name)
+                        ELSE type(r)
+                    END
+                } END)
+            } as result
+            """
+            
+            result = await self.run_query(query)
+            
+            graph_data = {
+                "nodes": [],
+                "edges": []
+            }
+            
+            if result and result[0] and result[0]["result"]:
+                graph_data = {
+                    "nodes": [n for n in result[0]["result"]["nodes"] if n],
+                    "edges": [e for e in result[0]["result"]["edges"] if e]
+                }
+            
+            # Broadcast graph update to all connected clients
+            for client_id in manager.active_connections:
+                await manager.send_json(client_id, {
+                    "type": "graph_update",
+                    "data": graph_data,
+                    "timestamp": datetime.now().isoformat()
+                })
+            
+            return graph_data
+            
+        except Exception as e:
+            logger.error(f"Error getting graph data: {str(e)}")
+            return {
+                "nodes": [],
+                "edges": []
+            }
+
     async def get_statistics(self) -> Dict[str, Any]:
         """Get knowledge graph statistics.
         

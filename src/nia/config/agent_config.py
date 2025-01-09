@@ -429,20 +429,20 @@ AGENT_RESPONSIBILITIES: Dict[str, str] = {
   * Domain boundary enforcement"""
 }
 
-from ..core.types.memory_types import Domain
+from ..core.types.memory_types import BaseDomain, KnowledgeVertical
 
 # Base domains are required for all agents
-BASE_DOMAINS: Set[str] = {Domain.PERSONAL, Domain.PROFESSIONAL}
+BASE_DOMAINS: Set[str] = {BaseDomain.PERSONAL, BaseDomain.PROFESSIONAL}
 
 # Knowledge verticals for specialized domains
 KNOWLEDGE_VERTICALS: Set[str] = {
-    Domain.RETAIL,
-    Domain.BUSINESS,
-    Domain.PSYCHOLOGY,
-    Domain.TECHNOLOGY,
-    Domain.BACKEND,
-    Domain.DATABASE,
-    Domain.GENERAL
+    KnowledgeVertical.RETAIL,
+    KnowledgeVertical.BUSINESS,
+    KnowledgeVertical.PSYCHOLOGY,
+    KnowledgeVertical.TECHNOLOGY,
+    KnowledgeVertical.BACKEND,
+    KnowledgeVertical.DATABASE,
+    KnowledgeVertical.GENERAL
 }
 
 REQUIRED_CONFIG_FIELDS: Set[str] = {

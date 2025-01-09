@@ -367,10 +367,11 @@
 
 ### Blockers
 Current blocking issues:
-- Memory integration tests not passing:
-  * TinyTroupe agent memory operations
-  * Cross-domain memory access
-  * Memory cleanup and archival
+- Memory integration tests need revision:
+  * Identified that mock tests are overly complex
+  * Decision made to use real Neo4j for development
+  * Mock tests to be simplified and focused on edge cases
+  * Real system testing to be prioritized for core functionality
 
 Resolved issues:
 - Test fixtures working properly
@@ -378,5 +379,36 @@ Resolved issues:
 - Chat system tests passing
 - Graph visualization tests passing
 - WebSocket integration tests passing
+- ✓ Testing strategy revised:
+  * Documented pragmatic testing approach
+  * Identified when to use real vs mock systems
+  * Improved test maintenance strategy
+  * Reduced mock complexity
+
+### Testing Strategy Update
+Based on recent insights (see 2025-01-10 devlog):
+
+1. Development Testing:
+   * Use real Neo4j instance for development
+   * Docker containers for consistent test environment
+   * Direct system feedback and debugging
+
+2. Mock Testing:
+   * Reserve for specific edge cases
+   * Simplified mock implementations
+   * Focus on error conditions
+   * Reduced maintenance overhead
+
+3. Integration Testing:
+   * Prioritize real system integration tests
+   * Use Docker Compose for test environment
+   * Better test environment management
+   * More reliable test results
+
+4. Next Steps:
+   * Set up Docker-based test environment
+   * Update CI/CD pipeline for real system testing
+   * Simplify existing mock implementations
+   * Document new testing guidelines
 
 Note: This task list will be updated daily to reflect current progress and priorities.

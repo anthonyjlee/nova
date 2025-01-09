@@ -268,3 +268,38 @@ class AgentStore(Neo4jBaseStore):
         except Exception as e:
             logger.error(f"Error getting status: {str(e)}")
             return None
+            
+    async def get_all_agents(self) -> List[Dict[str, Any]]:
+        """Get all agents.
+        
+        Returns:
+            List of agent data dictionaries
+        """
+        try:
+            query = """
+            MATCH (a:Agent)
+            OPTIONAL MATCH (a)-[:SUPERVISES]->(s:Agent)
+            OPTIONAL MATCH (a)-[:ASSIGNED_TO]->(t:Task)
+            WITH a,
+                 collect(DISTINCT s.id) as supervised_agents,
+                 collect(DISTINCT t.id) as assigned_tasks
+            RETURN {
+                id: toString(elementId(a)),
+                name: a.name,
+                type: a.type,
+                status: a.status,
+                domain: a.domain,
+                capabilities: a.capabilities,
+                created_at: toString(a.created_at),
+                supervisor_id: a.supervisor_id,
+                supervised_agents: supervised_agents,
+                assigned_tasks: assigned_tasks
+            } as agent
+            """
+            
+            result = await self.run_query(query)
+            return [row["agent"] for row in result]
+            
+        except Exception as e:
+            logger.error(f"Error getting all agents: {str(e)}")
+            return []
