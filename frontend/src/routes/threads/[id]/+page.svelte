@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/stores';
   import { setupChatWebSocket, sendMessage, getThread, getThreadMessages, getThreadAgents, spawnAgent as spawnAgentApi, switchDomain } from '$lib/services/chat';
-  import type { Message, Thread, ThreadParticipant, AgentType } from '$lib/types/chat';
+  import type { Message, Thread, ThreadParticipant, AgentType, WorkspaceType, DomainType } from '$lib/types/chat';
   import AgentTeamView from '$lib/components/AgentTeamView.svelte';
   import AgentDetailsPanel from '$lib/components/AgentDetailsPanel.svelte';
 
@@ -24,17 +24,19 @@
     : messages;
 
   // Domain handling
-  async function handleDomainChange(newDomain: string) {
+  async function handleDomainChange(newDomain: DomainType) {
     try {
-      await switchDomain(threadId, newDomain);
-      if (thread) {
-        thread = {
-          ...thread,
-          metadata: {
-            ...thread.metadata,
-            domain: newDomain
-          }
-        };
+      if (thread?.workspace === 'professional') {
+        await switchDomain(threadId, newDomain);
+        if (thread) {
+          thread = {
+            ...thread,
+            metadata: {
+              ...thread.metadata,
+              domain: newDomain
+            }
+          };
+        }
       }
     } catch (error) {
       console.error('Failed to switch domain:', error);
@@ -45,10 +47,13 @@
   // Agent spawning
   async function handleSpawnAgent(agentType: AgentType) {
     try {
+      if (!thread) return;
+
       const agent = await spawnAgentApi({
         threadId,
         agentType,
-        domain: thread?.metadata?.domain,
+        workspace: thread.workspace,
+        domain: thread.workspace === 'professional' ? thread.metadata?.domain : undefined,
         metadata: {
           capabilities: [],
           specialization: agentType
@@ -68,6 +73,7 @@
           name: 'System',
           type: 'agent'
         },
+        workspace: thread.workspace,
         timestamp: new Date().toISOString()
       }];
     } catch (error) {
@@ -139,10 +145,10 @@
   });
 
   async function handleSend() {
-    if (!inputContent.trim()) return;
+    if (!inputContent.trim() || !thread) return;
 
     try {
-      const message = await sendMessage(threadId, inputContent.trim());
+      const message = await sendMessage(threadId, inputContent.trim(), thread.workspace);
       messages = [...messages, message];
       
       // Clear input
@@ -218,24 +224,25 @@
       
       <!-- Domain & Participants -->
       <div class="flex items-center space-x-4">
-        <!-- Domain Selector -->
-        <div class="relative">
-          <select
-            class="px-3 py-1 rounded text-sm appearance-none cursor-pointer"
-            style="
-              background-color: var(--slack-bg-tertiary);
-              border: 1px solid var(--slack-border-dim);
-              color: var(--slack-text-primary);
-            "
-            value={thread?.metadata?.domain || 'general'}
-            on:change={(e) => handleDomainChange(e.currentTarget.value)}
-          >
-            <option value="general">General</option>
-            <option value="retail">Retail</option>
-            <option value="bfsi">BFSI</option>
-            <option value="personal">Personal</option>
-          </select>
-        </div>
+        <!-- Domain Selector (Professional workspace only) -->
+        {#if thread?.workspace === 'professional'}
+          <div class="relative">
+            <select
+              class="px-3 py-1 rounded text-sm appearance-none cursor-pointer"
+              style="
+                background-color: var(--slack-bg-tertiary);
+                border: 1px solid var(--slack-border-dim);
+                color: var(--slack-text-primary);
+              "
+              value={thread?.metadata?.domain || 'retail'}
+              on:change={(e) => handleDomainChange(e.currentTarget.value as DomainType)}
+            >
+              <option value="retail">Retail</option>
+              <option value="bfsi">BFSI</option>
+              <option value="finance">Finance</option>
+            </select>
+          </div>
+        {/if}
 
         <!-- Agent Team View -->
         <AgentTeamView 
