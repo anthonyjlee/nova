@@ -213,6 +213,23 @@ async def test_knowledge_deduplication(mock_episodic_layer, mock_semantic_layer)
     assert len(knowledge["beliefs"]) == 1  # Only one belief about the agent's capability
 
 @pytest.mark.asyncio
+async def test_consolidation_metadata():
+    """Test consolidated field handling in metadata."""
+    manager = ConsolidationManager(None, None)
+    
+    # Create test memory
+    memory = MockMemory("Test memory")
+    assert not memory["consolidated"]  # Should start as False
+    
+    # Simulate consolidation
+    memory["consolidated"] = True
+    assert memory["consolidated"]  # Should be updated to True
+    
+    # Verify metadata structure
+    assert "consolidated" in memory
+    assert isinstance(memory["consolidated"], bool)
+
+@pytest.mark.asyncio
 async def test_pattern_management():
     """Test adding and removing consolidation patterns."""
     manager = ConsolidationManager(None, None)

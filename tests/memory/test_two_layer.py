@@ -45,9 +45,12 @@ def mock_vector_store():
                     "relationships": metadata.get("relationships", []),
                     "participants": metadata.get("participants", []),
                     "importance": metadata.get("importance", 0.0),
-                    "metadata": metadata.get("metadata", {}),
-                    "consolidated": False
+                    "metadata": metadata.get("metadata", {})
                 }
+                # Add metadata fields at top level for querying
+                for k, v in metadata.items():
+                    memory_dict[f"metadata_{k}"] = v
+                memory_dict["metadata_consolidated"] = False
             elif isinstance(content, EpisodicMemory):
                 memory_dict = content.dict()
                 memory_dict["id"] = vector_id
@@ -196,6 +199,11 @@ def mock_vector_store():
                             # Handle type filter directly from content
                             if vector["content"]["type"] != value:
                                 matches = False
+                        elif key.startswith("metadata."):
+                            # Handle metadata field filters
+                            field = key.split(".", 1)[1]  # Get field name after "metadata."
+                            if vector["content"].get(f"metadata_{field}") != value:
+                                matches = False
                         else:
                             # Handle direct metadata filters
                             if vector["metadata"].get(key) != value:
@@ -232,7 +240,10 @@ def mock_vector_store():
             
         async def update_metadata(self, vector_id: str, metadata: Dict):
             if vector_id in self.vectors:
+                # Update both the metadata dict and add top-level metadata fields
                 self.vectors[vector_id]["metadata"].update(metadata)
+                for k, v in metadata.items():
+                    self.vectors[vector_id]["content"][f"metadata_{k}"] = v
                 
     return MockVectorStore()
 
@@ -695,6 +706,138 @@ async def test_importance_based_consolidation(memory_system):
     
     # Verify consolidation was triggered
     assert await memory_system.consolidation_manager.should_consolidate()
+
+@pytest.mark.asyncio
+async def test_consolidation_metadata(memory_system):
+    """Test consolidation metadata handling."""
+    # Create validation schema
+    validation = ValidationSchema(
+        domain="professional",
+        access_domain="professional",
+        confidence=0.9,
+        source="professional",
+        cross_domain=CrossDomainSchema(
+            approved=True,
+            requested=True,
+            source_domain="professional",
+            target_domain="professional",
+            justification="Test justification"
+        )
+    )
+
+    # Create domain context
+    domain_context = DomainContext(
+        primary_domain=BaseDomain.PROFESSIONAL,
+        knowledge_vertical=KnowledgeVertical.GENERAL,
+        validation=validation
+    )
+
+    # Create test memory
+    memory = MockMemory(
+        content="Test consolidation metadata",
+        type=MemoryType.EPISODIC,
+        importance=0.8,
+        context={"project": "consolidation-test"},
+        knowledge={
+            "concepts": [
+                {
+                    "name": "Consolidation",
+                    "type": "entity",
+                    "description": "Test consolidation metadata handling",
+                    "validation": validation.dict(),
+                    "domain_context": domain_context.dict()
+                }
+            ]
+        },
+        validation=validation,
+        domain_context=domain_context
+    )
+    
+    # Store memory
+    memory_id = await memory_system.store_experience(memory)
+    
+    # Verify initial consolidated state
+    results = await memory_system.query_episodic({
+        "filter": {"metadata.consolidated": False}
+    })
+    assert len(results) == 1
+    assert results[0].content == "Test consolidation metadata"
+    
+    # Mark as consolidated
+    await memory_system.episodic.store.update_metadata(
+        memory_id,
+        {"consolidated": True}
+    )
+    
+    # Verify updated consolidated state
+    results = await memory_system.query_episodic({
+        "filter": {"metadata.consolidated": True}
+    })
+    assert len(results) == 1
+    assert results[0].content == "Test consolidation metadata"
+
+@pytest.mark.asyncio
+async def test_metadata_handling(memory_system):
+    """Test metadata field handling."""
+    # Create validation schema
+    validation = ValidationSchema(
+        domain="professional",
+        access_domain="professional",
+        confidence=0.9,
+        source="professional",
+        cross_domain=CrossDomainSchema(
+            approved=True,
+            requested=True,
+            source_domain="professional",
+            target_domain="professional",
+            justification="Test justification"
+        )
+    )
+
+    # Create domain context
+    domain_context = DomainContext(
+        primary_domain=BaseDomain.PROFESSIONAL,
+        knowledge_vertical=KnowledgeVertical.GENERAL,
+        validation=validation
+    )
+
+    # Create test memory
+    memory = MockMemory(
+        content="Test metadata handling",
+        type=MemoryType.EPISODIC,
+        importance=0.8,
+        context={"project": "metadata-test"},
+        knowledge={
+            "concepts": [
+                {
+                    "name": "Metadata",
+                    "type": "entity",
+                    "description": "Test metadata handling",
+                    "validation": validation.dict(),
+                    "domain_context": domain_context.dict()
+                }
+            ]
+        },
+        validation=validation,
+        domain_context=domain_context
+    )
+    
+    # Store memory
+    memory_id = await memory_system.store_experience(memory)
+    
+    # Update metadata
+    await memory_system.episodic.store.update_metadata(
+        memory_id,
+        {"test_field": "test_value"}
+    )
+    
+    # Query using metadata field
+    results = await memory_system.query_episodic({
+        "filter": {"metadata.test_field": "test_value"}
+    })
+    
+    assert len(results) == 1
+    assert results[0].content == "Test metadata handling"
 
 @pytest.mark.asyncio
 async def test_memory_querying(memory_system):

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/stores';
-  import { setupChatWebSocket, sendMessage, getThread, getThreadMessages, getThreadAgents, spawnAgent as spawnAgentApi, switchDomain } from '$lib/services/chat';
+  import { setupChatWebSocket, sendMessage, getThread, getThreadMessages, getThreadAgents, spawnAgent as spawnAgentApi, switchDomain, createAgentTeam } from '$lib/services/chat';
   import type { Message, Thread, ThreadParticipant, AgentType, WorkspaceType, DomainType } from '$lib/types/chat';
   import { WORKSPACE_DOMAINS } from '$lib/types/chat';
   import AgentTeamView from '$lib/components/AgentTeamView.svelte';
@@ -99,6 +99,26 @@
         getThreadMessages(threadId),
         getThreadAgents(threadId)
       ]);
+
+      // Initialize specialized agent team if needed
+      if (threadId === 'nova-team' && (!agents || agents.length === 0)) {
+        const team = await createAgentTeam(
+          threadId,
+          [
+            { type: 'nova', workspace: 'personal' },
+            { type: 'belief', workspace: 'personal' },
+            { type: 'desire', workspace: 'personal' },
+            { type: 'emotion', workspace: 'personal' },
+            { type: 'reflection', workspace: 'personal' },
+            { type: 'research', workspace: 'personal' },
+            { type: 'context', workspace: 'personal' },
+            { type: 'validation', workspace: 'personal' },
+            { type: 'integration', workspace: 'personal' },
+            { type: 'orchestration', workspace: 'personal' }
+          ]
+        );
+        agents = team;
+      }
     } catch (err) {
       console.error('Failed to load thread:', err);
       error = err instanceof Error ? err.message : 'Failed to load thread';
@@ -278,7 +298,7 @@
         <!-- Agent Team View -->
         <AgentTeamView 
           {agents}
-          onAgentClick={(agent) => {
+          onAgentClick={(agent: ThreadParticipant) => {
             selectedAgent = agent;
             filteredAgentId = agent.id;
           }}
@@ -315,7 +335,12 @@
       </div>
 
       <div class="space-y-2">
-        {#each ['belief', 'desire', 'emotion', 'reflection', 'research', 'context'] as agentType}
+        {#each [
+          'belief', 'desire', 'emotion', 'reflection', 'research', 'context',
+          'validation', 'integration', 'orchestration', 'coordination',
+          'execution', 'monitoring', 'dialogue', 'alerting', 'logging',
+          'metrics', 'analytics', 'visualization', 'parsing', 'structure', 'schema'
+        ] as agentType}
           <button
             class="w-full px-3 py-2 rounded text-left hover:opacity-90 transition-opacity"
             style="background-color: var(--slack-accent-primary); color: white;"
@@ -430,6 +455,9 @@
     onClose={() => {
       selectedAgent = null;
       filteredAgentId = null;
+    }}
+    onFocusMessages={(agentId: string) => {
+      filteredAgentId = agentId;
     }}
   />
 {/if}

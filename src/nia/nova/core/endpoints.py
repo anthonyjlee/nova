@@ -9,7 +9,7 @@ import json
 import logging
 import uuid
 
-from nia.core.types.memory_types import AgentResponse
+from nia.core.types.memory_types import AgentResponse, Memory, MemoryType
 from nia.nova.core.analytics import AnalyticsResult
 from nia.memory.two_layer import TwoLayerMemorySystem
 from nia.nova.core.llm import LMStudioLLM
@@ -350,14 +350,301 @@ async def get_thread_agents(
     except Exception as e:
         raise ServiceError(str(e))
 
-@chat_router.post("/threads/{thread_id}/agents", response_model=List[Dict[str, Any]])
-async def get_thread_agents_post(
+@chat_router.post("/threads/{thread_id}/agents", response_model=Dict[str, Any])
+async def add_thread_agent(
+    thread_id: str,
+    request: Dict[str, Any],
+    _: None = Depends(get_permission("write")),
+    memory_system: Any = Depends(get_memory_system),
+    agent_store: Any = Depends(get_agent_store)
+) -> Dict[str, Any]:
+    """Add an agent to a thread."""
+    try:
+        # Get thread first
+        result = await memory_system.query_episodic({
+            "content": {},
+            "filter": {
+                "metadata.thread_id": thread_id,
+                "metadata.type": "thread"
+            },
+            "layer": "episodic"
+        })
+        
+        if not result:
+            raise ResourceNotFoundError(f"Thread {thread_id} not found")
+            
+        thread = result[0]["content"]["data"]
+        
+        # Create agent
+        agent_type = request.get("agentType")
+        workspace = request.get("workspace", "personal")
+        domain = request.get("domain")
+        
+        agent = {
+            "id": f"{agent_type}-{str(uuid.uuid4())[:8]}",
+            "name": f"{agent_type.capitalize()}Agent",
+            "type": agent_type,
+            "workspace": workspace,
+            "domain": domain,
+            "status": "active",
+            "metadata": {
+                "capabilities": [f"{agent_type}_analysis"],
+                "created_at": datetime.now().isoformat()
+            }
+        }
+        
+        # Store agent
+        await agent_store.store_agent(agent)
+        
+        # Add agent to thread participants
+        if "participants" not in thread["metadata"]:
+            thread["metadata"]["participants"] = []
+        thread["metadata"]["participants"].append(agent)
+        thread["updated_at"] = datetime.now().isoformat()
+        
+        # Update thread
+        await memory_system.store_experience(Memory(
+            content={
+                "data": thread,
+                "metadata": {
+                    "type": "thread",
+                    "domain": thread.get("domain", "general"),
+                    "thread_id": thread_id,
+                    "timestamp": datetime.now().isoformat(),
+                    "id": thread_id
+                }
+            },
+            type=MemoryType.EPISODIC,
+            importance=0.8,
+            context={
+                "domain": thread.get("domain", "general"),
+                "thread_id": thread_id,
+                "source": "chat"
+            }
+        ))
+        
+        return agent
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@chat_router.get("/threads/{thread_id}", response_model=ThreadResponse)
+async def get_thread(
     thread_id: str,
     _: None = Depends(get_permission("read")),
     memory_system: Any = Depends(get_memory_system)
+) -> ThreadResponse:
+    """Get a specific thread."""
+    try:
+        result = await memory_system.query_episodic({
+            "content": {},
+            "filter": {
+                "metadata.thread_id": thread_id,
+                "metadata.type": "thread"
+            },
+            "layer": "episodic"
+        })
+        
+        if not result:
+            raise ResourceNotFoundError(f"Thread {thread_id} not found")
+            
+        thread = result[0]["content"]["data"]
+        return ThreadResponse(**thread)
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@chat_router.post("/threads/create", response_model=ThreadResponse)
+async def create_thread(
+    request: ThreadRequest,
+    _: None = Depends(get_permission("write")),
+    memory_system: Any = Depends(get_memory_system)
+) -> ThreadResponse:
+    """Create a new chat thread."""
+    try:
+        thread_id = str(uuid.uuid4())
+        now = datetime.now().isoformat()
+        
+        thread = {
+            "id": thread_id,
+            "title": request.title,
+            "domain": request.domain or "general",
+            "messages": [],
+            "created_at": now,
+            "updated_at": now,
+            "metadata": request.metadata or {}
+        }
+        
+        # Store thread in memory system
+        memory = Memory(
+            content={
+                "data": thread,
+                "metadata": {
+                    "type": "thread",
+                    "domain": request.domain or "general",
+                    "thread_id": thread_id,
+                    "timestamp": now,
+                    "id": thread_id
+                }
+            },
+            type=MemoryType.EPISODIC,
+            importance=0.8,
+            context={
+                "domain": request.domain or "general",
+                "thread_id": thread_id,
+                "source": "chat"
+            }
+        )
+        await memory_system.store_experience(memory)
+        
+        return ThreadResponse(**thread)
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@chat_router.post("/threads/{thread_id}/messages", response_model=MessageResponse)
+async def add_message(
+    thread_id: str,
+    request: MessageRequest,
+    _: None = Depends(get_permission("write")),
+    memory_system: Any = Depends(get_memory_system)
+) -> MessageResponse:
+    """Add a message to a thread."""
+    try:
+        # Get thread first
+        result = await memory_system.query_episodic({
+            "content": {},
+            "filter": {
+                "metadata.thread_id": thread_id,
+                "metadata.type": "thread"
+            },
+            "layer": "episodic"
+        })
+        
+        if not result:
+            raise ResourceNotFoundError(f"Thread {thread_id} not found")
+            
+        thread = result[0]["content"]["data"]
+        
+        # Create message
+        message = Message(
+            id=str(uuid.uuid4()),
+            content=request.content,
+            sender_type=request.sender_type,
+            sender_id=request.sender_id,
+            timestamp=datetime.now().isoformat(),
+            metadata=request.metadata or {}
+        )
+        
+        # Add message to thread
+        thread["messages"].append(message.dict())
+        thread["updated_at"] = datetime.now().isoformat()
+        
+        # Update thread in memory
+        await memory_system.store_experience(Memory(
+            content={
+                "data": thread,
+                "metadata": {
+                    "type": "thread",
+                    "domain": thread.get("domain", "general"),
+                    "thread_id": thread_id,
+                    "timestamp": datetime.now().isoformat(),
+                    "id": thread_id
+                }
+            },
+            type=MemoryType.EPISODIC,
+            importance=0.8,
+            context={
+                "domain": thread.get("domain", "general"),
+                "thread_id": thread_id,
+                "source": "chat"
+            }
+        ))
+        
+        return MessageResponse(
+            message=message,
+            thread_id=thread_id,
+            timestamp=datetime.now().isoformat()
+        )
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@chat_router.post("/threads/{thread_id}/agent-team", response_model=List[Dict[str, Any]])
+async def create_agent_team(
+    thread_id: str,
+    request: Dict[str, Any],
+    _: None = Depends(get_permission("write")),
+    memory_system: Any = Depends(get_memory_system),
+    agent_store: Any = Depends(get_agent_store)
 ) -> List[Dict[str, Any]]:
-    """Get all agents in a thread (POST method)."""
-    return await get_thread_agents(thread_id, _, memory_system)
+    """Create a team of agents in a thread."""
+    try:
+        # Get thread first
+        result = await memory_system.query_episodic({
+            "content": {},
+            "filter": {
+                "metadata.thread_id": thread_id,
+                "metadata.type": "thread"
+            },
+            "layer": "episodic"
+        })
+        
+        if not result:
+            raise ResourceNotFoundError(f"Thread {thread_id} not found")
+            
+        thread = result[0]["content"]["data"]
+        
+        # Create each agent
+        agents = []
+        for agent_spec in request.get("agents", []):
+            agent_type = agent_spec.get("type")
+            workspace = agent_spec.get("workspace", "personal")
+            domain = agent_spec.get("domain")
+            
+            agent = {
+                "id": f"{agent_type}-{str(uuid.uuid4())[:8]}",
+                "name": f"{agent_type.capitalize()}Agent",
+                "type": agent_type,
+                "workspace": workspace,
+                "domain": domain,
+                "status": "active",
+                "metadata": {
+                    "capabilities": [f"{agent_type}_analysis"],
+                    "created_at": datetime.now().isoformat()
+                }
+            }
+            
+            # Store agent
+            await agent_store.store_agent(agent)
+            agents.append(agent)
+        
+        # Add agents to thread participants
+        if "participants" not in thread["metadata"]:
+            thread["metadata"]["participants"] = []
+        thread["metadata"]["participants"].extend(agents)
+        thread["updated_at"] = datetime.now().isoformat()
+        
+        # Update thread
+        await memory_system.store_experience(Memory(
+            content={
+                "data": thread,
+                "metadata": {
+                    "type": "thread",
+                    "domain": thread.get("domain", "general"),
+                    "thread_id": thread_id,
+                    "timestamp": datetime.now().isoformat(),
+                    "id": thread_id
+                }
+            },
+            type=MemoryType.EPISODIC,
+            importance=0.8,
+            context={
+                "domain": thread.get("domain", "general"),
+                "thread_id": thread_id,
+                "source": "chat"
+            }
+        ))
+        
+        return agents
+    except Exception as e:
+        raise ServiceError(str(e))
 
 @chat_router.get("/threads", response_model=ThreadListResponse)
 async def list_threads(

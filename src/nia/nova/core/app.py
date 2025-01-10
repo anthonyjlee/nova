@@ -95,6 +95,17 @@ app.include_router(analytics_router)      # Analytics and insights
 app.include_router(user_router)           # User management
 app.include_router(ws_router)             # Real-time updates
 
+# Add CORS middleware for specific routes
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["Content-Type", "Authorization", "x-api-key", "Accept", "Origin", "X-Requested-With"],
+    expose_headers=["Content-Type", "Authorization"],
+    max_age=3600,
+)
+
 # Add error handlers
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):

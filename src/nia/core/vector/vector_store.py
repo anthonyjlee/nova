@@ -89,7 +89,9 @@ class VectorStore:
                             "content": serialized_content,
                             "metadata": serialized_metadata,
                             "layer": layer,
-                            "timestamp": datetime.now().isoformat()
+                            "timestamp": datetime.now().isoformat(),
+                            # Add metadata fields at top level for querying
+                            **{f"metadata_{k}": v for k, v in serialized_metadata.items()}
                         }
                     )
                 ]
@@ -106,7 +108,8 @@ class VectorStore:
         limit: int = 5,
         score_threshold: float = 0.7,
         include_metadata: bool = True,
-        layer: Optional[str] = None
+        layer: Optional[str] = None,
+        filter_conditions: Optional[List[models.FieldCondition]] = None
     ) -> List[Dict[str, Any]]:
         """Search for similar vectors."""
         try:
@@ -123,21 +126,25 @@ class VectorStore:
             embedding = await self.embedding_service.get_embedding(content_str)
             
             # Build search filter
-            filter_conditions = []
+            conditions = []
             
             # Add layer filter
             if layer:
-                filter_conditions.append(
+                conditions.append(
                     models.FieldCondition(
                         key="layer",
                         match=models.MatchValue(value=layer)
                     )
                 )
             
+            # Add provided filter conditions
+            if filter_conditions:
+                conditions.extend(filter_conditions)
+            
             # Create filter if conditions exist
             search_filter = None
-            if filter_conditions:
-                search_filter = models.Filter(must=filter_conditions)
+            if conditions:
+                search_filter = models.Filter(must=conditions)
             
             # Search in Qdrant
             results = self.client.search(
@@ -273,6 +280,44 @@ class VectorStore:
             logger.error(f"Error clearing vectors: {str(e)}")
             return False
     
+    async def update_metadata(self, point_id: str, metadata: Dict[str, Any]) -> bool:
+        """Update metadata for a point."""
+        try:
+            # Get current payload
+            points = self.client.retrieve(
+                collection_name=self.collection_name,
+                ids=[point_id]
+            )
+            if not points:
+                logger.error(f"Point {point_id} not found")
+                return False
+                
+            current_payload = points[0].payload
+            
+            # Update metadata
+            serialized_metadata = serialize_for_vector_store(metadata)
+            current_payload["metadata"].update(serialized_metadata)
+            
+            # Update point
+            self.client.update_vectors(
+                collection_name=self.collection_name,
+                points=[
+                    models.PointStruct(
+                        id=point_id,
+                        payload={
+                            **current_payload,
+                            # Update metadata fields at top level for querying
+                            **{f"metadata_{k}": v for k, v in serialized_metadata.items()}
+                        }
+                    )
+                ]
+            )
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error updating metadata: {str(e)}")
+            return False
+            
     async def cleanup(self):
         """Clean up vector store."""
         try:

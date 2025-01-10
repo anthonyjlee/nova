@@ -11,6 +11,7 @@ from ..core.types.memory_types import ValidationSchema, CrossDomainSchema
 
 
 from nia.core.vector.vector_store import VectorStore, serialize_for_vector_store
+from qdrant_client.http import models
 from nia.core.neo4j.neo4j_store import Neo4jMemoryStore
 from nia.core.neo4j.concept_store import ConceptStore
 from nia.core.vector.embeddings import EmbeddingService
@@ -95,7 +96,6 @@ class EpisodicLayer:
             # Create embedding and store
             # Convert memory to dict and ensure type is string
             memory_dict = memory.dict()
-            memory_dict["consolidated"] = False  # Ensure consolidated field is set
             memory_dict["type"] = str(memory_dict["type"])
 
             # Handle knowledge field if present
@@ -122,7 +122,9 @@ class EpisodicLayer:
                     "importance": memory.importance,
                     "domain": memory.context.get("domain", "general"),
                     "concepts": memory_dict.get("concepts", []),
-                    "relationships": memory_dict.get("relationships", [])
+                    "relationships": memory_dict.get("relationships", []),
+                    "thread_id": memory.context.get("thread_id"),  # Add thread_id from context
+                    "consolidated": False  # Set initial consolidated state
                 },
                 layer=memory_dict["type"].lower()
             )
@@ -139,8 +141,17 @@ class EpisodicLayer:
     async def get_consolidation_candidates(self) -> List[Dict]:
         """Get memories ready for consolidation."""
         try:
-            # Get all memories
-            results = await self.store.search_vectors()
+            # Get all memories that aren't consolidated
+            filter_conditions = [
+                models.FieldCondition(
+                    key="metadata_consolidated",
+                    match=models.MatchValue(value=False)
+                )
+            ]
+            results = await self.store.search_vectors(
+                content={},  # Empty content since we're filtering by metadata
+                filter_conditions=filter_conditions
+            )
             
             # Convert each result to EpisodicMemory
             formatted_results = []
@@ -180,8 +191,8 @@ class EpisodicLayer:
                     {"consolidated": True}
                 )
                 # Then delete the memory
-                if hasattr(self.store, 'delete_vector'):
-                    await self.store.delete_vector(memory_id)
+                if hasattr(self.store, 'delete_vectors'):
+                    await self.store.delete_vectors([memory_id])
                 if memory_id in self.pending_consolidation:
                     self.pending_consolidation.remove(memory_id)
         except Exception as e:
@@ -766,11 +777,22 @@ class TwoLayerMemorySystem:
             # Prune episodic memories
             if hasattr(self.episodic.store, 'delete_vectors'):
                 # Get old consolidated memories
+                filter_conditions = [
+                    models.FieldCondition(
+                        key="metadata_consolidated",
+                        match=models.MatchValue(value=True)
+                    )
+                ]
+                if domain:
+                    filter_conditions.append(
+                        models.FieldCondition(
+                            key="metadata_domain",
+                            match=models.MatchValue(value=domain)
+                        )
+                    )
                 old_memories = await self.episodic.store.search_vectors(
-                    filter={
-                        "consolidated": True,
-                        "domain": domain
-                    } if domain else {"consolidated": True}
+                    content={},  # Empty content since we're filtering by metadata
+                    filter_conditions=filter_conditions
                 )
                 
                 # Delete old memories
@@ -878,13 +900,35 @@ class TwoLayerMemorySystem:
             # Extract filter and convert to vector store format
             filter_dict = query.get("filter", {})
             
+            # Convert filter to Qdrant format
+            filter_conditions = []
+            if filter_dict:
+                for key, value in filter_dict.items():
+                    if key.startswith("metadata."):
+                        # Handle any metadata field
+                        field = key.split(".", 1)[1]  # Get field name after "metadata."
+                        filter_conditions.append(
+                            models.FieldCondition(
+                                key=f"metadata_{field}",
+                                match=models.MatchValue(value=value)
+                            )
+                        )
+                    else:
+                        # Default handling
+                        filter_conditions.append(
+                            models.FieldCondition(
+                                key=key,
+                                match=models.MatchValue(value=value)
+                            )
+                        )
+
             # Search with type and filter
             results = await self.episodic.store.search_vectors(
                 content={"text": query.get("text", "")},  # Match the stored format
-                filter=filter_dict,  # Pass filter directly
                 limit=query.get("limit", 5),
                 score_threshold=query.get("score_threshold", 0.7),
-                layer=query.get("type", "episodic").lower()  # Use specified type or default to episodic
+                layer=query.get("layer", "episodic").lower(),  # Use specified layer or default to episodic
+                filter_conditions=filter_conditions if filter_conditions else None
             )
             return results
         except Exception as e:
