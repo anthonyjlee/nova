@@ -26,10 +26,28 @@ async def test_connection():
         result = await graph_store.run_query("RETURN 1 as n")
         logger.info(f"Query result: {result}")
         
-        # Try to count nodes
-        logger.info("Counting nodes...")
+        # Count nodes
+        logger.info("\nCounting nodes...")
         result = await graph_store.run_query("MATCH (n) RETURN count(n) as count")
         logger.info(f"Node count: {result}")
+        
+        # List all nodes
+        logger.info("\nListing all nodes...")
+        result = await graph_store.run_query("""
+        MATCH (n) 
+        RETURN labels(n) as type, n.name as name, n.id as id
+        """)
+        for row in result:
+            logger.info(f"{row['type'][0]}: {row['name']} (id: {row.get('id', 'N/A')})")
+            
+        # List all relationships
+        logger.info("\nListing all relationships...")
+        result = await graph_store.run_query("""
+        MATCH (a)-[r]->(b)
+        RETURN a.name as from, type(r) as rel, b.name as to
+        """)
+        for row in result:
+            logger.info(f"{row['from']} -{row['rel']}-> {row['to']}")
         
     except Exception as e:
         logger.error(f"Error testing connection: {str(e)}")

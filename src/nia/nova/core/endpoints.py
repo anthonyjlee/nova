@@ -5,6 +5,7 @@ from starlette.websockets import WebSocketDisconnect
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 import aiohttp
+import json
 import logging
 import uuid
 
@@ -88,6 +89,7 @@ from .models import (
 )
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # Set to DEBUG to see metadata processing logs
 
 # Create routers with dependencies
 graph_router = APIRouter(
@@ -119,6 +121,133 @@ agent_router = APIRouter(
     dependencies=[Depends(check_rate_limit)],
     responses={404: {"description": "Not found"}}
 )
+
+@agent_router.options("/{path:path}")
+async def agent_options_handler(request: Request):
+    """Handle CORS preflight requests for agent endpoints."""
+    return JSONResponse(
+        content={},
+        headers={
+            "Access-Control-Allow-Origin": "http://localhost:5173",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Credentials": "true",
+        },
+    )
+
+@agent_router.get("/graph")
+async def get_agent_graph(
+    _: None = Depends(get_permission("read")),
+    agent_store: Any = Depends(get_agent_store)
+) -> Dict[str, Any]:
+    """Get agent DAG visualization data."""
+    try:
+        # Get all agents
+        agents = await agent_store.get_all_agents()
+        
+        # Convert to graph format
+        nodes = []
+        edges = []
+        
+        # Create nodes for each agent
+        for agent in agents:
+            nodes.append({
+                "id": agent.get("id", agent["name"]),
+                "label": agent["name"],
+                "type": "agent",
+                "category": agent.get("type", "agent"),
+                "metadata": (lambda m: json.loads(m) if isinstance(m, str) else {
+                    "type": agent.get("type"),
+                    "description": agent.get("description"),
+                    "domain": agent.get("domain"),
+                    "created_at": str(agent.get("created_at")),
+                    "status": agent.get("status", "active")
+                })(agent.get("metadata", "{}"))
+            })
+            
+            # Add coordination edges
+            if agent.get("type") == "nova":
+                # Nova coordinates all other agents
+                for other in agents:
+                    if other["name"] != agent["name"]:
+                        edges.append({
+                            "id": f"coord_{agent['name']}_{other['name']}",
+                            "source": agent.get("id", agent["name"]),
+                            "target": other.get("id", other["name"]),
+                            "type": "coordinates",
+                            "label": "coordinates"
+                        })
+            elif agent.get("type") in ["belief", "desire"]:
+                # Add management edges
+                concept_name = agent.get("type").capitalize()
+                edges.append({
+                    "id": f"manages_{agent['name']}_{concept_name}",
+                    "source": agent.get("id", agent["name"]),
+                    "target": concept_name,
+                    "type": "manages",
+                    "label": "manages"
+                })
+        
+        # Add concept nodes
+        for concept in ["Belief", "Desire", "Emotion"]:
+            nodes.append({
+                "id": concept,
+                "label": concept,
+                "type": "concept",
+                "category": "concept"
+            })
+        
+        # Add concept relationships
+        concept_edges = [
+            ("Belief", "Desire", "influences"),
+            ("Desire", "Emotion", "affects"),
+            ("Emotion", "Belief", "impacts")
+        ]
+        
+        for source, target, rel_type in concept_edges:
+            edges.append({
+                "id": f"{rel_type}_{source}_{target}",
+                "source": source,
+                "target": target,
+                "type": rel_type,
+                "label": rel_type
+            })
+        
+        # Convert to expected format
+        formatted_nodes = []
+        for node in nodes:
+            formatted_node = {
+                "id": node["id"],
+                "label": node["label"],
+                "type": node["type"],
+                "status": node.get("metadata", {}).get("status"),
+                "domain": node.get("metadata", {}).get("domain"),
+                "properties": {
+                    "type": node.get("metadata", {}).get("type"),
+                    "description": node.get("metadata", {}).get("description"),
+                    "created_at": node.get("metadata", {}).get("created_at")
+                }
+            }
+            formatted_nodes.append(formatted_node)
+
+        formatted_edges = []
+        for edge in edges:
+            formatted_edge = {
+                "source": edge["source"],
+                "target": edge["target"],
+                "type": edge["type"],
+                "label": edge["label"],
+                "properties": {}
+            }
+            formatted_edges.append(formatted_edge)
+
+        return {
+            "nodes": formatted_nodes,
+            "edges": formatted_edges,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise ServiceError(str(e))
 
 user_router = APIRouter(
     prefix="/api/users",
@@ -180,7 +309,10 @@ async def list_available_agents(
                 "type": agent.get("type"),
                 "workspace": agent.get("workspace", "personal"),
                 "status": agent.get("status", "active"),
-                "metadata": agent.get("metadata", {})
+                "metadata": (lambda m: (
+                    logger.debug(f"Processing metadata for agent {agent['id']}: {m}"),
+                    json.loads(m) if isinstance(m, str) else m
+                )[1])(agent.get("metadata", "{}"))
             }
             for agent in agents
         ]
@@ -349,7 +481,13 @@ async def handle_graph_subscribe(client_id: str, graph_store: Any):
         if "domain" in node:
             node_data["domain"] = node["domain"]
         if "metadata" in node:
-            node_data["metadata"] = node["metadata"]
+                try:
+                    metadata = node["metadata"]
+                    node_data["metadata"] = json.loads(metadata) if isinstance(metadata, str) else metadata
+                    logger.debug(f"Processed metadata for node {node['id']}: {node_data['metadata']}")
+                except Exception as e:
+                    logger.warning(f"Failed to process metadata for node {node['id']}: {e}")
+                    node_data["metadata"] = {}
         
         node_data["color"] = (
             "#4A4AFF" if node.get("category") == "brand" else

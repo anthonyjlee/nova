@@ -1,5 +1,6 @@
 """Agent store for managing agent identities and capabilities."""
 
+import json
 import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime
@@ -8,6 +9,7 @@ import uuid
 from ..core.neo4j.base_store import Neo4jBaseStore
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # Set to DEBUG to see metadata processing logs
 
 class AgentStore(Neo4jBaseStore):
     """Store for managing agent identities."""
@@ -29,8 +31,6 @@ class AgentStore(Neo4jBaseStore):
             True if successful, False otherwise
         """
         try:
-            import json
-            
             # Extract properties we want to store
             properties = {
                 "id": agent["id"],
@@ -39,7 +39,10 @@ class AgentStore(Neo4jBaseStore):
                 "workspace": agent.get("workspace", "personal"),
                 "domain": agent.get("domain"),
                 "status": agent.get("status", "active"),
-                "metadata": json.dumps(agent.get("metadata", {})),  # Serialize metadata to JSON string
+                "metadata": (lambda m: (
+                    logger.debug(f"Serializing metadata for agent {agent['id']}: {m}"),
+                    json.dumps(m)
+                )[1])(agent.get("metadata", {})),  # Serialize metadata to JSON string
                 "created_at": datetime.now().isoformat(),
                 "updated_at": datetime.now().isoformat()
             }
@@ -163,8 +166,16 @@ class AgentStore(Neo4jBaseStore):
             for row in result:
                 agent_data = dict(row["a"])
                 try:
-                    agent_data["metadata"] = json.loads(agent_data.get("metadata", "{}"))
-                except:
+                    metadata_str = agent_data.get("metadata")
+                    logger.debug(f"Deserializing metadata for agent {agent_data.get('id', 'unknown')}: {metadata_str}")
+                    if metadata_str:
+                        agent_data["metadata"] = json.loads(metadata_str)
+                        logger.debug(f"Successfully deserialized metadata: {agent_data['metadata']}")
+                    else:
+                        agent_data["metadata"] = {}
+                        logger.debug("No metadata found, using empty dict")
+                except Exception as e:
+                    logger.warning(f"Failed to process metadata for agent {agent_data.get('id', 'unknown')}: {e}")
                     agent_data["metadata"] = {}
                 agents.append(agent_data)
             return agents
@@ -360,10 +371,51 @@ class AgentStore(Neo4jBaseStore):
             # Convert nodes to dictionaries and deserialize metadata
             agents = []
             for row in result:
-                agent_data = dict(row["a"])
+                # Get node properties
+                node = row["a"]
+                agent_data = dict(node)
+                
+                # Use name as id if no explicit id is set
+                if "id" not in agent_data:
+                    agent_data["id"] = agent_data.get("name", str(node.id))
+                    # Also update the node in Neo4j
+                    try:
+                        update_query = """
+                        MATCH (a:Agent {name: $name})
+                        WHERE NOT EXISTS(a.id)
+                        SET a.id = $id
+                        """
+                        await self.run_query(
+                            update_query,
+                            parameters={
+                                "name": agent_data["name"],
+                                "id": agent_data["id"]
+                            }
+                        )
+                        logger.debug(f"Updated agent {agent_data['name']} with id {agent_data['id']}")
+                    except Exception as e:
+                        logger.warning(f"Failed to update agent {agent_data['name']} with id: {e}")
+                
+                # Try to get metadata from JSON string first
                 try:
-                    agent_data["metadata"] = json.loads(agent_data.get("metadata", "{}"))
-                except:
+                    metadata_str = agent_data.get("metadata")
+                    logger.debug(f"Deserializing metadata for agent {agent_data.get('id', 'unknown')}: {metadata_str}")
+                    if metadata_str:
+                        agent_data["metadata"] = json.loads(metadata_str)
+                        logger.debug(f"Successfully deserialized metadata: {agent_data['metadata']}")
+                    else:
+                        # Fallback to individual fields
+                        agent_data["metadata"] = {
+                            "type": agent_data.get("type"),
+                            "description": agent_data.get("description"),
+                            "domain": agent_data.get("domain"),
+                            "created_at": agent_data.get("created_at"),
+                            "status": agent_data.get("status", "active")
+                        }
+                        logger.debug(f"Using fallback metadata: {agent_data['metadata']}")
+                except Exception as e:
+                    # Fallback to empty metadata
+                    logger.warning(f"Failed to process metadata for agent {agent_data.get('id', 'unknown')}: {e}")
                     agent_data["metadata"] = {}
                 logger.info("Agent data: %s", agent_data)
                 agents.append(agent_data)

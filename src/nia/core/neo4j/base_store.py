@@ -1,6 +1,7 @@
 """Base Neo4j store implementation."""
 
 import logging
+import asyncio
 from typing import Optional, Tuple, Dict, Any
 from neo4j import AsyncGraphDatabase, AsyncDriver
 from contextlib import asynccontextmanager
@@ -127,8 +128,59 @@ class Neo4jBaseStore:
         """Async context manager exit."""
         await self.close()
         
+    @asynccontextmanager
+    async def transaction(self, access_mode="WRITE", database=None):
+        """Transaction context manager with retry logic."""
+        if not self.driver:
+            await self.connect()
+            
+        max_retries = 3
+        retry_count = 0
+        session = None
+        tx = None
+        
+        try:
+            while True:
+                try:
+                    if session:
+                        await session.close()
+                    session = self.driver.session(
+                        database=database or self.kwargs.get("database", "neo4j"),
+                        default_access_mode=access_mode
+                    )
+                    tx = await session.begin_transaction()
+                    break
+                except Exception as e:
+                    if retry_count >= max_retries:
+                        logger.error(f"Failed to start transaction after {max_retries} attempts: {str(e)}")
+                        raise
+                    retry_count += 1
+                    logger.warning(f"Session failed, attempt {retry_count}/{max_retries}: {str(e)}")
+                    # Reset connection on session failure
+                    await self.close()
+                    await self.connect()
+                    await asyncio.sleep(1)  # Wait before retry
+                    continue
+            
+            try:
+                yield tx
+                await tx.commit()
+            except Exception as e:
+                if tx and not tx.closed():
+                    await tx.rollback()
+                raise
+            finally:
+                if tx and not tx.closed():
+                    await tx.close()
+                if session:
+                    await session.close()
+        except Exception:
+            if session:
+                await session.close()
+            raise
+
     async def run_query(self, query: str, parameters: Optional[Dict[str, Any]] = None):
-        """Run Neo4j query.
+        """Run Neo4j query with transaction management.
         
         Args:
             query: Cypher query string
@@ -137,29 +189,11 @@ class Neo4jBaseStore:
         Returns:
             Query result records
         """
-        if not self.driver:
-            await self.connect()
-            
-        try:
-            # Create session with database and access mode
-            async with self.driver.session(
-                database=self.kwargs.get("database", "neo4j"),
-                default_access_mode=self.kwargs.get("access_mode", "WRITE")
-            ) as session:
-                # Run query and consume results immediately
-                result = await session.run(query, parameters or {})
-                try:
-                    records = await result.data()
-                finally:
-                    # Ensure result is consumed
-                    await result.consume()
-                return records
-        except Exception as e:
-            logger.error(f"Error running query: {str(e)}")
-            # Try to reconnect on failure
+        async with self.transaction() as tx:
+            result = await tx.run(query, parameters or {})
             try:
-                await self.close()
-                await self.connect()
-            except Exception as reconnect_error:
-                logger.error(f"Error reconnecting: {str(reconnect_error)}")
-            raise
+                records = await result.data()
+            finally:
+                # Ensure result is consumed
+                await result.consume()
+            return records

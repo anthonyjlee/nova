@@ -76,11 +76,54 @@ async def initialize_agents():
             else:
                 logger.error(f"Failed to store agent: {agent['name']}")
                 
-        # Verify agents were stored
+        # Create relationships
+        logger.info("Creating agent relationships...")
+        query = """
+        // Match concepts
+        MATCH (belief:Concept {name: 'Belief'})
+        MATCH (desire:Concept {name: 'Desire'})
+        MATCH (emotion:Concept {name: 'Emotion'})
+        
+        // Match agents
+        MATCH (nova:Agent {id: 'nova-team'})
+        MATCH (beliefAgent:Agent {id: 'belief-agent-1'})
+        MATCH (desireAgent:Agent {id: 'desire-agent-1'})
+        MATCH (emotionAgent:Agent {id: 'emotion-agent-1'})
+        
+        // Create management relationships
+        MERGE (beliefAgent)-[:MANAGES]->(belief)
+        MERGE (desireAgent)-[:MANAGES]->(desire)
+        MERGE (emotionAgent)-[:MANAGES]->(emotion)
+        
+        // Create coordination relationships
+        MERGE (nova)-[:COORDINATES]->(beliefAgent)
+        MERGE (nova)-[:COORDINATES]->(desireAgent)
+        MERGE (nova)-[:COORDINATES]->(emotionAgent)
+        """
+        
+        try:
+            await agent_store.run_query(query)
+            logger.info("Successfully created agent relationships")
+        except Exception as e:
+            logger.error(f"Error creating relationships: {str(e)}")
+            
+        # Verify agents and relationships
         all_agents = await agent_store.get_all_agents()
         logger.info(f"Total agents in store: {len(all_agents)}")
         for agent in all_agents:
             logger.info(f"Found agent: {agent['name']}")
+            
+        # Verify relationships
+        rel_query = """
+        MATCH (a:Agent)-[r]->(b)
+        RETURN count(r) as rel_count
+        """
+        try:
+            result = await agent_store.run_query(rel_query)
+            if result and result[0]:
+                logger.info(f"Total relationships: {result[0]['rel_count']}")
+        except Exception as e:
+            logger.error(f"Error counting relationships: {str(e)}")
             
     except Exception as e:
         logger.error(f"Error initializing agents: {str(e)}")
