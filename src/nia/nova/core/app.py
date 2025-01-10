@@ -12,6 +12,7 @@ from .endpoints import (
     chat_router,
     ws_router
 )
+from .nova_endpoints import nova_router
 
 app = FastAPI(
     title="Nova API",
@@ -59,10 +60,11 @@ app.add_middleware(
     allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["*", "x-api-key"],  # Explicitly allow x-api-key header
 )
 
 # Include routers
+app.include_router(nova_router)           # Nova-specific endpoints
 app.include_router(chat_router)           # Chat and threads
 app.include_router(graph_router)          # Knowledge graph operations
 app.include_router(orchestration_router)  # Task orchestration

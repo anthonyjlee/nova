@@ -154,15 +154,25 @@ async def create_thread(
         }
         
         # Store thread in memory system
-        await memory_system.store_experience({
-            "type": "thread",
-            "content": thread,
-            "importance": 0.8,
-            "metadata": {
+        await memory_system.store(
+            content={
+                "data": thread,
+                "metadata": {
+                    "type": "thread",
+                    "domain": request.domain,
+                    "thread_id": thread_id,
+                    "timestamp": datetime.now().isoformat(),
+                    "id": thread_id
+                }
+            },
+            memory_type="episodic",
+            importance=0.8,
+            context={
                 "domain": request.domain,
-                "thread_id": thread_id
+                "thread_id": thread_id,
+                "source": "system"
             }
-        })
+        )
         
         return ThreadResponse(**thread)
     except Exception as e:
@@ -177,15 +187,19 @@ async def get_thread(
     """Get thread details and messages."""
     try:
         # Retrieve thread from memory system
-        result = await memory_system.search_experiences({
-            "type": "thread",
-            "metadata.thread_id": thread_id
+        result = await memory_system.query_episodic({
+            "content": {},
+            "filter": {
+                "metadata.thread_id": thread_id,
+                "metadata.type": "thread"
+            },
+            "layer": "episodic"
         })
         
         if not result:
             raise ResourceNotFoundError(f"Thread {thread_id} not found")
             
-        thread = result[0]["content"]
+        thread = result[0]["content"]["data"]
         return ThreadResponse(**thread)
     except Exception as e:
         raise ServiceError(str(e))
@@ -200,15 +214,19 @@ async def add_message(
     """Add a message to a thread."""
     try:
         # Get existing thread
-        result = await memory_system.search_experiences({
-            "type": "thread",
-            "metadata.thread_id": thread_id
+        result = await memory_system.query_episodic({
+            "content": {},
+            "filter": {
+                "metadata.thread_id": thread_id,
+                "metadata.type": "thread"
+            },
+            "layer": "episodic"
         })
         
         if not result:
             raise ResourceNotFoundError(f"Thread {thread_id} not found")
             
-        thread = result[0]["content"]
+        thread = result[0]["content"]["data"]
         now = datetime.now().isoformat()
         
         # Create new message
@@ -226,21 +244,138 @@ async def add_message(
         thread["updated_at"] = now
         
         # Store updated thread
-        await memory_system.store_experience({
-            "type": "thread",
-            "content": thread,
-            "importance": 0.8,
-            "metadata": {
+        await memory_system.store(
+            content={
+                "data": thread,
+                "metadata": {
+                    "type": "thread",
+                    "domain": thread.get("domain"),
+                    "thread_id": thread_id,
+                    "timestamp": datetime.now().isoformat(),
+                    "id": thread_id
+                }
+            },
+            memory_type="episodic",
+            importance=0.8,
+            context={
                 "domain": thread.get("domain"),
-                "thread_id": thread_id
+                "thread_id": thread_id,
+                "source": "system"
             }
-        })
+        )
         
         return MessageResponse(
             message=new_message,
             thread_id=thread_id,
             timestamp=now
         )
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@chat_router.post("/threads/{thread_id}/suggest-agents", response_model=Dict[str, Any])
+async def suggest_agents(
+    thread_id: str,
+    request: Dict[str, str],
+    _: None = Depends(get_permission("read")),
+    orchestration_agent: Any = Depends(get_orchestration_agent),
+    memory_system: Any = Depends(get_memory_system)
+) -> Dict[str, Any]:
+    """Suggest agents for a task based on Nova's orchestration."""
+    try:
+        # Get thread domain
+        domain = "general"  # Default domain
+        
+        # Store orchestration decision in memory
+        await memory_system.store(
+            content={
+                "data": {
+                    "task": request["task"],
+                    "thread_id": thread_id,
+                    "domain": domain,
+                    "timestamp": datetime.now().isoformat()
+                },
+                "metadata": {
+                    "type": "agent_suggestion",
+                    "thread_id": thread_id,
+                    "domain": domain,
+                    "timestamp": datetime.now().isoformat()
+                }
+            },
+            memory_type="episodic",
+            importance=0.7,
+            context={
+                "domain": domain,
+                "thread_id": thread_id,
+                "type": "agent_suggestion"
+            }
+        )
+        
+        # Get orchestration result
+        task_result = await orchestration_agent.orchestrate({
+            "type": "agent_suggestion",
+            "task": request["task"],
+            "thread_id": thread_id,
+            "domain": domain,
+            "timestamp": datetime.now().isoformat()
+        })
+        
+        # Store orchestration result in memory
+        await memory_system.store(
+            content={
+                "data": {
+                    "task": request["task"],
+                    "thread_id": thread_id,
+                    "result": task_result,
+                    "timestamp": datetime.now().isoformat()
+                },
+                "metadata": {
+                    "type": "agent_suggestion",
+                    "thread_id": thread_id,
+                    "domain": domain,
+                    "timestamp": datetime.now().isoformat()
+                }
+            },
+            memory_type="episodic",
+            importance=0.7,
+            context={
+                "domain": domain,
+                "thread_id": thread_id,
+                "type": "agent_suggestion"
+            }
+        )
+        
+        # Analyze task context
+        task = request["task"].lower()
+        recommended = []
+        
+        # Knowledge-related tasks
+        if any(word in task for word in ["understand", "learn", "explain", "what", "how", "why"]):
+            recommended.extend(["research", "belief", "context"])
+            
+        # Complex coordination tasks
+        if any(word in task for word in ["help", "coordinate", "manage", "organize"]):
+            recommended.extend(["coordination", "integration", "reflection"])
+            
+        # Analysis tasks (always include analysis for any task)
+        recommended.append("analysis")
+        
+        # Emotional or desire-based tasks
+        if any(word in task for word in ["feel", "want", "need", "desire", "emotion"]):
+            recommended.extend(["emotion", "desire"])
+            
+        # Remove duplicates while preserving order
+        recommended = list(dict.fromkeys(recommended))
+        
+        # Limit to max 3 agents to avoid cluttering
+        if len(recommended) > 3:
+            recommended = recommended[:3]
+            
+        return {
+            "recommended": recommended,
+            "confidence": 0.8,
+            "explanation": "Nova suggests these specialized agents based on your task requirements and domain context.",
+            "domain": domain
+        }
     except Exception as e:
         raise ServiceError(str(e))
 
@@ -252,11 +387,13 @@ async def list_threads(
     """List all chat threads."""
     try:
         # Retrieve all threads from memory system
-        results = await memory_system.search_experiences({
-            "type": "thread"
+        results = await memory_system.query_episodic({
+            "content": {},
+            "filter": {"metadata.type": "thread"},
+            "layer": "episodic"
         })
         
-        threads = [ThreadResponse(**result["content"]) for result in results]
+        threads = [ThreadResponse(**result["content"]["data"]) for result in results]
         
         return ThreadListResponse(
             threads=threads,

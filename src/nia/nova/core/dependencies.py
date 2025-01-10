@@ -19,21 +19,13 @@ from nia.memory.two_layer import TwoLayerMemorySystem
 from nia.world.environment import NIAWorld
 from nia.core.interfaces.llm_interface import LLMInterface
 
-async def get_llm() -> AsyncGenerator[LLMInterface, None]:
+async def get_llm() -> LLMInterface:
     """Get LLM interface instance."""
-    llm = LLMInterface()
-    try:
-        yield llm
-    finally:
-        await llm.cleanup()
+    return LLMInterface()
 
-async def get_llm_interface() -> AsyncGenerator[LLMInterface, None]:
+async def get_llm_interface() -> LLMInterface:
     """Get LLM interface instance."""
-    llm = LLMInterface()
-    try:
-        yield llm
-    finally:
-        await llm.cleanup()
+    return LLMInterface()
 
 async def get_memory_system() -> AsyncGenerator[TwoLayerMemorySystem, None]:
     """Get memory system instance."""
