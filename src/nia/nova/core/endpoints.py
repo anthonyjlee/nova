@@ -97,6 +97,22 @@ graph_router = APIRouter(
     responses={404: {"description": "Not found"}}
 )
 
+@graph_router.get("/data")
+async def get_graph_data(
+    _: None = Depends(get_permission("read")),
+    graph_store: Any = Depends(get_graph_store)
+) -> Dict[str, Any]:
+    """Get graph data."""
+    try:
+        graph_data = await graph_store.get_graph_data()
+        return {
+            "nodes": graph_data.get("nodes", []),
+            "edges": graph_data.get("edges", []),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise ServiceError(str(e))
+
 agent_router = APIRouter(
     prefix="/api/agents",
     tags=["Agent Management"],
@@ -125,6 +141,10 @@ orchestration_router = APIRouter(
     responses={404: {"description": "Not found"}}
 )
 
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from fastapi import Request
+
 chat_router = APIRouter(
     prefix="/api/chat",
     tags=["Chat & Threads"],
@@ -132,61 +152,50 @@ chat_router = APIRouter(
     responses={404: {"description": "Not found"}}
 )
 
-@chat_router.post("/threads/create", response_model=ThreadResponse)
-async def create_thread(
-    request: ThreadRequest,
-    _: None = Depends(get_permission("write")),
-    memory_system: Any = Depends(get_memory_system)
-) -> ThreadResponse:
-    """Create a new chat thread."""
+@chat_router.options("/{path:path}")
+async def chat_options_handler(request: Request):
+    """Handle CORS preflight requests for chat endpoints."""
+    return JSONResponse(
+        content={},
+        headers={
+            "Access-Control-Allow-Origin": "http://localhost:5173",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Credentials": "true",
+        },
+    )
+
+@chat_router.get("/agents", response_model=List[Dict[str, Any]])
+async def list_available_agents(
+    _: None = Depends(get_permission("read")),
+    agent_store: Any = Depends(get_agent_store)
+) -> List[Dict[str, Any]]:
+    """List all available agents."""
     try:
-        thread_id = str(uuid.uuid4())
-        now = datetime.now().isoformat()
-        
-        thread = {
-            "id": thread_id,
-            "title": request.title,
-            "domain": request.domain,
-            "messages": [],
-            "created_at": now,
-            "updated_at": now,
-            "metadata": request.metadata or {}
-        }
-        
-        # Store thread in memory system
-        await memory_system.store(
-            content={
-                "data": thread,
-                "metadata": {
-                    "type": "thread",
-                    "domain": request.domain,
-                    "thread_id": thread_id,
-                    "timestamp": datetime.now().isoformat(),
-                    "id": thread_id
-                }
-            },
-            memory_type="episodic",
-            importance=0.8,
-            context={
-                "domain": request.domain,
-                "thread_id": thread_id,
-                "source": "system"
+        agents = await agent_store.get_all_agents()
+        return [
+            {
+                "id": agent["id"],
+                "name": agent["name"],
+                "type": agent.get("type"),
+                "workspace": agent.get("workspace", "personal"),
+                "status": agent.get("status", "active"),
+                "metadata": agent.get("metadata", {})
             }
-        )
-        
-        return ThreadResponse(**thread)
+            for agent in agents
+        ]
     except Exception as e:
         raise ServiceError(str(e))
 
-@chat_router.get("/threads/{thread_id}", response_model=ThreadResponse)
-async def get_thread(
+@chat_router.get("/threads/{thread_id}/agents", response_model=List[Dict[str, Any]])
+async def get_thread_agents(
     thread_id: str,
     _: None = Depends(get_permission("read")),
     memory_system: Any = Depends(get_memory_system)
-) -> ThreadResponse:
-    """Get thread details and messages."""
+) -> List[Dict[str, Any]]:
+    """Get all agents in a thread."""
     try:
-        # Retrieve thread from memory system
+        # Get thread
         result = await memory_system.query_episodic({
             "content": {},
             "filter": {
@@ -200,184 +209,23 @@ async def get_thread(
             raise ResourceNotFoundError(f"Thread {thread_id} not found")
             
         thread = result[0]["content"]["data"]
-        return ThreadResponse(**thread)
+        
+        # Return participants that are agents
+        return [
+            p for p in thread.get("metadata", {}).get("participants", [])
+            if p.get("type") == "agent"
+        ]
     except Exception as e:
         raise ServiceError(str(e))
 
-@chat_router.post("/threads/{thread_id}/messages", response_model=MessageResponse)
-async def add_message(
+@chat_router.post("/threads/{thread_id}/agents", response_model=List[Dict[str, Any]])
+async def get_thread_agents_post(
     thread_id: str,
-    message: MessageRequest,
-    _: None = Depends(get_permission("write")),
-    memory_system: Any = Depends(get_memory_system)
-) -> MessageResponse:
-    """Add a message to a thread."""
-    try:
-        # Get existing thread
-        result = await memory_system.query_episodic({
-            "content": {},
-            "filter": {
-                "metadata.thread_id": thread_id,
-                "metadata.type": "thread"
-            },
-            "layer": "episodic"
-        })
-        
-        if not result:
-            raise ResourceNotFoundError(f"Thread {thread_id} not found")
-            
-        thread = result[0]["content"]["data"]
-        now = datetime.now().isoformat()
-        
-        # Create new message
-        new_message = Message(
-            id=str(uuid.uuid4()),
-            content=message.content,
-            sender_type=message.sender_type,
-            sender_id=message.sender_id,
-            timestamp=now,
-            metadata=message.metadata
-        )
-        
-        # Update thread
-        thread["messages"].append(new_message.dict())
-        thread["updated_at"] = now
-        
-        # Store updated thread
-        await memory_system.store(
-            content={
-                "data": thread,
-                "metadata": {
-                    "type": "thread",
-                    "domain": thread.get("domain"),
-                    "thread_id": thread_id,
-                    "timestamp": datetime.now().isoformat(),
-                    "id": thread_id
-                }
-            },
-            memory_type="episodic",
-            importance=0.8,
-            context={
-                "domain": thread.get("domain"),
-                "thread_id": thread_id,
-                "source": "system"
-            }
-        )
-        
-        return MessageResponse(
-            message=new_message,
-            thread_id=thread_id,
-            timestamp=now
-        )
-    except Exception as e:
-        raise ServiceError(str(e))
-
-@chat_router.post("/threads/{thread_id}/suggest-agents", response_model=Dict[str, Any])
-async def suggest_agents(
-    thread_id: str,
-    request: Dict[str, str],
     _: None = Depends(get_permission("read")),
-    orchestration_agent: Any = Depends(get_orchestration_agent),
     memory_system: Any = Depends(get_memory_system)
-) -> Dict[str, Any]:
-    """Suggest agents for a task based on Nova's orchestration."""
-    try:
-        # Get thread domain
-        domain = "general"  # Default domain
-        
-        # Store orchestration decision in memory
-        await memory_system.store(
-            content={
-                "data": {
-                    "task": request["task"],
-                    "thread_id": thread_id,
-                    "domain": domain,
-                    "timestamp": datetime.now().isoformat()
-                },
-                "metadata": {
-                    "type": "agent_suggestion",
-                    "thread_id": thread_id,
-                    "domain": domain,
-                    "timestamp": datetime.now().isoformat()
-                }
-            },
-            memory_type="episodic",
-            importance=0.7,
-            context={
-                "domain": domain,
-                "thread_id": thread_id,
-                "type": "agent_suggestion"
-            }
-        )
-        
-        # Get orchestration result
-        task_result = await orchestration_agent.orchestrate({
-            "type": "agent_suggestion",
-            "task": request["task"],
-            "thread_id": thread_id,
-            "domain": domain,
-            "timestamp": datetime.now().isoformat()
-        })
-        
-        # Store orchestration result in memory
-        await memory_system.store(
-            content={
-                "data": {
-                    "task": request["task"],
-                    "thread_id": thread_id,
-                    "result": task_result,
-                    "timestamp": datetime.now().isoformat()
-                },
-                "metadata": {
-                    "type": "agent_suggestion",
-                    "thread_id": thread_id,
-                    "domain": domain,
-                    "timestamp": datetime.now().isoformat()
-                }
-            },
-            memory_type="episodic",
-            importance=0.7,
-            context={
-                "domain": domain,
-                "thread_id": thread_id,
-                "type": "agent_suggestion"
-            }
-        )
-        
-        # Analyze task context
-        task = request["task"].lower()
-        recommended = []
-        
-        # Knowledge-related tasks
-        if any(word in task for word in ["understand", "learn", "explain", "what", "how", "why"]):
-            recommended.extend(["research", "belief", "context"])
-            
-        # Complex coordination tasks
-        if any(word in task for word in ["help", "coordinate", "manage", "organize"]):
-            recommended.extend(["coordination", "integration", "reflection"])
-            
-        # Analysis tasks (always include analysis for any task)
-        recommended.append("analysis")
-        
-        # Emotional or desire-based tasks
-        if any(word in task for word in ["feel", "want", "need", "desire", "emotion"]):
-            recommended.extend(["emotion", "desire"])
-            
-        # Remove duplicates while preserving order
-        recommended = list(dict.fromkeys(recommended))
-        
-        # Limit to max 3 agents to avoid cluttering
-        if len(recommended) > 3:
-            recommended = recommended[:3]
-            
-        return {
-            "recommended": recommended,
-            "confidence": 0.8,
-            "explanation": "Nova suggests these specialized agents based on your task requirements and domain context.",
-            "domain": domain
-        }
-    except Exception as e:
-        raise ServiceError(str(e))
+) -> List[Dict[str, Any]]:
+    """Get all agents in a thread (POST method)."""
+    return await get_thread_agents(thread_id, _, memory_system)
 
 @chat_router.get("/threads", response_model=ThreadListResponse)
 async def list_threads(
@@ -421,14 +269,15 @@ async def analytics_websocket(
     try:
         await websocket.accept()
         
-        # Get API key from query parameters or headers
-        api_key = websocket.query_params.get("api_key")
-        if not api_key:
-            headers = dict(websocket.headers)
-            api_key = headers.get("x-api-key")
-            
-        if not api_key or api_key not in API_KEYS:
-            await websocket.close(code=4000, reason="Invalid API key")
+        # Wait for auth message
+        try:
+            data = await websocket.receive_json()
+            if data.get('type') != 'auth' or data.get('api_key') not in API_KEYS:
+                await websocket.close(code=4000, reason="Invalid API key")
+                return
+        except Exception as e:
+            logger.error(f"Auth error: {e}")
+            await websocket.close(code=4000, reason="Auth required")
             return
             
         # Get analytics agent from async generator if needed
@@ -445,394 +294,137 @@ async def analytics_websocket(
         # Accept connection and add to manager
         await manager.connect(websocket, client_id)
         
-        while True:
-            try:
+        try:
+            while True:
                 data = await websocket.receive_json()
                 
                 try:
                     # Handle different message types
                     if data.get("type") == "ping":
-                        # Handle ping message
                         await manager.send_json(client_id, {
                             "type": "pong",
                             "timestamp": datetime.now().isoformat()
                         })
                     elif data.get("type") == "graph_subscribe":
-                        # Send initial graph data
-                        graph_data = await graph_store.get_graph_data()
-                        
-                        # Format nodes and edges for Cytoscape
-                        nodes = []
-                        edges = []
-                        
-                        for node in graph_data.get("nodes", []):
-                            node_data = {
-                                "id": node["id"],
-                                "type": node["type"]
-                            }
-                            if "label" in node:
-                                node_data["label"] = node["label"]
-                            if "category" in node:
-                                node_data["category"] = node["category"]
-                            if "domain" in node:
-                                node_data["domain"] = node["domain"]
-                            if "metadata" in node:
-                                node_data["metadata"] = node["metadata"]
-                            
-                            # Set color based on category
-                            node_data["color"] = (
-                                "#4A4AFF" if node.get("category") == "brand" else
-                                "#FF4A4A" if node.get("category") == "policy" else
-                                "#4AFF4A"
-                            )
-                            
-                            nodes.append({"data": node_data})
-                            
-                        for edge in graph_data.get("edges", []):
-                            edge_data = {
-                                "id": edge["id"],
-                                "source": edge["source"],
-                                "target": edge["target"],
-                                "type": edge["type"]
-                            }
-                            if "label" in edge:
-                                edge_data["label"] = edge["label"]
-                            
-                            edges.append({"data": edge_data})
-                        
-                        await manager.send_json(client_id, {
-                            "type": "graph_update",
-                            "data": {
-                                "added": {
-                                    "nodes": nodes,
-                                    "edges": edges
-                                }
-                            },
-                            "timestamp": datetime.now().isoformat()
-                        })
+                        await handle_graph_subscribe(client_id, graph_store)
                     elif data.get("type") == "swarm_monitor":
-                        # Monitor swarm activity for specific task
-                        task_id = data.get("task_id")
-                        if not task_id:
-                            raise ValidationError("swarm_monitor requires task_id")
-                            
-                        # Get swarm analytics
-                        result = await analytics_agent.process_analytics(
-                            content={
-                                "type": "swarm_analytics",
-                                "task_id": task_id,
-                                "timestamp": datetime.now().isoformat()
-                            },
-                            analytics_type="behavioral",
-                            metadata={"domain": data.get("domain")}
-                        )
-                        
-                        # Send swarm updates based on analytics
-                        for event in result.analytics.get("events", []):
-                            await websocket.send_json({
-                                "type": "swarm_update",
-                                "event_type": event["type"],
-                                **event["data"],
-                                "timestamp": datetime.now().isoformat()
-                            })
+                        await handle_swarm_monitor(client_id, data, analytics_agent, websocket)
                     elif data.get("type") == "agent_coordination":
-                        # Handle agent coordination request
-                        result = await analytics_agent.process_analytics(
-                            content={
-                                "type": "coordination",
-                                "query": data.get("content"),
-                                "domain": data.get("domain", "general"),
-                                "llm_config": data.get("llm_config", {}),
-                                "timestamp": datetime.now().isoformat()
-                            },
-                            analytics_type="behavioral",
-                            metadata={"domain": data.get("domain")}
-                        )
-                        
-                        # Send agent updates
-                        if isinstance(result.analytics, dict):
-                            for agent, update in result.analytics.items():
-                                await websocket.send_json({
-                                    "type": "analytics_update",
-                                    "analytics": {agent: update},
-                                    "timestamp": datetime.now().isoformat()
-                                })
-                        
-                        # Send final response
-                        if result.insights:
-                            insight = result.insights[0] if isinstance(result.insights, list) else result.insights
-                            content = insight.get("description", str(insight)) if isinstance(insight, dict) else str(insight)
-                            await websocket.send_json({
-                                "type": "response",
-                                "content": content,
-                                "confidence": result.confidence,
-                                "timestamp": datetime.now().isoformat()
-                            })
-                    else:
-                        # Handle regular analytics requests
-                        request = AnalyticsRequest(**data)
-                        result = await analytics_agent.process_analytics(
-                            content=data,
-                            analytics_type=request.type,
-                            metadata={"domain": request.domain} if request.domain else None
-                        )
-                        
-                    # Send analytics update
-                    if hasattr(result, 'analytics') and isinstance(result.analytics, dict):
-                        # Format nodes and edges if present
-                        if 'nodes' in result.analytics or 'edges' in result.analytics:
-                            formatted_nodes = []
-                            formatted_edges = []
-                            
-                            for node in result.analytics.get('nodes', []):
-                                node_data = {
-                                    "id": node["id"],
-                                    "type": node.get("type", "default")
-                                }
-                                if "label" in node:
-                                    node_data["label"] = node["label"]
-                                if "category" in node:
-                                    node_data["category"] = node["category"]
-                                if "domain" in node:
-                                    node_data["domain"] = node["domain"]
-                                if "metadata" in node:
-                                    node_data["metadata"] = node["metadata"]
-                                if "status" in node:
-                                    node_data["status"] = node["status"]
-                                    node_data["color"] = "#4AFF4A" if node["status"] == "active" else "#FF4A4A"
-                                elif "category" in node:
-                                    node_data["color"] = (
-                                        "#4A4AFF" if node["category"] == "brand" else
-                                        "#FF4A4A" if node["category"] == "policy" else
-                                        "#4AFF4A"
-                                    )
-                                else:
-                                    node_data["color"] = "#4AFF4A"
-                                
-                                formatted_nodes.append({"data": node_data})
-                            
-                            for edge in result.analytics.get('edges', []):
-                                edge_data = {
-                                    "id": edge.get("id") or f"{edge['source']}-{edge['target']}",
-                                    "source": edge["source"],
-                                    "target": edge["target"],
-                                    "type": edge.get("type", "default")
-                                }
-                                if "label" in edge:
-                                    edge_data["label"] = edge["label"]
-                                
-                                formatted_edges.append({"data": edge_data})
-                            
-                            await manager.send_json(client_id, {
-                                "type": "graph_update",
-                                "data": {
-                                    "added": {
-                                        "nodes": formatted_nodes,
-                                        "edges": formatted_edges
-                                    }
-                                },
-                                "insights": result.insights if hasattr(result, 'insights') else [],
-                                "confidence": result.confidence if hasattr(result, 'confidence') else 1.0,
-                                "timestamp": datetime.now().isoformat()
-                            })
-                        else:
-                            # Regular analytics update without graph data
-                            await manager.send_json(client_id, {
-                                "type": "analytics_update",
-                                "analytics": result.analytics,
-                                "insights": result.insights if hasattr(result, 'insights') else [],
-                                "confidence": result.confidence if hasattr(result, 'confidence') else 1.0,
-                                "timestamp": datetime.now().isoformat()
-                            })
-                except ValidationError as e:
-                    await manager.send_json(client_id, {
-                        "type": "error",
-                        "error": {
-                            "code": "VALIDATION_ERROR",
-                            "message": str(e)
-                        }
-                    })
-                except ResourceNotFoundError as e:
-                    await manager.send_json(client_id, {
-                        "type": "error",
-                        "error": {
-                            "code": "NOT_FOUND",
-                            "message": str(e)
-                        }
-                    })
+                        await handle_agent_coordination(client_id, data, analytics_agent, websocket)
                 except Exception as e:
+                    logger.error(f"Error handling message: {e}")
                     await manager.send_json(client_id, {
                         "type": "error",
-                        "error": {
-                            "code": "PROCESSING_ERROR",
-                            "message": str(e)
-                        }
+                        "error": str(e),
+                        "timestamp": datetime.now().isoformat()
                     })
-            except WebSocketDisconnect:
-                # Client disconnected
-                break
-            except Exception as e:
-                logger.error(f"Error in websocket: {str(e)}")
-                try:
-                    await manager.send_json(client_id, {
-                        "type": "error",
-                        "error": {
-                            "code": "PROCESSING_ERROR",
-                            "message": str(e)
-                        }
-                    })
-                except:
-                    break
+        except WebSocketDisconnect:
+            logger.info(f"Client {client_id} disconnected")
+        except Exception as e:
+            logger.error(f"WebSocket error: {e}")
+        finally:
+            await manager.disconnect(client_id)
     except Exception as e:
-        logger.error(f"Error in websocket: {str(e)}")
-    finally:
-        manager.disconnect(client_id)
+        logger.error(f"WebSocket connection error: {e}")
         try:
             await websocket.close()
         except:
             pass
 
-@graph_router.get("/data", response_model=Dict[str, Any])
-@retry_on_error(max_retries=3)
-async def get_graph_data(
-    _: None = Depends(get_permission("read")),
-    graph_store: Any = Depends(get_graph_store)
-) -> Dict:
-    """Get complete knowledge graph data."""
-    try:
-        data = await graph_store.get_graph_data()
-        return {
-            **data,
-            "timestamp": datetime.now().isoformat()
+async def handle_graph_subscribe(client_id: str, graph_store: Any):
+    """Handle graph subscription request."""
+    graph_data = await graph_store.get_graph_data()
+    nodes = []
+    edges = []
+    
+    for node in graph_data.get("nodes", []):
+        node_data = {
+            "id": node["id"],
+            "type": node["type"]
         }
-    except Exception as e:
-        raise ServiceError(str(e))
-
-@graph_router.get("/statistics", response_model=GraphStatisticsResponse)
-@retry_on_error(max_retries=3)
-async def get_graph_statistics(
-    _: None = Depends(get_permission("read")),
-    graph_store: Any = Depends(get_graph_store)
-) -> Dict:
-    """Get knowledge graph statistics."""
-    try:
-        stats = await graph_store.get_statistics()
-        return {
-            **stats,
-            "timestamp": datetime.now().isoformat()
+        if "label" in node:
+            node_data["label"] = node["label"]
+        if "category" in node:
+            node_data["category"] = node["category"]
+        if "domain" in node:
+            node_data["domain"] = node["domain"]
+        if "metadata" in node:
+            node_data["metadata"] = node["metadata"]
+        
+        node_data["color"] = (
+            "#4A4AFF" if node.get("category") == "brand" else
+            "#FF4A4A" if node.get("category") == "policy" else
+            "#4AFF4A"
+        )
+        
+        nodes.append({"data": node_data})
+        
+    for edge in graph_data.get("edges", []):
+        edge_data = {
+            "id": edge["id"],
+            "source": edge["source"],
+            "target": edge["target"],
+            "type": edge["type"]
         }
-    except Exception as e:
-        raise ServiceError(str(e))
-
-@orchestration_router.get("/tasks/flow", response_model=Dict[str, Any])
-@retry_on_error(max_retries=3)
-async def get_task_flow(
-    _: None = Depends(get_permission("read")),
-    orchestration_agent: Any = Depends(get_orchestration_agent)
-) -> Dict:
-    """Get task flow DAG data."""
-    try:
-        tasks = await orchestration_agent.get_active_tasks()
-        nodes = []
-        edges = []
+        if "label" in edge:
+            edge_data["label"] = edge["label"]
         
-        # Add task nodes
-        for task in tasks:
-            nodes.append({
-                "id": task["id"],
-                "type": "task",
-                "label": task["description"],
-                "status": task["status"],
-                "metadata": {
-                    "domain": task.get("domain"),
-                    "timestamp": task.get("created_at"),
-                    "importance": task.get("importance", 0.5)
-                }
-            })
-            
-            # Add dependency edges
-            for dep in task.get("dependencies", []):
-                edges.append({
-                    "source": task["id"],
-                    "target": dep,
-                    "type": "DEPENDS_ON",
-                    "label": "depends on"
-                })
-        
-        return {
-            "analytics": {
+        edges.append({"data": edge_data})
+    
+    await manager.send_json(client_id, {
+        "type": "graph_update",
+        "data": {
+            "added": {
                 "nodes": nodes,
                 "edges": edges
-            },
-            "insights": [],
-            "confidence": 1.0,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        raise ServiceError(str(e))
+            }
+        },
+        "timestamp": datetime.now().isoformat()
+    })
 
-@agent_router.get("/graph", response_model=Dict[str, Any])
-@retry_on_error(max_retries=3)
-async def get_agent_graph(
-    _: None = Depends(get_permission("read")),
-    agent_store: Any = Depends(get_agent_store)
-) -> Dict:
-    """Get agent graph data."""
-    try:
-        agents = await agent_store.get_all_agents()
-        nodes = []
-        edges = []
+async def handle_swarm_monitor(client_id: str, data: Dict, analytics_agent: Any, websocket: WebSocket):
+    """Handle swarm monitoring request."""
+    task_id = data.get("task_id")
+    if not task_id:
+        raise ValidationError("swarm_monitor requires task_id")
         
-        # Add agent nodes
-        for agent in agents:
-            nodes.append({
-                "id": agent["id"],
-                "type": "agent",
-                "label": agent["name"],
-                "status": agent["status"],
-                "domain": agent.get("domain"),
-                "properties": {
-                    "capabilities": agent.get("capabilities", []),
-                    "created_at": agent.get("created_at"),
-                    "supervisor_id": agent.get("supervisor_id")
-                }
+    result = await analytics_agent.process_analytics(
+        content={
+            "type": "swarm_analytics",
+            "task_id": task_id,
+            "timestamp": datetime.now().isoformat()
+        },
+        analytics_type="behavioral",
+        metadata={"domain": data.get("domain")}
+    )
+    
+    for event in result.analytics.get("events", []):
+        await websocket.send_json({
+            "type": "swarm_update",
+            "event_type": event["type"],
+            **event["data"],
+            "timestamp": datetime.now().isoformat()
+        })
+
+async def handle_agent_coordination(client_id: str, data: Dict, analytics_agent: Any, websocket: WebSocket):
+    """Handle agent coordination request."""
+    result = await analytics_agent.process_analytics(
+        content={
+            "type": "coordination",
+            "query": data.get("content"),
+            "domain": data.get("domain", "general"),
+            "llm_config": data.get("llm_config", {}),
+            "timestamp": datetime.now().isoformat()
+        },
+        analytics_type="behavioral",
+        metadata={"domain": data.get("domain")}
+    )
+    
+    if isinstance(result.analytics, dict):
+        for agent, update in result.analytics.items():
+            await manager.send_json(client_id, {
+                "type": "agent_update",
+                "agent": agent,
+                "update": update,
+                "timestamp": datetime.now().isoformat()
             })
-            
-            # Add supervision edges
-            if agent.get("supervisor_id"):
-                edges.append({
-                    "source": agent["supervisor_id"],
-                    "target": agent["id"],
-                    "type": "SUPERVISES",
-                    "label": "supervises",
-                    "properties": {}
-                })
-            
-            # Add task assignment edges
-            for task_id in agent.get("assigned_tasks", []):
-                edges.append({
-                    "source": agent["id"],
-                    "target": task_id,
-                    "type": "ASSIGNED",
-                    "label": "assigned to",
-                    "properties": {}
-                })
-        
-        return {
-            "nodes": nodes,
-            "edges": edges,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        raise ServiceError(str(e))
-
-# Export routers for app.py to include
-__all__ = [
-    'graph_router',
-    'agent_router',
-    'user_router',
-    'analytics_router',
-    'orchestration_router',
-    'chat_router',
-    'ws_router'
-]

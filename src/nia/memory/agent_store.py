@@ -16,6 +16,63 @@ class AgentStore(Neo4jBaseStore):
         """Initialize agent store."""
         super().__init__(uri=uri, **kwargs)
     
+    async def store_agent(
+        self,
+        agent: Dict[str, Any]
+    ) -> bool:
+        """Store agent data.
+        
+        Args:
+            agent: Agent data dictionary
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            import json
+            
+            # Extract properties we want to store
+            properties = {
+                "id": agent["id"],
+                "name": agent["name"],
+                "type": agent["type"],
+                "workspace": agent.get("workspace", "personal"),
+                "domain": agent.get("domain"),
+                "status": agent.get("status", "active"),
+                "metadata": json.dumps(agent.get("metadata", {})),  # Serialize metadata to JSON string
+                "created_at": datetime.now().isoformat(),
+                "updated_at": datetime.now().isoformat()
+            }
+            logger.info(f"Storing agent with properties: {properties}")
+            
+            query = """
+            MERGE (a:Agent {id: $properties.id})
+            SET a.name = $properties.name,
+                a.type = $properties.type,
+                a.workspace = $properties.workspace,
+                a.domain = $properties.domain,
+                a.status = $properties.status,
+                a.metadata = $properties.metadata,
+                a.created_at = $properties.created_at,
+                a.updated_at = $properties.updated_at
+            RETURN a
+            """
+            
+            try:
+                result = await self.run_query(
+                    query,
+                    parameters={"properties": properties}
+                )
+                logger.info(f"Store result: {result}")
+                return bool(result and result[0])
+            except Exception as e:
+                logger.error(f"Neo4j query error: {str(e)}")
+                raise
+            
+        except Exception as e:
+            logger.error(f"Error storing agent: {str(e)}")
+            return False
+            
     async def get_capabilities(
         self,
         agent_id: str
@@ -101,7 +158,16 @@ class AgentStore(Neo4jBaseStore):
             
             result = await self.run_query(query, parameters=parameters)
             
-            return [dict(row["a"]) for row in result]
+            # Convert nodes to dictionaries and deserialize metadata
+            agents = []
+            for row in result:
+                agent_data = dict(row["a"])
+                try:
+                    agent_data["metadata"] = json.loads(agent_data.get("metadata", "{}"))
+                except:
+                    agent_data["metadata"] = {}
+                agents.append(agent_data)
+            return agents
             
         except Exception as e:
             logger.error(f"Error searching agents: {str(e)}")
@@ -276,29 +342,33 @@ class AgentStore(Neo4jBaseStore):
             List of agent data dictionaries
         """
         try:
-            query = """
-            MATCH (a:Agent)
-            OPTIONAL MATCH (a)-[:SUPERVISES]->(s:Agent)
-            OPTIONAL MATCH (a)-[:ASSIGNED_TO]->(t:Task)
-            WITH a,
-                 collect(DISTINCT s.id) as supervised_agents,
-                 collect(DISTINCT t.id) as assigned_tasks
-            RETURN {
-                id: toString(elementId(a)),
-                name: a.name,
-                type: a.type,
-                status: a.status,
-                domain: a.domain,
-                capabilities: a.capabilities,
-                created_at: toString(a.created_at),
-                supervisor_id: a.supervisor_id,
-                supervised_agents: supervised_agents,
-                assigned_tasks: assigned_tasks
-            } as agent
-            """
+            # First check if we can connect
+            try:
+                await self.connect()
+                logger.info("Successfully connected to Neo4j")
+            except Exception as e:
+                logger.error(f"Failed to connect to Neo4j: {str(e)}")
+                raise
+
+            # Simple query to get all agents
+            query = "MATCH (a:Agent) RETURN a"
+            logger.info("Executing query: %s", query)
             
             result = await self.run_query(query)
-            return [row["agent"] for row in result]
+            logger.info("Query result: %s", result)
+            
+            # Convert nodes to dictionaries and deserialize metadata
+            agents = []
+            for row in result:
+                agent_data = dict(row["a"])
+                try:
+                    agent_data["metadata"] = json.loads(agent_data.get("metadata", "{}"))
+                except:
+                    agent_data["metadata"] = {}
+                logger.info("Agent data: %s", agent_data)
+                agents.append(agent_data)
+            
+            return agents
             
         except Exception as e:
             logger.error(f"Error getting all agents: {str(e)}")

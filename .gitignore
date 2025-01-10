@@ -43,6 +43,7 @@ logs/
 .qdrant/
 data/qdrant/
 data/neo4j/
+scripts/data/
 agent_responses.log
 
 # Qdrant specific

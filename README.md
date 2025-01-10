@@ -1,6 +1,9 @@
 # NIA (Nova Intelligence Architecture)
 
-> **Project Status (2025-01-10)**: Frontend development in progress. Graph visualization implemented, chat integration next.
+> **Project Status (2025-01-11)**: 
+> - 🔴 Neo4j: Database issues ("NOT PART OF CHAIN" errors)
+> - 🟢 Frontend: Graph visualization complete
+> - 🟡 In Progress: Chat interface & WebSocket integration
 
 NIA is a sophisticated multi-agent system that combines:
 - Two-layer memory architecture (episodic/semantic)
@@ -306,6 +309,17 @@ pytest tests/nova/               # Nova tests
    # Check logs
    docker compose -f scripts/docker/compose/docker-compose.yml logs neo4j
    ```
+
+   Known Issues (2025-01-11):
+   - "NOT PART OF CHAIN" errors during graph operations
+   - Database state inconsistencies
+   - Unable to clear or initialize test data reliably
+
+   Troubleshooting Steps:
+   - Check Neo4j logs for detailed error information
+   - Consider database repair/recovery options
+   - Review transaction handling configuration
+   - Try with a fresh Neo4j instance if issues persist
 
 2. **Qdrant Connection Issues**
    ```bash

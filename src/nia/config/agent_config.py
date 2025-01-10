@@ -1,6 +1,6 @@
 """Configuration for all agent-related settings."""
 
-from typing import Dict, Any, Set
+from typing import Dict, Any, Set, List, Optional
 
 # Base template that all agent prompts extend
 BASE_AGENT_TEMPLATE = """You are an AI agent specialized in {agent_type} operations, operating within Nova's multi-agent architecture.
@@ -95,7 +95,11 @@ Metacognition:
 - Record insights for system evolution
 
 Your specific responsibilities include:
-{responsibilities}"""
+{responsibilities}
+
+Skills you possess:
+{skills_description}
+"""
 
 # Agent-specific responsibilities
 AGENT_RESPONSIBILITIES: Dict[str, str] = {
@@ -445,42 +449,69 @@ KNOWLEDGE_VERTICALS: Set[str] = {
     KnowledgeVertical.GENERAL
 }
 
+# Define a set of pre-defined skills (can be extended)
+PREDEFINED_SKILLS: Set[str] = {
+    "web_scraping",
+    "literature_review",
+    "data_analysis",
+    "market_research",
+    "report_generation",
+    "sentiment_analysis",
+    "code_execution",
+    "database_querying",
+    "api_interaction",
+    "time_of_day_logic",
+    "markdown_strategy"
+    # Add more skills as needed
+}
+
+# Define potential sub-task types
+SUB_TASK_TYPES: Set[str] = {
+    "data_parsing",
+    "data_analysis",
+    "report_generation",
+    "validation_task",
+    "research_task"
+    # Add more sub-task types as needed
+}
+
 REQUIRED_CONFIG_FIELDS: Set[str] = {
-    "name", 
-    "agent_type", 
+    "name",
+    "agent_type",
     "domain",  # Primary domain (personal/professional)
-    "knowledge_vertical"  # Optional specialized domain
+    "knowledge_vertical",  # Optional specialized domain
+    "skills"  # List of skills the agent possesses
 }
 
 def validate_domain_config(config: Dict[str, Any]) -> bool:
     """Validate domain configuration.
-    
+
     Args:
         config: Configuration dictionary containing domain settings
-        
+
     Returns:
         bool: True if configuration is valid
-        
+
     Raises:
         ValueError: If domain configuration is invalid
     """
     # Validate primary domain
     if config["domain"] not in BASE_DOMAINS:
         raise ValueError(f"Invalid primary domain: {config['domain']}. Must be one of {BASE_DOMAINS}")
-        
+
     # Validate knowledge vertical if specified
-    if "knowledge_vertical" in config:
-        vertical = config["knowledge_vertical"]
-        if vertical and vertical not in KNOWLEDGE_VERTICALS:
-            raise ValueError(f"Invalid knowledge vertical: {vertical}. Must be one of {KNOWLEDGE_VERTICALS}")
-            
+    if "knowledge_vertical" in config and config["knowledge_vertical"] and config["knowledge_vertical"] not in KNOWLEDGE_VERTICALS:
+        raise ValueError(f"Invalid knowledge vertical: {config['knowledge_vertical']}. Must be one of {KNOWLEDGE_VERTICALS}")
+
     return True
 
-def get_agent_prompt(agent_type: str) -> str:
+def get_agent_prompt(agent_type: str, domain: str, skills: Optional[List[str]] = None) -> str:
     """Get the prompt template for a specific agent type.
 
     Args:
         agent_type: The type of the agent.
+        domain: The primary domain of the agent.
+        skills: Optional list of skills the agent possesses.
 
     Returns:
         The formatted prompt string.
@@ -491,17 +522,22 @@ def get_agent_prompt(agent_type: str) -> str:
     if agent_type not in AGENT_RESPONSIBILITIES:
         raise ValueError(f"No prompt template found for agent type: {agent_type}")
 
+    skills_description = "This agent has no explicitly defined skills."
+    if skills:
+        skills_description = f"Skills you possess: {', '.join(skills)}."
+
     return BASE_AGENT_TEMPLATE.format(
         agent_type=agent_type,
         responsibilities=AGENT_RESPONSIBILITIES[agent_type],
-        domain="professional",  # Default domain
+        domain=domain,
+        skills_description=skills_description
     )
 
-def validate_agent_config(agent_type: str, config: Dict[str, Any]) -> bool:
+def validate_agent_config(config: Dict[str, Any]) -> bool:
     """Validate agent configuration.
 
     Args:
-        agent_type: The type of the agent.
+        agent_type: The type of the agent (obtained from config).
         config: A dictionary containing the agent's configuration.
 
     Returns:
@@ -511,17 +547,66 @@ def validate_agent_config(agent_type: str, config: Dict[str, Any]) -> bool:
         ValueError: If the configuration is missing required fields,
                     or if the agent type or domain is invalid.
     """
-    # Check required fields except knowledge_vertical (optional)
-    required_fields = REQUIRED_CONFIG_FIELDS - {"knowledge_vertical"}
-    missing_fields = required_fields - config.keys()
+    missing_fields = REQUIRED_CONFIG_FIELDS - config.keys()
     if missing_fields:
         raise ValueError(f"Missing required fields: {', '.join(missing_fields)}")
 
-    # Validate agent type
+    agent_type = config.get("agent_type")
     if agent_type not in AGENT_RESPONSIBILITIES:
         raise ValueError(f"Invalid agent type: {agent_type}")
 
-    # Validate domain configuration
     validate_domain_config(config)
 
+    # Validate skills
+    if "skills" in config:
+        if not isinstance(config["skills"], list):
+            raise ValueError("Skills must be a list.")
+        for skill in config["skills"]:
+            if skill not in PREDEFINED_SKILLS:
+                print(f"Warning: Skill '{skill}' is not in the list of predefined skills.") # Consider making this an error if strict validation is needed
+
     return True
+
+# Example of a more comprehensive agent configuration
+example_agent_config: Dict[str, Any] = {
+    "name": "AdvancedDataAnalyst",
+    "agent_type": "analytics",
+    "domain": "professional",
+    "knowledge_vertical": "BUSINESS",
+    "skills": ["data_analysis", "report_generation", "visualization", "database_querying"],
+    # Example of defining completion criteria (Phase B)
+    "completion_criteria": "A final report summarizing key trends and insights is generated and stored.",
+    # Example of potential sub-tasks this agent might initiate (Phase D)
+    "potential_sub_tasks": [
+        {"type": "data_parsing", "responsible_agent_types": ["parsing"]},
+        {"type": "validation_task", "responsible_agent_types": ["validation"]}
+    ],
+    # Example of configuration related to error handling (Phase D)
+    "error_handling_config": {
+        "max_retries": 3,
+        "escalation_policy": "notify_orchestration_agent"
+    },
+    # Example of swarm architecture preference (Phase D)
+    "preferred_swarm_architecture": "parallel"
+}
+
+# You can define configurations for agent teams as well, to map to UI/UX and endpoints
+example_agent_team_config: Dict[str, Any] = {
+    "name": "ShopperSim_001_Config",
+    "description": "Configuration for the shopper simulation agent team.",
+    "agents": [
+        {"name": "ShopperAgent_1", "agent_type": "execution", "domain": "professional", "knowledge_vertical": "RETAIL", "skills": ["time_of_day_logic", "markdown_strategy"]},
+        {"name": "CoordinatorAgent", "agent_type": "coordination", "domain": "professional", "knowledge_vertical": "RETAIL", "skills": []}
+        # ... configurations for other agents
+    ],
+    "completion_criteria": "A synthetic simulation log of shopper behaviors is generated.",
+    # This could map to the POST /api/spawnSolution endpoint
+    "spawn_endpoint_config": {
+        "endpoint": "/api/spawnSolution",
+        "method": "POST"
+    },
+    # This could influence how the UI presents the team
+    "ui_config": {
+        "display_mode": "grouped" # or "individual" if agent count is low
+    }
+}

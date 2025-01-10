@@ -52,13 +52,61 @@ class Neo4jBaseStore:
         
     async def connect(self):
         """Connect to Neo4j."""
-        if not self.driver:
-            self.driver = AsyncGraphDatabase.driver(
-                self.uri,
-                auth=self.auth,
-                max_connection_lifetime=3600
-            )
-            await self.driver.verify_connectivity()
+        try:
+            if not self.driver:
+                logger.info("Creating new Neo4j driver")
+                self.driver = AsyncGraphDatabase.driver(
+                    self.uri,
+                    auth=self.auth,
+                    max_connection_lifetime=3600
+                )
+                logger.info("Verifying Neo4j connectivity")
+                await self.driver.verify_connectivity()
+                logger.info("Successfully connected to Neo4j")
+                
+                # Create database if it doesn't exist
+                try:
+                    logger.info("Creating database if it doesn't exist")
+                    async with self.driver.session(database="system") as session:
+                        await session.run("CREATE DATABASE neo4j IF NOT EXISTS")
+                        logger.info("Database created or already exists")
+                except Exception as db_error:
+                    logger.warning(f"Error creating database: {str(db_error)}")
+                    # Continue even if database creation fails (might already exist)
+                    pass
+                    
+                # Create constraints and indexes
+                try:
+                    logger.info("Creating constraints and indexes")
+                    async with self.driver.session() as session:
+                        # Create constraints
+                        await session.run("""
+                        CREATE CONSTRAINT agent_id IF NOT EXISTS
+                        FOR (a:Agent) REQUIRE a.id IS UNIQUE
+                        """)
+                        await session.run("""
+                        CREATE CONSTRAINT concept_name IF NOT EXISTS
+                        FOR (c:Concept) REQUIRE c.name IS UNIQUE
+                        """)
+                        # Create indexes
+                        await session.run("""
+                        CREATE INDEX agent_type IF NOT EXISTS
+                        FOR (a:Agent) ON (a.type)
+                        """)
+                        await session.run("""
+                        CREATE INDEX concept_type IF NOT EXISTS
+                        FOR (c:Concept) ON (c.type)
+                        """)
+                        logger.info("Constraints and indexes created")
+                except Exception as schema_error:
+                    logger.warning(f"Error creating schema: {str(schema_error)}")
+                    # Continue even if schema creation fails
+                    pass
+            else:
+                logger.info("Using existing Neo4j driver")
+        except Exception as e:
+            logger.error(f"Failed to connect to Neo4j: {str(e)}")
+            raise
         
     async def close(self):
         """Close Neo4j connection."""

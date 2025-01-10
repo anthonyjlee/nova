@@ -1,1 +1,1 @@
-{"version":22,"config":{"vector_data":{"":{"size":384,"distance":"Cosine","storage_type":"InRamChunkedMmap","index":{"type":"plain","options":{}},"quantization_config":null}},"payload_storage_type":{"type":"on_disk"}}}
+{"version":137,"config":{"vector_data":{"":{"size":384,"distance":"Cosine","storage_type":"InRamChunkedMmap","index":{"type":"plain","options":{}},"quantization_config":null}},"payload_storage_type":{"type":"on_disk"}}}

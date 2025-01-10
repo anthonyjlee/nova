@@ -371,6 +371,16 @@
 
 ### Blockers
 Current blocking issues:
+- Neo4j Database Issues (2025-01-11):
+  * Getting "NOT PART OF CHAIN" errors with graph operations
+  * Unable to clear or initialize test data reliably
+  * Database state inconsistencies
+  * Next steps:
+    - Check Neo4j logs for detailed error information
+    - Investigate database repair/recovery options
+    - Consider testing with fresh Neo4j instance
+    - Review transaction handling configuration
+
 - Memory integration tests need revision:
   * Identified that mock tests are overly complex
   * Decision made to use real Neo4j for development

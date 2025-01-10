@@ -223,29 +223,55 @@
       
       <!-- Domain & Participants -->
       <div class="flex items-center space-x-4">
-        <!-- Domain Selector -->
+        <!-- Domain & Agent Team Info -->
         {#if thread}
-          <div class="relative">
-            <select
-              class="px-3 py-1 rounded text-sm appearance-none cursor-pointer"
-              style="
-                background-color: var(--slack-bg-tertiary);
-                border: 1px solid var(--slack-border-dim);
-                color: var(--slack-text-primary);
-              "
-              value={thread.metadata?.domain}
-              on:change={(e) => handleDomainChange(e.currentTarget.value as DomainType)}
-            >
-              {#if thread.workspace === 'personal'}
-                {#each WORKSPACE_DOMAINS.personal as domain}
-                  <option value={domain}>{domain.charAt(0).toUpperCase() + domain.slice(1)}</option>
-                {/each}
-              {:else}
-                {#each WORKSPACE_DOMAINS.professional as domain}
-                  <option value={domain}>{domain.toUpperCase()}</option>
-                {/each}
-              {/if}
-            </select>
+          <div class="flex items-center space-x-4">
+            <!-- Domain Label -->
+            <div class="text-sm" style="color: var(--slack-text-secondary)">
+              {thread.metadata?.domain 
+                ? thread.workspace === 'personal'
+                  ? thread.metadata.domain.charAt(0).toUpperCase() + thread.metadata.domain.slice(1)
+                  : thread.metadata.domain.toUpperCase()
+                : 'No Domain'
+              }
+            </div>
+
+            <!-- Agent Count -->
+            {#if agents.length > 10}
+              <div class="text-sm" style="color: var(--slack-text-secondary)">
+                {agents.length} agents
+                <button 
+                  class="ml-2 text-xs underline hover:opacity-80"
+                  on:click={() => setShowAgentMenu(true)}
+                >
+                  Show All
+                </button>
+              </div>
+            {/if}
+
+            <!-- Domain Selector -->
+            <div class="relative">
+              <select
+                class="px-3 py-1 rounded text-sm appearance-none cursor-pointer"
+                style="
+                  background-color: var(--slack-bg-tertiary);
+                  border: 1px solid var(--slack-border-dim);
+                  color: var(--slack-text-primary);
+                "
+                value={thread.metadata?.domain}
+                on:change={(e) => handleDomainChange(e.currentTarget.value as DomainType)}
+              >
+                {#if thread.workspace === 'personal'}
+                  {#each WORKSPACE_DOMAINS.personal as domain}
+                    <option value={domain}>{domain.charAt(0).toUpperCase() + domain.slice(1)}</option>
+                  {/each}
+                {:else}
+                  {#each WORKSPACE_DOMAINS.professional as domain}
+                    <option value={domain}>{domain.toUpperCase()}</option>
+                  {/each}
+                {/if}
+              </select>
+            </div>
           </div>
         {/if}
 

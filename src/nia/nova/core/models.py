@@ -9,6 +9,7 @@ from nia.core.types.memory_types import AgentResponse  # Import AgentResponse in
 class ThreadRequest(BaseModel):
     """Request to create a new chat thread."""
     title: str = Field(..., description="Title of the thread")
+    workspace: str = Field(..., description="Workspace for the thread (personal/professional)")
     domain: Optional[str] = Field(None, description="Domain for the thread")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
