@@ -23,6 +23,7 @@
     DomainType,
     WorkspaceConfig
   } from '$lib/types/chat';
+  import { WORKSPACE_DOMAINS } from '$lib/types/chat';
   import AgentTeamView from '$lib/components/AgentTeamView.svelte';
   import AgentDetailsPanel from '$lib/components/AgentDetailsPanel.svelte';
   
@@ -292,78 +293,62 @@
       </select>
     </div>
 
-    <!-- Domain Selector (Professional workspace only) -->
-    {#if currentWorkspace === 'professional'}
-      <div class="p-4 border-b" style="border-color: var(--slack-border-dim);">
-        <select
-          class="w-full px-3 py-2 rounded text-sm appearance-none cursor-pointer"
-          style="
-            background-color: var(--slack-bg-tertiary);
-            border: 1px solid var(--slack-border-dim);
-            color: var(--slack-text-primary);
-          "
-          bind:value={currentDomain}
-        >
-          <option value="retail">Retail</option>
-          <option value="bfsi">BFSI</option>
-          <option value="finance">Finance</option>
-        </select>
-      </div>
-    {/if}
+    <!-- Domain Selector -->
+    <div class="p-4 border-b" style="border-color: var(--slack-border-dim);">
+      <select
+        class="w-full px-3 py-2 rounded text-sm appearance-none cursor-pointer"
+        style="
+          background-color: var(--slack-bg-tertiary);
+          border: 1px solid var(--slack-border-dim);
+          color: var(--slack-text-primary);
+        "
+        bind:value={currentDomain}
+      >
+        {#if currentWorkspace === 'personal'}
+          {#each WORKSPACE_DOMAINS.personal as domain}
+            <option value={domain}>{domain.charAt(0).toUpperCase() + domain.slice(1)}</option>
+          {/each}
+        {:else}
+          {#each WORKSPACE_DOMAINS.professional as domain}
+            <option value={domain}>{domain.toUpperCase()}</option>
+          {/each}
+        {/if}
+      </select>
+    </div>
 
     <!-- Workspaces -->
     <div class="flex-1 overflow-y-auto slack-scrollbar">
       <!-- Thread List -->
-      {#if currentWorkspace === 'personal'}
-        <!-- Personal Workspace Threads -->
-        <div class="mb-4">
-          <div class="px-4 py-2 font-medium" style="color: var(--slack-text-secondary)">
-            Personal Threads
-          </div>
-          {#each threads.filter(t => t.workspace === 'personal') as thread (thread.id)}
-            <button
-              class="w-full px-4 py-2 text-left hover:opacity-80 transition-opacity"
-              class:active={thread.id === currentThreadId}
-              style="
-                color: var(--slack-text-primary);
-                background-color: {thread.id === currentThreadId ? 'var(--slack-bg-tertiary)' : 'transparent'};
-              "
-              on:click={() => handleThreadSelect(thread.id)}
-            >
-              <div class="font-medium">{thread.name}</div>
-            </button>
-          {/each}
+      <div>
+        <div class="px-4 py-2 font-medium" style="color: var(--slack-text-secondary)">
+          {currentWorkspace === 'personal' ? 'Personal' : 'Professional'} Threads
         </div>
-      {:else}
-        <!-- Professional Workspace Threads -->
-        <div>
-          <div class="px-4 py-2 font-medium" style="color: var(--slack-text-secondary)">
-            Professional Threads
-          </div>
-          {#each ['retail', 'bfsi', 'finance'] as domain}
-            {#if threads.some(t => t.workspace === 'professional' && t.metadata?.domain === domain)}
-              <div class="mb-2">
-                <div class="px-6 py-1 text-sm" style="color: var(--slack-text-muted)">
-                  {domain.toUpperCase()}
-                </div>
-                {#each threads.filter(t => t.workspace === 'professional' && t.metadata?.domain === domain) as thread (thread.id)}
-                  <button
-                    class="w-full px-4 py-2 text-left hover:opacity-80 transition-opacity"
-                    class:active={thread.id === currentThreadId}
-                    style="
-                      color: var(--slack-text-primary);
-                      background-color: {thread.id === currentThreadId ? 'var(--slack-bg-tertiary)' : 'transparent'};
-                    "
-                    on:click={() => handleThreadSelect(thread.id)}
-                  >
-                    <div class="font-medium">{thread.name}</div>
-                  </button>
-                {/each}
+        {#each currentWorkspace === 'personal' ? WORKSPACE_DOMAINS.personal : WORKSPACE_DOMAINS.professional as domain}
+          {#if threads.some(t => t.workspace === currentWorkspace && t.metadata?.domain === domain)}
+            <div class="mb-2">
+              <div class="px-6 py-1 text-sm" style="color: var(--slack-text-muted)">
+                {currentWorkspace === 'personal' 
+                  ? domain.charAt(0).toUpperCase() + domain.slice(1)
+                  : domain.toUpperCase()
+                }
               </div>
-            {/if}
-          {/each}
-        </div>
-      {/if}
+              {#each threads.filter(t => t.workspace === currentWorkspace && t.metadata?.domain === domain) as thread (thread.id)}
+                <button
+                  class="w-full px-4 py-2 text-left hover:opacity-80 transition-opacity"
+                  class:active={thread.id === currentThreadId}
+                  style="
+                    color: var(--slack-text-primary);
+                    background-color: {thread.id === currentThreadId ? 'var(--slack-bg-tertiary)' : 'transparent'};
+                  "
+                  on:click={() => handleThreadSelect(thread.id)}
+                >
+                  <div class="font-medium">{thread.name}</div>
+                </button>
+              {/each}
+            </div>
+          {/if}
+        {/each}
+      </div>
     </div>
 
     <!-- New Thread Button -->

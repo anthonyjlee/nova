@@ -3,6 +3,7 @@
   import { page } from '$app/stores';
   import { setupChatWebSocket, sendMessage, getThread, getThreadMessages, getThreadAgents, spawnAgent as spawnAgentApi, switchDomain } from '$lib/services/chat';
   import type { Message, Thread, ThreadParticipant, AgentType, WorkspaceType, DomainType } from '$lib/types/chat';
+  import { WORKSPACE_DOMAINS } from '$lib/types/chat';
   import AgentTeamView from '$lib/components/AgentTeamView.svelte';
   import AgentDetailsPanel from '$lib/components/AgentDetailsPanel.svelte';
 
@@ -26,17 +27,15 @@
   // Domain handling
   async function handleDomainChange(newDomain: DomainType) {
     try {
-      if (thread?.workspace === 'professional') {
-        await switchDomain(threadId, newDomain);
-        if (thread) {
-          thread = {
-            ...thread,
-            metadata: {
-              ...thread.metadata,
-              domain: newDomain
-            }
-          };
-        }
+      await switchDomain(threadId, newDomain);
+      if (thread) {
+        thread = {
+          ...thread,
+          metadata: {
+            ...thread.metadata,
+            domain: newDomain
+          }
+        };
       }
     } catch (error) {
       console.error('Failed to switch domain:', error);
@@ -53,7 +52,7 @@
         threadId,
         agentType,
         workspace: thread.workspace,
-        domain: thread.workspace === 'professional' ? thread.metadata?.domain : undefined,
+        domain: thread.metadata?.domain,
         metadata: {
           capabilities: [],
           specialization: agentType
@@ -224,8 +223,8 @@
       
       <!-- Domain & Participants -->
       <div class="flex items-center space-x-4">
-        <!-- Domain Selector (Professional workspace only) -->
-        {#if thread?.workspace === 'professional'}
+        <!-- Domain Selector -->
+        {#if thread}
           <div class="relative">
             <select
               class="px-3 py-1 rounded text-sm appearance-none cursor-pointer"
@@ -234,12 +233,18 @@
                 border: 1px solid var(--slack-border-dim);
                 color: var(--slack-text-primary);
               "
-              value={thread?.metadata?.domain || 'retail'}
+              value={thread.metadata?.domain}
               on:change={(e) => handleDomainChange(e.currentTarget.value as DomainType)}
             >
-              <option value="retail">Retail</option>
-              <option value="bfsi">BFSI</option>
-              <option value="finance">Finance</option>
+              {#if thread.workspace === 'personal'}
+                {#each WORKSPACE_DOMAINS.personal as domain}
+                  <option value={domain}>{domain.charAt(0).toUpperCase() + domain.slice(1)}</option>
+                {/each}
+              {:else}
+                {#each WORKSPACE_DOMAINS.professional as domain}
+                  <option value={domain}>{domain.toUpperCase()}</option>
+                {/each}
+              {/if}
             </select>
           </div>
         {/if}
