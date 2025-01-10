@@ -137,7 +137,7 @@ class ServiceManager:
             try:
                 with open(site_packages_config) as f:
                     content = f.read()
-                    if "[DEFAULT]" in content and "[MEMORY]" in content:
+                    if "[DEFAULT]" in content and "[MEMORY]" in content and "[WORKSPACES]" in content:
                         print("✅ Site packages config is valid")
                         configs_valid = True
                     else:
@@ -149,7 +149,7 @@ class ServiceManager:
             try:
                 with open(custom_config) as f:
                     content = f.read()
-                    if "[DEFAULT]" in content and "[MEMORY]" in content:
+                    if "[DEFAULT]" in content and "[MEMORY]" in content and "[WORKSPACES]" in content:
                         print("✅ Custom config is valid")
                         configs_valid = True
                     else:
@@ -169,6 +169,21 @@ model_name = local-model
 [MEMORY]
 consolidation_interval = 300
 importance_threshold = 0.5
+
+[WORKSPACES]
+# Access level configuration
+personal_enabled = true
+professional_enabled = true
+
+[DOMAINS]
+# Knowledge domains for Professional workspace
+domains = retail,bfsi,finance
+default_domain = retail
+
+# Domain-specific settings
+retail_memory_threshold = 0.6
+bfsi_memory_threshold = 0.7
+finance_memory_threshold = 0.7
 """
             try:
                 with open(custom_config, "w") as f:
@@ -315,6 +330,39 @@ importance_threshold = 0.5
         
         print("✅ All services stopped")
     
+    def check_workspace_config(self):
+        """Validate workspace and domain configuration."""
+        print("\n🔍 Checking workspace configuration...")
+        
+        try:
+            import configparser
+            config = configparser.ConfigParser()
+            config.read("config.ini")
+            
+            # Check workspaces section
+            if not config.has_section("WORKSPACES"):
+                print("⚠️  Missing [WORKSPACES] section")
+                return False
+                
+            # Check domains section
+            if not config.has_section("DOMAINS"):
+                print("⚠️  Missing [DOMAINS] section")
+                return False
+                
+            # Validate domains
+            domains = config.get("DOMAINS", "domains", fallback="").split(",")
+            if not domains or not all(domains):
+                print("⚠️  No domains configured for Professional workspace")
+                return False
+                
+            print("✅ Workspace configuration valid")
+            print(f"Available domains: {', '.join(domains)}")
+            return True
+            
+        except Exception as e:
+            print(f"❌ Error checking workspace config: {e}")
+            return False
+
     def show_status(self):
         """Show status of all services."""
         print("\n📊 Service Status:")
@@ -347,13 +395,39 @@ importance_threshold = 0.5
             self.services["frontend"]["health_url"]
         ) else "❌ Not running"
         print(f"Frontend: {status}")
+        
+        # Check workspace configuration
+        print("\n📊 Workspace Status:")
+        try:
+            import configparser
+            config = configparser.ConfigParser()
+            config.read("config.ini")
+            
+            # Show workspace status
+            personal = config.getboolean("WORKSPACES", "personal_enabled", fallback=True)
+            professional = config.getboolean("WORKSPACES", "professional_enabled", fallback=True)
+            print(f"Personal Workspace: {'✅ Enabled' if personal else '❌ Disabled'}")
+            print(f"Professional Workspace: {'✅ Enabled' if professional else '❌ Disabled'}")
+            
+            # Show domain status
+            if professional:
+                print("\n📊 Domain Status:")
+                domains = config.get("DOMAINS", "domains", fallback="").split(",")
+                default = config.get("DOMAINS", "default_domain", fallback="")
+                for domain in domains:
+                    if domain:
+                        threshold = config.getfloat(f"{domain}_memory_threshold", fallback=0.5)
+                        print(f"{domain.upper()}: Memory Threshold {threshold}")
+                print(f"Default Domain: {default.upper() if default else 'Not set'}")
+        except Exception as e:
+            print(f"⚠️  Error showing workspace status: {e}")
 
 def main():
     """Run service manager."""
     parser = argparse.ArgumentParser(description="Manage NIA services")
     parser.add_argument(
         "action",
-        choices=["start", "stop", "restart", "status"],
+        choices=["start", "stop", "restart", "status", "check-workspace"],
         help="Action to perform"
     )
     
@@ -364,6 +438,9 @@ def main():
         manager.start_docker_services()
         manager.check_lmstudio()
         manager.check_tinytroupe_config()
+        if not manager.check_workspace_config():
+            print("❌ Invalid workspace configuration")
+            sys.exit(1)
         manager.start_fastapi()
         manager.start_frontend()
         print("\n✨ All services started!")
@@ -377,9 +454,15 @@ def main():
         manager.start_docker_services()
         manager.check_lmstudio()
         manager.check_tinytroupe_config()
+        if not manager.check_workspace_config():
+            print("❌ Invalid workspace configuration")
+            sys.exit(1)
         manager.start_fastapi()
         manager.start_frontend()
         print("\n✨ All services restarted!")
+        
+    elif args.action == "check-workspace":
+        manager.check_workspace_config()
         
     elif args.action == "status":
         manager.show_status()

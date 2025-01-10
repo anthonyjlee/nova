@@ -1,95 +1,112 @@
-/* Import Tailwind CSS */
+/* Base styles */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Global styles */
-html, body {
-  @apply h-full overflow-hidden;
-}
-
-/* Ensure dark mode by default */
+/* Slack-like theme variables */
 :root {
-  color-scheme: dark;
+  --slack-bg-primary: #1a1d21;
+  --slack-bg-secondary: #222529;
+  --slack-bg-tertiary: #2c2f33;
+  --slack-text-primary: #d1d2d3;
+  --slack-text-secondary: #9da0a3;
+  --slack-text-muted: #6b6f74;
+  --slack-text-error: #e01e5a;
+  --slack-accent-primary: #1164a3;
+  --slack-accent-secondary: #2eb67d;
+  --slack-border-dim: #373a3e;
 }
 
-/* Prevent text selection in UI elements */
-.no-select {
-  -webkit-user-select: none;
-  -moz-user-select: none;
-  -ms-user-select: none;
-  user-select: none;
+/* Custom scrollbar */
+.slack-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--slack-text-muted) transparent;
 }
 
-/* Custom scrollbar for webkit browsers */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+.slack-scrollbar::-webkit-scrollbar {
+  width: 6px;
 }
 
-::-webkit-scrollbar-track {
+.slack-scrollbar::-webkit-scrollbar-track {
   background: transparent;
 }
 
-::-webkit-scrollbar-thumb {
-  background-color: var(--slack-border-dim);
-  border-radius: 4px;
+.slack-scrollbar::-webkit-scrollbar-thumb {
+  background-color: var(--slack-text-muted);
+  border-radius: 3px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background-color: var(--slack-border-active);
+/* Message styles */
+.slack-message {
+  padding: 0.5rem 0;
 }
 
-/* Focus styles */
-:focus {
+.slack-message:hover {
+  background-color: var(--slack-bg-secondary);
+}
+
+/* Agent status animations */
+@keyframes pulse {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.agent-thinking {
+  animation: pulse 2s infinite;
+}
+
+/* Thread styles */
+.thread-header {
+  background-color: var(--slack-bg-secondary);
+  border-bottom: 1px solid var(--slack-border-dim);
+}
+
+/* Input styles */
+[contenteditable]:focus {
   outline: none;
 }
 
-:focus-visible {
-  outline: 2px solid var(--slack-accent-primary);
-  outline-offset: -2px;
-}
-
-/* Transition defaults */
-* {
-  @apply transition-colors duration-100 ease-in-out;
-}
-
-/* Input placeholder styles */
-[contenteditable=true]:empty:before {
-  content: attr(data-placeholder);
-  color: var(--slack-text-muted);
-  cursor: text;
-}
-
-[contenteditable=true]:focus {
-  outline: none;
-  border-color: var(--slack-accent-primary) !important;
-  box-shadow: 0 0 0 1px var(--slack-accent-primary);
-}
-
-/* Active channel styles */
-.channel-active {
-  background-color: var(--slack-active-item) !important;
-  color: white !important;
-}
-
-/* Search input styles */
-.search-input {
-  background-color: var(--slack-bg-tertiary);
+/* Agent menu styles */
+.agent-menu {
+  background-color: var(--slack-bg-primary);
   border: 1px solid var(--slack-border-dim);
-  color: var(--slack-text-primary);
-  padding: 6px 12px;
-  border-radius: 4px;
-  width: 100%;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
 }
 
-.search-input:focus {
-  outline: none;
-  border-color: var(--slack-accent-primary);
-  box-shadow: 0 0 0 1px var(--slack-accent-primary);
+/* Domain selector styles */
+select {
+  appearance: none;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-repeat: no-repeat;
+  background-position: right 0.5rem center;
+  background-size: 1em;
+  padding-right: 2.5rem;
 }
 
-.search-input::placeholder {
-  color: var(--slack-text-muted);
+/* Status indicator animations */
+@keyframes thinking {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.1); }
+  100% { transform: scale(1); }
+}
+
+.status-thinking {
+  animation: thinking 1.5s ease-in-out infinite;
+}
+
+@keyframes responding {
+  0% { opacity: 0.6; }
+  50% { opacity: 1; }
+  100% { opacity: 0.6; }
+}
+
+.status-responding {
+  animation: responding 2s ease-in-out infinite;
 }

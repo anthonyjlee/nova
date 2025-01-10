@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { page } from '$app/stores';
-  import { setupChatWebSocket, sendMessage, getThread, getThreadMessages, getThreadAgents } from '$lib/services/chat';
-  import type { Message, Thread, ThreadParticipant } from '$lib/types/chat';
+  import { setupChatWebSocket, sendMessage, getThread, getThreadMessages, getThreadAgents, spawnAgent as spawnAgentApi, switchDomain } from '$lib/services/chat';
+  import type { Message, Thread, ThreadParticipant, AgentType } from '$lib/types/chat';
+  import AgentTeamView from '$lib/components/AgentTeamView.svelte';
+  import AgentDetailsPanel from '$lib/components/AgentDetailsPanel.svelte';
 
   const threadId = $page.params.id;
   let thread: Thread | null = null;
@@ -13,6 +15,70 @@
   let wsInstance: WebSocket | null = null;
   let loading = true;
   let error: string | null = null;
+  let showAgentMenu = false;
+  let selectedAgent: ThreadParticipant | null = null;
+  let filteredAgentId: string | null = null;
+
+  $: filteredMessages = filteredAgentId 
+    ? messages.filter(m => m.sender.id === filteredAgentId)
+    : messages;
+
+  // Domain handling
+  async function handleDomainChange(newDomain: string) {
+    try {
+      await switchDomain(threadId, newDomain);
+      if (thread) {
+        thread = {
+          ...thread,
+          metadata: {
+            ...thread.metadata,
+            domain: newDomain
+          }
+        };
+      }
+    } catch (error) {
+      console.error('Failed to switch domain:', error);
+      // TODO: Show error to user
+    }
+  }
+
+  // Agent spawning
+  async function handleSpawnAgent(agentType: AgentType) {
+    try {
+      const agent = await spawnAgentApi({
+        threadId,
+        agentType,
+        domain: thread?.metadata?.domain,
+        metadata: {
+          capabilities: [],
+          specialization: agentType
+        }
+      });
+
+      agents = [...agents, agent];
+      showAgentMenu = false;
+
+      // Add system message about agent joining
+      messages = [...messages, {
+        id: `system-${Date.now()}`,
+        threadId,
+        content: `${agent.name} has joined the conversation.`,
+        sender: {
+          id: 'system',
+          name: 'System',
+          type: 'agent'
+        },
+        timestamp: new Date().toISOString()
+      }];
+    } catch (error) {
+      console.error('Failed to spawn agent:', error);
+      // TODO: Show error to user
+    }
+  }
+
+  function setShowAgentMenu(show: boolean) {
+    showAgentMenu = show;
+  }
 
   onMount(async () => {
     if (inputElement) {
@@ -99,17 +165,43 @@
 </script>
 
 <div class="flex-1 flex flex-col overflow-hidden relative">
+  <!-- Loading Overlay -->
   {#if loading}
-    <div class="absolute inset-0 flex items-center justify-center bg-opacity-50" style="background-color: var(--slack-bg-primary);">
-      <span style="color: var(--slack-text-secondary)">Loading thread...</span>
+    <div 
+      class="absolute inset-0 flex items-center justify-center bg-opacity-50 z-50"
+      style="background-color: var(--slack-bg-primary);"
+    >
+      <div class="flex flex-col items-center">
+        <div class="w-8 h-8 border-4 border-t-4 rounded-full animate-spin mb-2"
+          style="
+            border-color: var(--slack-accent-primary);
+            border-top-color: transparent;
+          "
+        ></div>
+        <span style="color: var(--slack-text-secondary)">Loading thread...</span>
+      </div>
     </div>
   {/if}
 
+  <!-- Error Message -->
   {#if error}
-    <div class="absolute inset-0 flex items-center justify-center bg-opacity-50" style="background-color: var(--slack-bg-primary);">
-      <span style="color: var(--slack-text-error)">{error}</span>
+    <div 
+      class="absolute top-4 right-4 px-4 py-2 rounded shadow-lg z-50"
+      style="
+        background-color: var(--slack-text-error);
+        color: white;
+      "
+    >
+      {error}
+      <button 
+        class="ml-2 hover:opacity-80"
+        on:click={() => error = null}
+      >
+        ✕
+      </button>
     </div>
   {/if}
+
   <!-- Thread Header -->
   <div class="p-4 border-b" style="border-color: var(--slack-border-dim);">
     <div class="flex items-center justify-between">
@@ -124,26 +216,104 @@
         {/if}
       </div>
       
-      <!-- Participants -->
-      <div class="flex items-center space-x-2">
-        {#each agents as agent}
-          <div 
-            class="w-8 h-8 rounded-full flex items-center justify-center"
-            style="background-color: var(--slack-accent-primary);"
-            title={`${agent.name} (${agent.status || 'unknown'})`}
+      <!-- Domain & Participants -->
+      <div class="flex items-center space-x-4">
+        <!-- Domain Selector -->
+        <div class="relative">
+          <select
+            class="px-3 py-1 rounded text-sm appearance-none cursor-pointer"
+            style="
+              background-color: var(--slack-bg-tertiary);
+              border: 1px solid var(--slack-border-dim);
+              color: var(--slack-text-primary);
+            "
+            value={thread?.metadata?.domain || 'general'}
+            on:change={(e) => handleDomainChange(e.currentTarget.value)}
           >
-            <span class="text-white text-sm font-medium">
-              {agent.name[0].toUpperCase()}
-            </span>
-          </div>
-        {/each}
+            <option value="general">General</option>
+            <option value="retail">Retail</option>
+            <option value="bfsi">BFSI</option>
+            <option value="personal">Personal</option>
+          </select>
+        </div>
+
+        <!-- Agent Team View -->
+        <AgentTeamView 
+          {agents}
+          onAgentClick={(agent) => {
+            selectedAgent = agent;
+            filteredAgentId = agent.id;
+          }}
+        />
+
+        <!-- Add Agent Button -->
+        <button
+          class="w-8 h-8 rounded-full flex items-center justify-center hover:opacity-80 transition-opacity"
+          style="background-color: var(--slack-bg-tertiary);"
+          on:click={() => setShowAgentMenu(true)}
+          title="Add Agent"
+        >
+          <span style="color: var(--slack-text-primary)">+</span>
+        </button>
       </div>
     </div>
   </div>
 
+  <!-- Agent Menu -->
+  {#if showAgentMenu}
+    <div 
+      class="absolute right-4 top-16 p-4 rounded shadow-lg z-10"
+      style="background-color: var(--slack-bg-primary); border: 1px solid var(--slack-border-dim);"
+    >
+      <div class="flex items-center justify-between mb-4">
+        <span class="font-medium" style="color: var(--slack-text-primary)">Add Agent</span>
+        <button 
+          class="text-sm hover:opacity-80"
+          style="color: var(--slack-text-secondary);"
+          on:click={() => setShowAgentMenu(false)}
+        >
+          ✕
+        </button>
+      </div>
+
+      <div class="space-y-2">
+        {#each ['belief', 'desire', 'emotion', 'reflection', 'research', 'context'] as agentType}
+          <button
+            class="w-full px-3 py-2 rounded text-left hover:opacity-90 transition-opacity"
+            style="background-color: var(--slack-accent-primary); color: white;"
+            on:click={() => handleSpawnAgent(agentType)}
+          >
+            {agentType.charAt(0).toUpperCase() + agentType.slice(1)} Agent
+          </button>
+        {/each}
+      </div>
+    </div>
+  {/if}
+
   <!-- Messages Area -->
   <div class="flex-1 overflow-y-auto slack-scrollbar p-4">
-    {#each messages as message (message.id)}
+    <!-- Filter Indicator -->
+    {#if filteredAgentId}
+      <div class="mb-4 px-4 py-2 rounded" style="background-color: var(--slack-bg-tertiary);">
+        <div class="flex items-center justify-between">
+          <span class="text-sm" style="color: var(--slack-text-secondary)">
+            Showing messages from {agents.find(a => a.id === filteredAgentId)?.name}
+          </span>
+          <button
+            class="text-sm hover:underline"
+            style="color: var(--slack-text-secondary);"
+            on:click={() => {
+              selectedAgent = null;
+              filteredAgentId = null;
+            }}
+          >
+            Show All Messages
+          </button>
+        </div>
+      </div>
+    {/if}
+
+    {#each filteredMessages as message (message.id)}
       <div class="slack-message group">
         <div class="flex items-start space-x-2">
           <!-- Agent/User Avatar -->
@@ -214,3 +384,14 @@
     </div>
   </div>
 </div>
+
+<!-- Agent Details Panel -->
+{#if selectedAgent}
+  <AgentDetailsPanel 
+    agent={selectedAgent}
+    onClose={() => {
+      selectedAgent = null;
+      filteredAgentId = null;
+    }}
+  />
+{/if}
