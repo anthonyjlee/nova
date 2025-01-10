@@ -45,6 +45,14 @@ data/qdrant/
 data/neo4j/
 agent_responses.log
 
+# Qdrant specific
+**/qdrant/collections/
+**/qdrant/raft_state.json
+**/qdrant/aliases/
+**/qdrant/segments/
+**/qdrant/wal/
+*.sst
+
 # Local development
 *.db
 *.sqlite3
