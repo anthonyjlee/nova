@@ -375,6 +375,62 @@ async def add_task_dependency(
     except Exception as e:
         raise ServiceError(str(e))
 
+@tasks_router.post("/{task_id}/subtasks", response_model=Dict[str, Any])
+async def add_subtask(
+    task_id: str,
+    subtask: Dict[str, Any],
+    memory_system: Any = Depends(get_memory_system)
+) -> Dict[str, Any]:
+    """Add a subtask to a task."""
+    try:
+        # Store subtask in episodic memory
+        memory = Memory(
+            content=subtask,
+            type=MemoryType.TASK_UPDATE,
+            metadata={
+                "task_id": task_id,
+                "type": "sub_task",
+                "timestamp": datetime.now().isoformat()
+            }
+        )
+        await memory_system.episodic.store(memory)
+        
+        return {
+            "success": True,
+            "taskId": task_id,
+            "subtaskId": subtask.get("id")
+        }
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@tasks_router.post("/{task_id}/comments", response_model=Dict[str, Any])
+async def add_comment(
+    task_id: str,
+    comment: Dict[str, Any],
+    memory_system: Any = Depends(get_memory_system)
+) -> Dict[str, Any]:
+    """Add a comment to a task."""
+    try:
+        # Store comment in episodic memory
+        memory = Memory(
+            content=comment,
+            type=MemoryType.TASK_UPDATE,
+            metadata={
+                "task_id": task_id,
+                "type": "comment",
+                "timestamp": datetime.now().isoformat()
+            }
+        )
+        await memory_system.episodic.store(memory)
+        
+        return {
+            "success": True,
+            "taskId": task_id,
+            "commentId": comment.get("id")
+        }
+    except Exception as e:
+        raise ServiceError(str(e))
+
 @tasks_router.post("/{task_id}/transition", response_model=Dict[str, Any])
 async def transition_task_state(
     task_id: str,

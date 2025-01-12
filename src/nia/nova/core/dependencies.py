@@ -1,11 +1,14 @@
 """FastAPI dependency injection providers."""
 
 from typing import AsyncGenerator, Any
+from fastapi import Depends, APIRouter
 
 # Default models to use
 CHAT_MODEL = "default"  # Will use first available model from LMStudio
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # Default embedding model from sentence-transformers
-from fastapi import Depends
+
+# Create router for lifecycle events
+ws_router = APIRouter()
 
 from nia.core.neo4j.neo4j_store import Neo4jMemoryStore
 from nia.core.profiles.profile_manager import ProfileManager
@@ -27,14 +30,75 @@ async def get_llm_interface() -> LLMInterface:
     """Get LLM interface instance."""
     return LLMInterface()
 
-async def get_memory_system() -> AsyncGenerator[TwoLayerMemorySystem, None]:
+_memory_system = None
+
+async def get_memory_system() -> TwoLayerMemorySystem:
     """Get memory system instance."""
-    system = TwoLayerMemorySystem()
-    try:
-        await system.initialize()
-        yield system
-    finally:
-        await system.cleanup()
+    global _memory_system
+    if _memory_system is None:
+        from nia.core.vector.vector_store import VectorStore
+        from nia.core.vector.embeddings import EmbeddingService
+        from nia.memory.two_layer import EpisodicLayer, SemanticLayer
+        
+        try:
+            # Initialize vector store with embedding service
+            embedding_service = EmbeddingService()
+            vector_store = VectorStore(embedding_service)
+            
+            # Create memory system with vector store
+            memory_system = TwoLayerMemorySystem(vector_store=vector_store)
+            
+            # Initialize layers
+            episodic = EpisodicLayer(vector_store)
+            episodic.store = vector_store  # Ensure store is set
+            semantic = SemanticLayer()
+            
+            # Set layers
+            memory_system.episodic = episodic
+            memory_system.semantic = semantic
+            memory_system.vector_store = vector_store  # Ensure vector_store is set
+            
+            # Initialize the system
+            await memory_system.initialize()
+            
+            # Verify initialization
+            if not hasattr(memory_system, 'episodic') or not hasattr(memory_system.episodic, 'store'):
+                # Try to re-initialize layers
+                memory_system.episodic = EpisodicLayer(vector_store)
+                memory_system.episodic.store = vector_store  # Ensure store is set
+                memory_system.semantic = SemanticLayer()
+                memory_system.vector_store = vector_store  # Ensure vector_store is set
+                await memory_system.initialize()
+                
+                # Verify again
+                if not hasattr(memory_system, 'episodic') or not hasattr(memory_system.episodic, 'store'):
+                    raise ValueError("Memory system not properly initialized")
+            
+            # Set initialized flag
+            memory_system._initialized = True
+            
+            # Store the initialized memory system
+            _memory_system = memory_system
+                
+        except Exception as e:
+            print(f"Error initializing memory system: {str(e)}")
+            _memory_system = None
+            raise
+    else:
+        # Verify existing memory system
+        if not hasattr(_memory_system, 'episodic') or not hasattr(_memory_system.episodic, 'store'):
+            print("Warning: Existing memory system missing required attributes")
+            _memory_system = None
+            return await get_memory_system()
+    return _memory_system
+
+@ws_router.on_event("shutdown")
+async def cleanup_memory_system():
+    """Clean up memory system on shutdown."""
+    global _memory_system
+    if _memory_system is not None:
+        await _memory_system.cleanup()
+        _memory_system = None
 
 async def get_world(
     memory_system: TwoLayerMemorySystem = Depends(get_memory_system)

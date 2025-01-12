@@ -85,6 +85,63 @@ class TaskUpdate(BaseModel):
             return TaskState(v)
         return v
 
+class ChannelDetails(BaseModel):
+    """Channel information model."""
+    id: str
+    name: str
+    description: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    is_public: bool = True
+    workspace: str
+    domain: Optional[str] = None
+    type: str = "channel"  # channel, dm, team
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+class ChannelMember(BaseModel):
+    """Channel member model."""
+    id: str
+    name: str
+    type: str  # user or agent
+    role: str  # admin, member
+    status: str  # active, inactive
+    joined_at: datetime = Field(default_factory=datetime.utcnow)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+class PinnedItem(BaseModel):
+    """Pinned item model."""
+    id: str
+    type: str  # message, file, link
+    content: Dict[str, Any]
+    pinned_by: str
+    pinned_at: datetime = Field(default_factory=datetime.utcnow)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+class ChannelSettings(BaseModel):
+    """Channel settings model."""
+    notifications: bool = True
+    privacy: str = "public"  # public, private
+    retention_days: Optional[int] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+class AgentMetrics(BaseModel):
+    """Agent performance metrics model."""
+    response_time: float  # Average response time in seconds
+    tasks_completed: int
+    success_rate: float
+    uptime: float  # Percentage
+    last_active: datetime
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+class AgentInteraction(BaseModel):
+    """Agent interaction history model."""
+    id: str
+    type: str  # message, task, action
+    content: str
+    context: Optional[Dict[str, Any]] = None
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
 class AgentInfo(BaseModel):
     """Agent information model."""
     id: str
@@ -104,6 +161,15 @@ class AgentTeam(BaseModel):
     status: str
     channel_id: str
     metadata: Dict[str, Any] = Field(default_factory=dict)
+class Concept(BaseModel):
+    """Concept model for analysis."""
+    name: str
+    type: str
+    description: str
+    confidence: float
+    relationships: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
 class KeyPoint(BaseModel):
     statement: str
     type: str
@@ -279,6 +345,16 @@ class AgentStatusResponse(BaseModel):
     status: str
     timestamp: str
 
+class AgentResponse(BaseModel):
+    """Response model for agent operations."""
+    agent_id: str
+    name: str
+    type: str
+    status: str
+    capabilities: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+    timestamp: str
+
 class GraphPruneResponse(BaseModel):
     nodes_removed: int
     edges_removed: int
@@ -338,3 +414,37 @@ class LLMErrorResponse(BaseModel):
     error: str = Field(..., description="Error message")
     error_type: str = Field(..., description="Type of error")
     confidence: Literal[0.0] = Field(default=0.0, description="Always 0.0 for errors")
+
+class ThreadRequest(BaseModel):
+    """Request model for thread operations."""
+    title: str
+    workspace: str
+    domain: Optional[str] = None
+    participants: List[str] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+class ThreadResponse(BaseModel):
+    """Response model for thread operations."""
+    id: str
+    title: str
+    domain: Optional[str] = None
+    messages: List[Dict[str, Any]] = Field(default_factory=list)
+    created_at: str
+    updated_at: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+class MessageRequest(BaseModel):
+    """Request model for message operations."""
+    content: str
+    thread_id: str
+    sender_type: str = "user"
+    sender_id: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+class ThreadListResponse(BaseModel):
+    """Response model for listing threads."""
+    threads: List[ThreadResponse]
+    total: int
+    page: Optional[int] = None
+    page_size: Optional[int] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)

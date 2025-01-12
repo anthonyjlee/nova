@@ -3,6 +3,25 @@
 from fastapi import FastAPI, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 
+# Enable detailed error logging
+import logging
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger("uvicorn")
+logger.setLevel(logging.DEBUG)
+
+from .endpoints import (
+    graph_router,
+    agent_router,
+    user_router,
+    analytics_router,
+    orchestration_router,
+    chat_router
+)
+from .nova_endpoints import nova_router
+from .tasks_endpoints import tasks_router
+from .websocket_endpoints import ws_router
+from .dependencies import ws_router as lifecycle_router
+
 # Create root router
 root_router = APIRouter(prefix="/api")
 
@@ -14,17 +33,6 @@ async def root():
         "version": "0.1.0",
         "status": "running"
     }
-
-from .endpoints import (
-    graph_router,
-    agent_router,
-    user_router,
-    analytics_router,
-    orchestration_router,
-    chat_router,
-    ws_router
-)
-from .nova_endpoints import nova_router
 
 # Create FastAPI app
 app = FastAPI(
@@ -94,6 +102,7 @@ app.include_router(agent_router)          # Agent management
 app.include_router(analytics_router)      # Analytics and insights
 app.include_router(user_router)           # User management
 app.include_router(ws_router)             # Real-time updates
+app.include_router(tasks_router)          # Task management
 
 # Add CORS middleware for specific routes
 app.add_middleware(
@@ -105,6 +114,20 @@ app.add_middleware(
     expose_headers=["Content-Type", "Authorization"],
     max_age=3600,
 )
+
+# Add lifecycle router
+app.include_router(lifecycle_router)      # Lifecycle events
+
+# Add event handlers
+@app.on_event("startup")
+async def startup_event():
+    """Handle application startup."""
+    logger.info("Application starting up...")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Handle application shutdown."""
+    logger.info("Application shutting down...")
 
 # Add error handlers
 @app.exception_handler(Exception)

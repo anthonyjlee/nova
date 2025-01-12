@@ -162,32 +162,6 @@ class TaskValidation(BaseModel):
             return TaskState(v)
         return v
 
-class TaskMemory(Memory):
-    """Task-specific memory model."""
-    type: MemoryType = MemoryType.TASK_UPDATE
-    task_id: str
-    previous_state: Optional[TaskState] = None
-    new_state: TaskState
-    validation: TaskValidation
-    metadata: Dict[str, Any] = Field(default_factory=dict)
-
-    def dict(self) -> Dict[str, Any]:
-        """Convert to dictionary with proper serialization."""
-        d = super().dict()
-        if self.previous_state:
-            d["previous_state"] = str(self.previous_state)
-        d["new_state"] = str(self.new_state)
-        if self.validation:
-            d["validation"] = self.validation.dict()
-        return d
-
-    @validator("previous_state", "new_state", pre=True)
-    def validate_states(cls, v):
-        """Validate task states."""
-        if isinstance(v, str):
-            return TaskState(v)
-        return v
-
 class DomainContext(BaseModel):
     """Domain context for memories and concepts."""
     primary_domain: str
@@ -433,6 +407,32 @@ class ProceduralMemory(Memory):
             return v
         else:
             return ValidationSchema()
+
+class TaskMemory(Memory):
+    """Task-specific memory model."""
+    type: MemoryType = MemoryType.TASK_UPDATE
+    task_id: str
+    previous_state: Optional[TaskState] = None
+    new_state: TaskState
+    validation: TaskValidation
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    def dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        d = super().dict()
+        if self.previous_state:
+            d["previous_state"] = str(self.previous_state)
+        d["new_state"] = str(self.new_state)
+        if self.validation:
+            d["validation"] = self.validation.dict()
+        return d
+
+    @validator("previous_state", "new_state", pre=True)
+    def validate_states(cls, v):
+        """Validate task states."""
+        if isinstance(v, str):
+            return TaskState(v)
+        return v
 
 class AgentResponse(BaseModel):
     """Response from an agent."""

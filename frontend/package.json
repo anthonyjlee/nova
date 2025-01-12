@@ -48,7 +48,9 @@
 		"@tailwindcss/forms": "^0.5.9",
 		"@tailwindcss/typography": "^0.5.15",
 		"@types/d3": "^7.4.3",
+		"@types/uuid": "^10.0.0",
 		"cytoscape": "^3.30.4",
-		"d3": "^7.9.0"
+		"d3": "^7.9.0",
+		"uuid": "^11.0.5"
 	}
 }

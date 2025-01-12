@@ -716,12 +716,12 @@ class TwoLayerMemorySystem:
     def __init__(self, neo4j_uri: str = "bolt://localhost:7687", 
                  vector_store: Optional[VectorStore] = None,
                  llm = None):
-        self.episodic = EpisodicLayer(vector_store)
+        self.vector_store = vector_store  # Store vector store first
+        self.episodic = EpisodicLayer(self.vector_store)  # Initialize episodic with vector store
         self.semantic = SemanticLayer(uri=neo4j_uri)
         self.consolidation_manager = None  # Will be set by ConsolidationManager
         self._initialized = False
         self.llm = llm  # Store LLM interface
-        self.vector_store = vector_store  # Expose vector_store for external use
         
     def _create_validation_metadata(
         self,
