@@ -25,7 +25,8 @@
     Thread,
     WorkspaceType,
     DomainType,
-    WorkspaceConfig
+    WorkspaceConfig,
+    ServerStatus
   } from '$lib/types/chat';
   import { WORKSPACE_DOMAINS } from '$lib/types/chat';
   import { currentWorkspace, currentDomain } from '$lib/stores/workspace';
@@ -54,7 +55,7 @@
   let workspaceConfig: WorkspaceConfig | null = null;
   let workspaceValue: WorkspaceType;
   let domainValue: DomainType;
-  let serverStatus: { status: string; version: string } | null = null;
+  let serverStatus: ServerStatus | null = null;
 
   // Subscribe to stores
   currentWorkspace.subscribe(value => workspaceValue = value);
@@ -227,8 +228,12 @@
         serverStatus = await checkServerStatus();
       } catch (err) {
         console.error('Failed to check server status:', err);
-        error = 'Server is not responding';
-        return;
+        // Don't block initialization on server status check
+        serverStatus = {
+          status: 'unknown',
+          version: '0.0.0',
+          timestamp: new Date().toISOString()
+        };
       }
 
       // Load available agents
@@ -854,6 +859,9 @@
     onClose={() => {
       selectedAgent = null;
       filteredAgentId = null;
+    }}
+    onFocusMessages={(agentId) => {
+      filteredAgentId = agentId;
     }}
   />
 {/if}

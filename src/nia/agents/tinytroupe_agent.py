@@ -5,7 +5,7 @@ import uuid
 from typing import Dict, List, Optional, Any, TYPE_CHECKING
 from datetime import datetime
 
-from tinytroupe import TinyPerson
+from .tiny_person import TinyPerson
 from .base import BaseAgent as MemoryBaseAgent
 from ..world.environment import NIAWorld
 from ..memory.two_layer import TwoLayerMemorySystem

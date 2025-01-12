@@ -5,6 +5,23 @@ from typing import Dict, List, Optional, Any
 from pydantic import BaseModel
 from datetime import datetime
 
+class CrossDomainSchema(BaseModel):
+    """Cross-domain validation schema."""
+    approved: bool = False
+    requested: bool = False
+    source_domain: Optional[str] = None
+    target_domain: Optional[str] = None
+    approval_date: Optional[str] = None
+    approval_source: Optional[str] = None
+
+class ValidationSchema(BaseModel):
+    """Validation schema for concepts and relationships."""
+    domain: str
+    confidence: float
+    source: str
+    timestamp: str
+    cross_domain: Optional[CrossDomainSchema] = None
+
 class MemoryType(str, Enum):
     """Type of memory."""
     EPISODIC = "episodic"

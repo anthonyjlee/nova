@@ -4,7 +4,7 @@ import logging
 from typing import Dict, List, Optional, Any
 from datetime import datetime
 
-from tinytroupe import TinyWorld
+from .tiny_world import TinyWorld
 from ..memory.two_layer import TwoLayerMemorySystem
 from ..core.types.memory_types import Memory, EpisodicMemory
 

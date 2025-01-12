@@ -5,6 +5,7 @@ import AgentTeamView from '$lib/components/AgentTeamView.svelte';
 import AgentDetailsPanel from '$lib/components/AgentDetailsPanel.svelte';
 import type { ThreadParticipant } from '$lib/types/chat';
 import { currentWorkspace, currentDomain } from '$lib/stores/workspace';
+import { listAgents } from '$lib/services/agents';
 
 const lifecycle = useComponentLifecycle('AgentsPage');
 
@@ -31,10 +32,7 @@ async function fetchAgents() {
     try {
         loading = true;
         error = null;
-        const response = await fetch('/api/agents');
-        if (!response.ok) throw new Error('Failed to fetch agents');
-        
-        agents = await response.json();
+        agents = await listAgents();
     } catch (e) {
         error = e instanceof Error ? e.message : 'Failed to load agents';
     } finally {
@@ -71,7 +69,7 @@ onMount(() => {
         name: 'agentUpdates'
     });
     
-    const socket = new WebSocket('ws://localhost:3000/api/ws/agents');
+    const socket = new WebSocket(`ws://${window.location.host}/ws/agents/client-${Math.random().toString(36).substring(7)}`);
     
     socket.onmessage = (event) => {
         const update = JSON.parse(event.data);

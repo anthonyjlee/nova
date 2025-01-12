@@ -20,7 +20,8 @@ class ConceptStore(Neo4jBaseStore):
         """Initialize the concept store and create indexes."""
         super().__init__(
             uri=uri, 
-            auth=(user, password) if user and password else None,
+            user=user,
+            password=password,
             max_retry_time=max_retry_time,
             retry_interval=retry_interval
         )

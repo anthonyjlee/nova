@@ -1,6 +1,6 @@
 """WebSocket endpoints for real-time updates."""
 
-from fastapi import APIRouter, WebSocket, Depends, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, Depends, WebSocketDisconnect, Query
 from typing import Dict, Any, Optional, Literal
 import uuid
 import logging
@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 from .dependencies import get_memory_system
+from .auth import validate_api_key
 from .websocket_server import WebSocketServer
 from nia.memory.two_layer import TwoLayerMemorySystem
 
@@ -27,8 +28,9 @@ async def initialize_websocket_server():
     async with _init_lock:
         if _websocket_server is None:
             try:
-                # Create and initialize WebSocket server using the new create method
+                # Create and initialize WebSocket server instance
                 _websocket_server = await WebSocketServer.create(get_memory_system)
+                logger.info("WebSocket server initialized successfully")
             except Exception as e:
                 logger.error(f"Error initializing WebSocket server: {str(e)}")
                 raise
@@ -53,12 +55,13 @@ async def start_memory_updates():
 async def startup_event():
     """Handle FastAPI startup event."""
     try:
-        # Initialize server
+        logger.info("Starting WebSocket server initialization...")
+        # Initialize server and wait for completion
         await initialize_websocket_server()
-        # Start memory updates in background
-        asyncio.create_task(start_memory_updates())
+        logger.info("WebSocket server initialization completed")
     except Exception as e:
-        logger.error(f"Error in startup event: {str(e)}")
+        logger.error(f"Error in startup event: {str(e)}", exc_info=True)
+        raise
 
 ConnectionType = Literal["chat", "tasks", "agents", "graph"]
 
@@ -66,10 +69,20 @@ ConnectionType = Literal["chat", "tasks", "agents", "graph"]
 async def websocket_endpoint(
     websocket: WebSocket,
     connection_type: ConnectionType,
-    client_id: str
+    client_id: str,
+    api_key: str = Query(...),
+    memory_system=Depends(get_memory_system)
 ):
     """WebSocket endpoint for real-time updates."""
     try:
+        # Accept connection first
+        await websocket.accept()
+
+        # Validate API key
+        if not validate_api_key(api_key):
+            await websocket.close(code=4000, reason="Invalid API key")
+            return
+
         # Ensure server is initialized
         server = get_websocket_server()
         
@@ -93,11 +106,11 @@ async def websocket_endpoint(
         logger.error(f"WebSocket server error: {str(e)}")
         try:
             await websocket.close(code=1011, reason=str(e))
-        except:
-            pass
+        except Exception as close_error:
+            logger.error(f"Error closing websocket: {str(close_error)}")
     except Exception as e:
         logger.error(f"Error handling {connection_type} connection: {str(e)}")
         try:
             await websocket.close(code=1011, reason=str(e))
-        except:
-            pass
+        except Exception as close_error:
+            logger.error(f"Error closing websocket: {str(close_error)}")

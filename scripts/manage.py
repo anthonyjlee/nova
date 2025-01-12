@@ -17,9 +17,9 @@ class ServiceManager:
         self.docker_compose_file = "scripts/docker/docker-compose.yml"
         self.services = {
             "neo4j": {
-                "port": 7474,
-                "health_url": "http://localhost:7474",
-                "startup_time": 10
+                "port": 7687,
+                "health_url": "http://localhost:7474/browser/",
+                "startup_time": 30
             },
             "qdrant": {
                 "port": 6333,
@@ -55,11 +55,27 @@ class ServiceManager:
     
     def check_service(self, name: str, url: str) -> bool:
         """Check if a service is responding."""
-        try:
-            response = requests.get(url)
-            return response.status_code == 200
-        except requests.RequestException:
-            return False
+        if name == "neo4j":
+            try:
+                # First check HTTP endpoint
+                http_response = requests.get(url)
+                if http_response.status_code != 200:
+                    return False
+                    
+                # Then check if Bolt port is open
+                import socket
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                result = sock.connect_ex(('localhost', 7687))
+                sock.close()
+                return result == 0
+            except Exception:
+                return False
+        else:
+            try:
+                response = requests.get(url)
+                return response.status_code == 200
+            except requests.RequestException:
+                return False
     
     def check_docker(self):
         """Check if Docker is running."""

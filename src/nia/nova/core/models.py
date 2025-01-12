@@ -426,11 +426,13 @@ class ThreadRequest(BaseModel):
 class ThreadResponse(BaseModel):
     """Response model for thread operations."""
     id: str
-    title: str
+    name: str
     domain: Optional[str] = None
     messages: List[Dict[str, Any]] = Field(default_factory=list)
-    created_at: str
-    updated_at: str
+    createdAt: str
+    updatedAt: str
+    workspace: str = "personal"
+    participants: List[Dict[str, Any]] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
 class MessageRequest(BaseModel):

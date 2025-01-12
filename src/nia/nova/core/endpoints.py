@@ -28,6 +28,7 @@ from .dependencies import (
     get_graph_store,
     get_agent_store,
     get_profile_store,
+    get_thread_manager,
     CHAT_MODEL,
     EMBEDDING_MODEL
 )
@@ -91,6 +92,23 @@ from .models import (
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # Set to DEBUG to see metadata processing logs
 
+# Create root router for status endpoint
+root_router = APIRouter(
+    prefix="/api",
+    tags=["System"],
+    dependencies=[Depends(check_rate_limit)],
+    responses={404: {"description": "Not found"}}
+)
+
+@root_router.get("/status")
+async def get_status() -> Dict[str, str]:
+    """Get server status."""
+    return {
+        "status": "running",
+        "version": "0.1.0",
+        "timestamp": datetime.now().isoformat()
+    }
+
 # Create routers with dependencies
 graph_router = APIRouter(
     prefix="/api/graph",
@@ -139,6 +157,31 @@ async def agent_options_handler(request: Request):
             "Access-Control-Allow-Credentials": "true",
         },
     )
+
+@agent_router.get("")
+async def list_available_agents(
+    _: None = Depends(get_permission("read")),
+    agent_store: Any = Depends(get_agent_store)
+) -> List[Dict[str, Any]]:
+    """List all available agents."""
+    try:
+        agents = await agent_store.get_all_agents()
+        return [
+            {
+                "id": agent["id"],
+                "name": agent["name"],
+                "type": agent.get("type"),
+                "workspace": agent.get("workspace", "personal"),
+                "status": agent.get("status", "active"),
+                "metadata": (lambda m: (
+                    logger.debug(f"Processing metadata for agent {agent['id']}: {m}"),
+                    json.loads(m) if isinstance(m, str) else m
+                )[1])(agent.get("metadata", "{}"))
+            }
+            for agent in agents
+        ]
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @agent_router.get("/graph")
 async def get_agent_graph(
@@ -301,8 +344,38 @@ async def chat_options_handler(request: Request):
             "Access-Control-Allow-Methods": "*",
             "Access-Control-Allow-Headers": "*",
             "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Max-Age": "3600",
         },
     )
+
+@chat_router.get("/threads", response_model=ThreadListResponse)
+async def list_threads(
+    _: None = Depends(get_permission("read")),
+    thread_manager: Any = Depends(get_thread_manager),
+    filter_params: Optional[Dict[str, Any]] = None
+) -> ThreadListResponse:
+    """List all chat threads with optional filtering."""
+    try:
+        threads = await thread_manager.list_threads(filter_params)
+        response = ThreadListResponse(
+            threads=[ThreadResponse(**thread) for thread in threads],
+            total=len(threads),
+            timestamp=datetime.now().isoformat()
+        )
+        return JSONResponse(
+            content=response.dict(),
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:5173",
+                "Access-Control-Allow-Methods": "*",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
+    except ServiceError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error in list_threads: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @chat_router.get("/agents", response_model=List[Dict[str, Any]])
 async def list_available_agents(
@@ -372,6 +445,24 @@ async def add_thread_agent(
         logger.error(f"Unexpected error in add_thread_agent: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+@chat_router.get("/threads/{thread_id}/messages", response_model=List[Dict[str, Any]])
+async def get_thread_messages(
+    thread_id: str,
+    _: None = Depends(get_permission("read")),
+    thread_manager: Any = Depends(get_thread_manager)
+) -> List[Dict[str, Any]]:
+    """Get messages from a thread."""
+    try:
+        thread = await thread_manager.get_thread(thread_id)
+        return thread.get("messages", [])
+    except ResourceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ServiceError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error in get_thread_messages: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
 @chat_router.get("/threads/{thread_id}", response_model=ThreadResponse)
 async def get_thread(
     thread_id: str,
@@ -396,14 +487,47 @@ async def create_thread(
     _: None = Depends(get_permission("write")),
     thread_manager: Any = Depends(get_thread_manager)
 ) -> ThreadResponse:
-    """Create a new chat thread."""
+    """Create a new chat thread with validation."""
     try:
+        # Validate request
+        if not request.title:
+            raise ValidationError("Thread title is required")
+            
+        # Validate metadata if provided
+        if request.metadata:
+            if not isinstance(request.metadata, dict):
+                raise ValidationError("Metadata must be a dictionary")
+            
+            # Ensure required metadata fields
+            required_metadata = ["type", "system", "pinned", "description"]
+            for field in required_metadata:
+                if field not in request.metadata:
+                    logger.warning(f"Missing metadata field {field}, using default")
+                    
+            # Validate thread type if provided
+            if "type" in request.metadata:
+                valid_types = ["test", "system", "user", "agent", "chat", "task", "agent-team"]
+                if request.metadata["type"] not in valid_types:
+                    raise ValidationError(f"Invalid thread type. Must be one of: {valid_types}")
+        
+        # Create thread with validation
         thread = await thread_manager.create_thread(
             title=request.title,
             domain=request.domain or "general",
-            metadata=request.metadata
+            metadata=request.metadata,
+            workspace=request.workspace or "personal"
         )
-        return ThreadResponse(**thread)
+        
+        response = ThreadResponse(**thread)
+        return JSONResponse(
+            content=response.dict(),
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:5173",
+                "Access-Control-Allow-Methods": "*", 
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
     except ServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
@@ -417,25 +541,50 @@ async def add_message(
     _: None = Depends(get_permission("write")),
     thread_manager: Any = Depends(get_thread_manager)
 ) -> MessageResponse:
-    """Add a message to a thread."""
+    """Add a message to a thread with validation."""
     try:
-        # Create message
+        # Validate request
+        if not request.content:
+            raise ValidationError("Message content is required")
+            
+        if not request.sender_type:
+            raise ValidationError("Sender type is required")
+            
+        if not request.sender_id:
+            raise ValidationError("Sender ID is required")
+            
+        # Create message with validation
         message = Message(
             id=str(uuid.uuid4()),
             content=request.content,
             sender_type=request.sender_type,
             sender_id=request.sender_id,
             timestamp=datetime.now().isoformat(),
-            metadata=request.metadata or {}
+            metadata={
+                "type": "message",
+                "domain": request.metadata.get("domain", "general") if request.metadata else "general",
+                "importance": request.metadata.get("importance", 0.5) if request.metadata else 0.5,
+                **request.metadata if request.metadata else {}
+            }
         )
         
-        # Add message to thread
+        # Add message with verification
         thread = await thread_manager.add_message(thread_id, message.dict())
         
-        return MessageResponse(
+        response = MessageResponse(
             message=message,
             thread_id=thread_id,
             timestamp=datetime.now().isoformat()
+        )
+        
+        return JSONResponse(
+            content=response.dict(),
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:5173",
+                "Access-Control-Allow-Methods": "*",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Allow-Credentials": "true",
+            }
         )
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -467,25 +616,6 @@ async def create_agent_team(
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
         logger.error(f"Unexpected error in create_agent_team: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-@chat_router.get("/threads", response_model=ThreadListResponse)
-async def list_threads(
-    _: None = Depends(get_permission("read")),
-    thread_manager: Any = Depends(get_thread_manager)
-) -> ThreadListResponse:
-    """List all chat threads."""
-    try:
-        threads = await thread_manager.list_threads()
-        return ThreadListResponse(
-            threads=[ThreadResponse(**thread) for thread in threads],
-            total=len(threads),
-            timestamp=datetime.now().isoformat()
-        )
-    except ServiceError as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    except Exception as e:
-        logger.error(f"Unexpected error in list_threads: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 # Create WebSocket router without dependencies

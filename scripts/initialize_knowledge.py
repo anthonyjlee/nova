@@ -102,19 +102,22 @@ async def initialize_task_structures(store: ConceptStore):
     
     logger.info("Task structures initialized successfully")
 
+async def clear_all_data(store: ConceptStore):
+    """Clear all data from Neo4j."""
+    logger.info("Clearing all existing data...")
+    await store.run_query("MATCH (n) DETACH DELETE n")
+    logger.info("All data cleared")
+
 async def initialize_knowledge():
-    """Initialize test knowledge graph data if empty."""
+    """Initialize test knowledge graph data."""
+    store = None
     try:
-        store = ConceptStore()
+        store = ConceptStore(uri="bolt://localhost:7687", user="neo4j", password="password")
+        await store.connect()
+        logger.info("Connected to Neo4j")
         
-        # Check if concepts already exist
-        query = "MATCH (c:Concept) RETURN count(c) as count"
-        async with store.driver.session() as session:
-            result = await session.run(query)
-            record = await result.single()
-            if record and record["count"] > 0:
-                logger.info("Knowledge graph already contains concepts, skipping initialization")
-                return
+        # Clear existing data
+        await clear_all_data(store)
             
         logger.info("Knowledge graph is empty, initializing with test data")
         
@@ -312,7 +315,9 @@ async def create_test_data(store: ConceptStore):
 
 async def verify_initialization():
     """Verify that all required structures are properly initialized."""
-    store = ConceptStore()
+    store = ConceptStore(uri="bolt://localhost:7687", user="neo4j", password="password")
+    await store.connect()
+    logger.info("Connected to Neo4j")
     try:
         async with store.driver.session() as session:
             # Check task states
@@ -397,8 +402,19 @@ async def verify_initialization():
     finally:
         await store.close()
 
+async def main():
+    """Main execution function."""
+    store = None
+    try:
+        store = ConceptStore(uri="bolt://localhost:7687", user="neo4j", password="password")
+        await store.connect()
+        await initialize_knowledge()
+        # Verify initialization
+        if not await verify_initialization():
+            sys.exit(1)
+    finally:
+        if store:
+            await store.close()
+
 if __name__ == "__main__":
-    asyncio.run(initialize_knowledge())
-    # Verify initialization
-    if not asyncio.run(verify_initialization()):
-        sys.exit(1)
+    asyncio.run(main())

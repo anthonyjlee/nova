@@ -11,11 +11,10 @@ from nia.core.types.memory_types import Memory, MemoryType
 
 kg_router = APIRouter(
     prefix="/api/kg",
-    tags=["Knowledge Graph"],
-    dependencies=[Depends(get_permission("write"))]
+    tags=["Knowledge Graph"]
 )
 
-@kg_router.post("/crossDomain", response_model=Dict[str, Any])
+@kg_router.post("/crossDomain", response_model=Dict[str, Any], dependencies=[Depends(get_permission("write"))])
 async def request_cross_domain_access(
     request: Dict[str, Any],
     memory_system: Any = Depends(get_memory_system)
@@ -111,7 +110,7 @@ async def list_domains(
     except Exception as e:
         raise ServiceError(str(e))
 
-@kg_router.post("/taskReference", response_model=Dict[str, Any])
+@kg_router.post("/taskReference", response_model=Dict[str, Any], dependencies=[Depends(get_permission("write"))])
 async def link_task_to_concept(
     request: Dict[str, Any],
     memory_system: Any = Depends(get_memory_system)
@@ -142,6 +141,58 @@ async def link_task_to_concept(
             "success": True,
             "taskId": task_id,
             "conceptId": concept_id
+        }
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@kg_router.get("/data", response_model=Dict[str, Any])
+async def get_knowledge_data(
+    memory_system: Any = Depends(get_memory_system)
+) -> Dict[str, Any]:
+    """Get knowledge graph data."""
+    try:
+        # Query nodes from semantic layer
+        nodes = await memory_system.semantic.run_query(
+            """
+            MATCH (n)
+            RETURN n.id as id, n.name as label, labels(n)[0] as type,
+                   n.category as category, n.domain as domain,
+                   n.metadata as metadata
+            """
+        )
+        
+        # Query relationships
+        edges = await memory_system.semantic.run_query(
+            """
+            MATCH (n1)-[r]->(n2)
+            RETURN id(r) as id, type(r) as type, r.label as label,
+                   n1.id as source, n2.id as target
+            """
+        )
+        
+        return {
+            "nodes": [
+                {
+                    "id": n["id"],
+                    "label": n["label"],
+                    "type": n["type"],
+                    "category": n["category"],
+                    "domain": n["domain"],
+                    "metadata": n["metadata"]
+                }
+                for n in nodes
+            ],
+            "edges": [
+                {
+                    "id": str(e["id"]),
+                    "source": e["source"],
+                    "target": e["target"],
+                    "type": e["type"],
+                    "label": e["label"] or e["type"]
+                }
+                for e in edges
+            ],
+            "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
         raise ServiceError(str(e))

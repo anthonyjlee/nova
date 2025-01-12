@@ -2,8 +2,13 @@
 
 from typing import Any, Optional
 import uuid
+import asyncio
+import logging
 
 from fastapi import Depends
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 from nia.memory.two_layer import TwoLayerMemorySystem
 from nia.core.neo4j.concept_manager import ConceptManager
 from nia.core.neo4j.graph_store import GraphStore
@@ -40,8 +45,16 @@ async def get_memory_system() -> TwoLayerMemorySystem:
     """Get or create memory system instance."""
     global _memory_system
     if _memory_system is None:
+        logger.debug("Creating new memory system instance")
         _memory_system = TwoLayerMemorySystem()
-        await _memory_system.initialize()
+        try:
+            # Wait for initialization
+            logger.debug("Initializing memory system...")
+            await _memory_system.initialize()
+            logger.debug("Memory system initialization complete")
+        except Exception as e:
+            logger.error(f"Error initializing memory system: {str(e)}")
+            raise
     return _memory_system
 
 async def get_world() -> World:
@@ -128,8 +141,15 @@ async def get_thread_manager() -> ThreadManager:
     """Get or create thread manager instance."""
     global _thread_manager
     if _thread_manager is None:
-        memory_system = await get_memory_system()
-        _thread_manager = ThreadManager(memory_system)
+        logger.debug("Creating new thread manager instance")
+        try:
+            memory_system = await get_memory_system()
+            logger.debug("Got memory system for thread manager")
+            _thread_manager = ThreadManager(memory_system)
+            logger.debug("Thread manager created successfully")
+        except Exception as e:
+            logger.error(f"Error creating thread manager: {str(e)}")
+            raise
     return _thread_manager
 
 async def get_llm_interface() -> LLMInterface:

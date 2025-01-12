@@ -9,7 +9,9 @@ from .memory_types import (
     EpisodicMemory,
     TaskOutput,
     Concept,
-    Relationship
+    Relationship,
+    ValidationSchema,
+    CrossDomainSchema
 )
 
 __all__ = [
@@ -21,5 +23,7 @@ __all__ = [
     'EpisodicMemory',
     'TaskOutput',
     'Concept',
-    'Relationship'
+    'Relationship',
+    'ValidationSchema',
+    'CrossDomainSchema'
 ]

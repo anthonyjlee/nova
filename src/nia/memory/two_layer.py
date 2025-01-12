@@ -1,35 +1,51 @@
 """Two-layer memory system implementation for NIA."""
 
-import asyncio
+from typing import Optional, Dict, List, Any
 import json
 import logging
-from typing import Dict, List, Optional, Any
+import traceback
 from datetime import datetime, timezone
-from pydantic import BaseModel, Field
-
-from ..core.types.memory_types import ValidationSchema, CrossDomainSchema
-
-
-from nia.core.vector.vector_store import VectorStore, serialize_for_vector_store
+import uuid
+import asyncio
+from .types import Memory, MemoryType, ValidationSchema, CrossDomainSchema, EpisodicMemory
+from .vector_store import VectorStore
+from .embedding import EmbeddingService
 from qdrant_client.http import models
-from nia.core.neo4j.neo4j_store import Neo4jMemoryStore
-from nia.core.neo4j.concept_store import ConceptStore
-from nia.core.vector.embeddings import EmbeddingService
-from nia.core.types.memory_types import Memory, MemoryType, EpisodicMemory
+from ..core.neo4j.concept_store import ConceptStore
+from ..core.neo4j.base_store import Neo4jMemoryStore
 
 logger = logging.getLogger(__name__)
+
+def create_default_validation():
+    """Create default validation data."""
+    return {
+        "domain": "general",
+        "confidence": 0.5,
+        "source": "system",
+        "timestamp": datetime.now(timezone.utc).isoformat()
+    }
 
 class EpisodicLayer:
     """Handles short-term episodic memories using vector storage."""
     
     def __init__(self, vector_store: Optional[VectorStore] = None):
-        if vector_store is None:
-            # Use default configuration
-            embedding_service = EmbeddingService()
-            self.store = VectorStore(embedding_service)
-        else:
-            self.store = vector_store
-        self.pending_consolidation = set()
+        try:
+            logger.debug("Initializing EpisodicLayer")
+            if vector_store is None:
+                # Use default configuration
+                logger.debug("Creating default EmbeddingService")
+                embedding_service = EmbeddingService()
+                logger.debug("Creating default VectorStore")
+                self.store = VectorStore(embedding_service)
+            else:
+                logger.debug("Using provided vector store")
+                self.store = vector_store
+            self.pending_consolidation = set()
+            logger.debug("EpisodicLayer initialization complete")
+        except Exception as e:
+            logger.error(f"Failed to initialize EpisodicLayer: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
         
     def _validate_memory(self, memory: Memory) -> None:
         """Validate memory before storage."""
@@ -90,50 +106,118 @@ class EpisodicLayer:
     async def store_memory(self, memory: Memory) -> str:
         """Store a new episodic memory."""
         try:
-            # Validate memory
-            self._validate_memory(memory)
+            logger.debug(f"Storing memory with type: {memory.type}")
             
-            # Create embedding and store
-            # Convert memory to dict and ensure type is string
+            # Validate memory
+            logger.debug("Validating memory...")
+            self._validate_memory(memory)
+            logger.debug("Memory validation successful")
+            
+            # Create embedding and store with detailed logging
+            logger.info("Converting memory to dict...")
             memory_dict = memory.dict()
+            logger.info(f"Memory content: {json.dumps(memory_dict.get('content'), indent=2) if isinstance(memory_dict.get('content'), (dict, str)) else str(memory_dict.get('content'))}")
+            logger.info(f"Memory metadata: {json.dumps(memory_dict.get('metadata'), indent=2)}")
+            logger.info(f"Memory context: {json.dumps(memory_dict.get('context'), indent=2)}")
+            
             memory_dict["type"] = str(memory_dict["type"])
+            logger.info(f"Converted memory dict: {json.dumps(memory_dict, indent=2)}")
 
             # Handle knowledge field if present
             if hasattr(memory, "knowledge") and isinstance(memory.knowledge, dict):
+                logger.info("Processing knowledge field...")
+                logger.info(f"Knowledge field: {json.dumps(memory.knowledge, indent=2)}")
+                
                 # Map concepts from knowledge field
                 if "concepts" in memory.knowledge:
-                    memory_dict["concepts"] = [
+                    logger.info("Mapping concepts...")
+                    concepts = [
                         c if isinstance(c, dict) else c.dict()
                         for c in memory.knowledge["concepts"]
                     ]
+                    memory_dict["concepts"] = concepts
+                    logger.info(f"Mapped concepts: {json.dumps(concepts, indent=2)}")
+                
                 # Map relationships from knowledge field
                 if "relationships" in memory.knowledge:
-                    memory_dict["relationships"] = [
+                    logger.info("Mapping relationships...")
+                    relationships = [
                         r if isinstance(r, dict) else r.dict()
                         for r in memory.knowledge["relationships"]
                     ]
+                    memory_dict["relationships"] = relationships
+                    logger.info(f"Mapped relationships: {json.dumps(relationships, indent=2)}")
+            
+            # Extract thread_id from various locations using dict access
+            thread_id = None
+            if memory_dict.get("metadata", {}).get("thread_id"):
+                thread_id = memory_dict["metadata"]["thread_id"]
+                logger.info(f"Found thread_id in memory.metadata: {thread_id}")
+            elif memory_dict.get("context", {}).get("thread_id"):
+                thread_id = memory_dict["context"]["thread_id"]
+                logger.info(f"Found thread_id in memory.context: {thread_id}")
+            elif isinstance(memory_dict.get("content"), dict) and memory_dict["content"].get("id"):
+                thread_id = memory_dict["content"]["id"]
+                logger.info(f"Found thread_id in memory.content.id: {thread_id}")
+            
+            # Prepare metadata with proper prefixing
+            metadata = {
+                "type": memory_dict["type"],
+                "timestamp": datetime.now().isoformat(),
+                "importance": memory_dict.get("importance", 0.5),
+                "domain": memory_dict.get("context", {}).get("domain", "general"),
+                "concepts": memory_dict.get("concepts", []),
+                "relationships": memory_dict.get("relationships", []),
+                "thread_id": thread_id,  # Use extracted thread_id
+                "consolidated": False,  # Set initial consolidated state
+                "id": memory_dict.get("id", str(uuid.uuid4()))  # Ensure ID is set
+            }
+            
+            # Log metadata for debugging
+            logger.info(f"Prepared metadata: {json.dumps(metadata, indent=2)}")
             
             # Store with original content and set layer based on memory type
-            memory_id = await self.store.store_vector(
-                content=memory_dict,
-                metadata={
-                    "type": memory_dict["type"],
-                    "timestamp": datetime.now().isoformat(),
-                    "importance": memory.importance,
-                    "domain": memory.context.get("domain", "general"),
-                    "concepts": memory_dict.get("concepts", []),
-                    "relationships": memory_dict.get("relationships", []),
-                    "thread_id": memory.context.get("thread_id"),  # Add thread_id from context
-                    "consolidated": False  # Set initial consolidated state
-                },
-                layer=memory_dict["type"].lower()
+            logger.debug(f"Storing vector in layer: {memory_dict['type'].lower()}")
+            logger.debug(f"Storing with metadata: {json.dumps(metadata, indent=2)}")
+            
+            # Convert content to string for embedding
+            content_str = json.dumps(memory_dict)
+            vector = await self.store.embedding_service.create_embedding(content_str)
+            
+            # Prepare payload with content and metadata
+            payload = {
+                "content": memory_dict,
+                **{f"metadata_{k}": v for k, v in metadata.items()}
+            }
+            
+            # Generate a unique point ID for vector store
+            point_id = str(uuid.uuid4())
+            logger.info(f"Generated vector store point ID: {point_id}")
+            
+            # Use memory ID as point ID for vector store
+            memory_id = memory_dict.get("id")
+            if not memory_id:
+                memory_id = str(uuid.uuid4())
+                memory_dict["id"] = memory_id
+            
+            # Store with vector embedding using memory ID as point ID
+            await self.store.store_vector(
+                collection_name="memories",
+                payload=payload,
+                vector=vector,
+                point_id=memory_id
             )
             
-            # Track for consolidation if important enough
-            if memory.importance >= 0.7:  # High importance threshold
-                self.pending_consolidation.add(memory_id)
+            # Return the memory ID
+            final_memory_id = memory_id
+            logger.debug(f"Successfully stored memory with ID: {final_memory_id}")
             
-            return memory_id
+            # Track for consolidation if important enough
+            if memory_dict.get("importance", 0.5) >= 0.7:  # High importance threshold
+                logger.debug(f"Adding memory {final_memory_id} to consolidation queue (importance: {memory_dict.get('importance')})")
+                self.pending_consolidation.add(final_memory_id)
+            
+            return final_memory_id
         except Exception as e:
             logger.error(f"Failed to store episodic memory: {str(e)}")
             raise
@@ -197,6 +281,310 @@ class EpisodicLayer:
                     self.pending_consolidation.remove(memory_id)
         except Exception as e:
             logger.error(f"Failed to archive memories: '{memory_id}' ({str(e)})")
+
+class TwoLayerMemorySystem:
+    """Implements episodic and semantic memory layers with consolidation support.
+    
+    The system uses a vector store for episodic memories and Neo4j for semantic knowledge.
+    Episodic memories can be consolidated into semantic knowledge over time.
+    """
+    
+    def __init__(self, neo4j_uri: str = "bolt://localhost:7687", 
+                 vector_store: Optional[VectorStore] = None,
+                 llm = None):
+        """Initialize the memory system.
+        
+        Note: This only sets up the basic structure. Call initialize() to fully initialize the system.
+        """
+        self.vector_store = vector_store
+        self.episodic = None  # Will be initialized in initialize()
+        self.semantic = None  # Will be initialized in initialize()
+        self.consolidation_manager = None
+        self._initialized = False
+        self.llm = llm
+        self.neo4j_uri = neo4j_uri
+        
+    def _create_validation_metadata(
+        self,
+        source: str,
+        confidence: float,
+        access_domain: str
+    ) -> Dict:
+        """Create validation metadata for concepts."""
+        return {
+            "source": source,
+            "confidence": confidence,
+            "access_domain": access_domain,
+            "timestamp": datetime.now(timezone.utc).isoformat()
+        }
+        
+    async def initialize(self):
+        """Initialize connections to Neo4j and vector store."""
+        if not self._initialized:
+            try:
+                logger.info("Starting memory system initialization...")
+                
+                # Initialize layers
+                logger.debug("Creating episodic layer...")
+                self.episodic = EpisodicLayer(self.vector_store)
+                logger.debug("Creating semantic layer...")
+                self.semantic = SemanticLayer(uri=self.neo4j_uri)
+                
+                # Initialize Neo4j connection
+                logger.debug("Initializing Neo4j connection...")
+                if hasattr(self.semantic, 'connect'):
+                    await self.semantic.connect()
+                    logger.debug("Neo4j connection established")
+                else:
+                    logger.debug("No connect method found for semantic layer")
+                
+                # Initialize vector store if needed
+                logger.debug("Initializing vector store...")
+                if hasattr(self.episodic.store, 'connect'):
+                    await self.episodic.store.connect()
+                    logger.debug("Vector store connection established")
+                else:
+                    logger.debug("No connect method found for vector store")
+                    
+                self._initialized = True
+                logger.info("Memory system initialization complete")
+            except Exception as e:
+                logger.error(f"Failed to initialize memory system: {str(e)}")
+                logger.error(traceback.format_exc())
+                raise
+            
+    async def cleanup(self):
+        """Clean up connections."""
+        if self._initialized:
+            # Close Neo4j connection
+            if hasattr(self.semantic, 'close'):
+                await self.semantic.close()
+                
+            # Close vector store connection if needed
+            if hasattr(self.episodic.store, 'close'):
+                await self.episodic.store.close()
+                
+            self._initialized = False
+            
+    async def store_experience(self, experience: Memory) -> str:
+        """Store new experience in episodic memory."""
+        try:
+            logger.info("Starting store_experience")
+            logger.info(f"Experience type: {experience.type}")
+            logger.info(f"Experience content: {json.dumps(experience.content, indent=2) if isinstance(experience.content, (dict, str)) else str(experience.content)}")
+            memory_dict = experience.dict()
+            logger.info(f"Experience metadata: {json.dumps(memory_dict.get('metadata'), indent=2) if memory_dict.get('metadata') else None}")
+            logger.info(f"Experience context: {json.dumps(experience.context, indent=2) if experience.context else None}")
+            
+            # Store in episodic memory first
+            logger.info("Storing in episodic memory")
+            memory_id = await self.episodic.store_memory(experience)
+            logger.info(f"Stored in episodic memory with ID: {memory_id}")
+            
+            # Check for consolidation if manager exists
+            if self.consolidation_manager and await self.consolidation_manager.should_consolidate():
+                logger.info("Starting memory consolidation")
+                await self.consolidate_memories()
+                logger.info("Completed memory consolidation")
+            
+            logger.info(f"Completed store_experience with ID: {memory_id}")
+            return memory_id
+        except Exception as e:
+            logger.error(f"Error in store_experience: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
+            
+    async def consolidate_memories(self):
+        """Convert episodic memories to semantic knowledge."""
+        logger.info("Starting memory consolidation")
+        if not self.consolidation_manager:
+            logger.warning("No consolidation manager set")
+            return
+            
+        # Get memories ready for consolidation
+        memories = await self.episodic.get_consolidation_candidates()
+        logger.info(f"Found {len(memories)} consolidation candidates")
+        
+        if not memories:
+            logger.info("No memories to consolidate")
+            return
+            
+        # Log memory details
+        for memory in memories:
+            logger.info(f"Memory candidate - ID: {memory.id if hasattr(memory, 'id') else 'unknown'}, "
+                       f"Importance: {memory.importance if hasattr(memory, 'importance') else 'unknown'}, "
+                       f"Content: {memory.content if hasattr(memory, 'content') else 'unknown'}")
+            
+        # Extract patterns and relationships
+        logger.info("Extracting knowledge from memories")
+        knowledge = await self.consolidation_manager.extract_knowledge(memories)
+        logger.info(f"Extracted knowledge: {json.dumps(knowledge, separators=(',', ':'), ensure_ascii=False)}")
+        
+        # Store in semantic layer
+        logger.info("Storing knowledge in semantic layer")
+        await self.semantic.store_knowledge(knowledge)
+        
+        # Archive processed memories
+        memory_ids = [m.id for m in memories if hasattr(m, 'id')]
+        logger.info(f"Archiving {len(memory_ids)} processed memories")
+        await self.episodic.archive_memories(memory_ids)
+        logger.info("Memory consolidation complete")
+        
+    async def query_episodic(self, query: Dict) -> List[EpisodicMemory]:
+        """Query episodic memories."""
+        try:
+            # Extract filter and convert to vector store format
+            filter_dict = query.get("filter", {})
+            
+            # Convert filter conditions to Qdrant format
+            filter_conditions = []
+            if "filter" in query:
+                filter_dict = query["filter"]
+                if "must" in filter_dict:
+                    for condition in filter_dict["must"]:
+                        # Handle metadata prefix without double-prefixing
+                        key = condition["key"]
+                        if key.startswith("metadata_"):
+                            # Keep the key as is if it already has the prefix
+                            field_key = key
+                        else:
+                            # Add prefix if it doesn't have it
+                            field_key = f"metadata_{key}"
+                        # Log the field key transformation
+                        logger.debug(f"Processing filter condition - Original key: {key}, Final key: {field_key}")
+                        filter_conditions.append(
+                            models.FieldCondition(
+                                key=field_key,  # Use the properly prefixed key
+                                match=models.MatchValue(value=condition["match"]["value"])
+                            )
+                        )
+            elif "filter_conditions" in query:
+                filter_conditions = query["filter_conditions"]
+            elif filter_dict:
+                # Legacy format
+                for key, value in filter_dict.items():
+                    # Always prefix with metadata_ since that's how we store it
+                    filter_conditions.append(
+                        models.FieldCondition(
+                            key=f"metadata_{key}",
+                            match=models.MatchValue(value=value)
+                        )
+                    )
+            
+            # Log filter conditions for debugging
+            logger.debug(f"Using filter conditions: {filter_conditions}")
+
+            # Search with type and filter
+            results = await self.episodic.store.search_vectors(
+                content={"text": query.get("text", "")},  # Match the stored format
+                limit=query.get("limit", 5),
+                score_threshold=query.get("score_threshold", 0.7),
+                layer=query.get("layer", "episodic").lower(),  # Use specified layer or default to episodic
+                filter_conditions=filter_conditions if filter_conditions else None
+            )
+            return results
+        except Exception as e:
+            logger.error(f"Failed to query episodic memories: {str(e)}")
+            return []
+            
+    async def query_semantic(self, query: Dict) -> List[Dict]:
+        """Query semantic knowledge."""
+        return await self.semantic.query_knowledge(query)
+        
+    async def get_memory(self, memory_id: str) -> Optional[Memory]:
+        """Get a memory by its ID."""
+        try:
+            # Search for memory in episodic store
+            # Convert memory_id to content for searching
+            results = await self.episodic.store.search_vectors(
+                content={"id": memory_id},
+                limit=1,
+                score_threshold=0.99  # High threshold for exact match
+            )
+            if results and len(results) > 0:
+                # Convert first result to Memory object
+                memory_data = results[0]
+                
+                # Ensure content is properly formatted
+                content = memory_data.get("content", {})
+                if isinstance(content, dict):
+                    content = content.get("text", "")
+                elif isinstance(content, str):
+                    content = content
+                else:
+                    content = str(content)
+                    
+                memory_data["content"] = content
+                return Memory(**memory_data)
+            return None
+        except Exception as e:
+            logger.error(f"Failed to get memory {memory_id}: {str(e)}")
+            return None
+            
+    async def store(
+        self,
+        memory_id: Optional[str] = None,
+        content: Any = None,
+        memory_type: Optional[str] = None,
+        importance: float = 0.5,
+        context: Optional[Dict] = None,
+        metadata: Optional[Dict] = None,
+        data: Optional[Dict] = None
+    ) -> str:
+        """Store data in memory system.
+        
+        Args:
+            memory_id: Optional memory ID to use
+            content: Content to store
+            memory_type: Optional memory type
+            importance: Importance score (0-1)
+            context: Optional context dictionary
+            metadata: Optional metadata dictionary
+            data: Optional legacy data dictionary
+            
+        Returns:
+            str: Memory ID of the stored memory
+        """
+        try:
+            # Create Memory object
+            memory = Memory(
+                id=memory_id,
+                content=content or (data["content"] if data else ""),
+                type=MemoryType(memory_type) if memory_type else MemoryType.EPISODIC,
+                importance=importance,
+                timestamp=datetime.now(timezone.utc).isoformat(),
+                context=context or (data.get("context", {}) if data else {}),
+                metadata=metadata
+            )
+            
+            # Store in episodic memory
+            memory_id = await self.episodic.store_memory(memory)
+            
+            # If semantic memory, also store in Neo4j
+            if memory.type == MemoryType.SEMANTIC:
+                # Store concept using base store's run_query
+                await self.semantic.run_query(
+                    """
+                    MERGE (c:Concept {name: $name})
+                    SET c.type = $type,
+                        c.description = $description,
+                        c.validation = $validation
+                    """,
+                    {
+                        "name": f"concept_{datetime.now().isoformat()}",
+                        "type": "concept",
+                        "description": memory.content if isinstance(memory.content, str) else memory.content.get("text", ""),
+                        "validation": json.dumps(ValidationSchema(
+                            domain=memory.context.get("domain", "general"),
+                            source=memory.context.get("source", "system"),
+                            confidence=memory.importance
+                        ).dict()) if memory.context else None
+                    }
+                )
+            return memory_id
+        except Exception as e:
+            logger.error(f"Failed to store data: {str(e)}")
+            raise  # Re-raise the exception to be handled by the caller
 
 class SemanticLayer(ConceptStore):
     """Handles long-term semantic knowledge using Neo4j.
@@ -262,25 +650,36 @@ class SemanticLayer(ConceptStore):
         )
     
     def __init__(self, store: Optional[Neo4jMemoryStore] = None, uri: str = "bolt://localhost:7687"):
-        if store is None:
-            super().__init__(
-                uri=uri,
-                user="neo4j",
-                password="password",
-                max_retry_time=30,
-                retry_interval=1
-            )
-        else:
-            # Initialize ConceptStore with store's connection details
-            super().__init__(
-                uri=store.uri,
-                user=store.user,
-                password=store.password,
-                max_retry_time=30,
-                retry_interval=1
-            )
-            # Use the provided store's driver
-            self.driver = store.driver if hasattr(store, 'driver') else store
+        try:
+            logger.debug(f"Initializing SemanticLayer with URI: {uri}")
+            if store is None:
+                logger.debug("No store provided, creating new ConceptStore")
+                super().__init__(
+                    uri=uri,
+                    user="neo4j",
+                    password="password",
+                    max_retry_time=30,
+                    retry_interval=1
+                )
+            else:
+                # Initialize ConceptStore with store's connection details
+                logger.debug("Using provided store for initialization")
+                super().__init__(
+                    uri=store.uri,
+                    user=store.user,
+                    password=store.password,
+                    max_retry_time=30,
+                    retry_interval=1
+                )
+                # Use the provided store's driver
+                self.driver = store.driver if hasattr(store, 'driver') else store
+                logger.debug("Store driver configured")
+            
+            logger.debug("SemanticLayer initialization complete")
+        except Exception as e:
+            logger.error(f"Failed to initialize SemanticLayer: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
             
         self.knowledge_patterns = {
             "concepts": self._create_concept_pattern(),
@@ -688,434 +1087,3 @@ class SemanticLayer(ConceptStore):
         except Exception as e:
             logger.error(f"Failed to query knowledge: {str(e)}")
             return []
-        return ""
-        
-    def _process_query_results(self, results: List[Dict]) -> List[Dict]:
-        """Process Neo4j results into standard format."""
-        processed = []
-        for result in results:
-            if "n" in result:  # Single node
-                node = result["n"]
-                if isinstance(node, dict):
-                    # Extract node properties
-                    processed.append(node)
-            elif "p" in result:  # Path
-                processed.append(self._process_path(result["p"]))
-        return processed
-        
-    def _process_path(self, path: Dict) -> Dict:
-        """Process Neo4j path into standard format."""
-        return {
-            "nodes": path.nodes,
-            "relationships": path.relationships
-        }
-
-class TwoLayerMemorySystem:
-    """Implements episodic and semantic memory layers."""
-    
-    def __init__(self, neo4j_uri: str = "bolt://localhost:7687", 
-                 vector_store: Optional[VectorStore] = None,
-                 llm = None):
-        """Initialize the memory system.
-        
-        Note: This only sets up the basic structure. Call initialize() to fully initialize the system.
-        """
-        self.vector_store = vector_store
-        self.episodic = None  # Will be initialized in initialize()
-        self.semantic = None  # Will be initialized in initialize()
-        self.consolidation_manager = None
-        self._initialized = False
-        self.llm = llm
-        self.neo4j_uri = neo4j_uri
-        
-    def _create_validation_metadata(
-        self,
-        source: str,
-        confidence: float,
-        access_domain: str
-    ) -> Dict:
-        """Create validation metadata for concepts."""
-        return {
-            "source": source,
-            "confidence": confidence,
-            "access_domain": access_domain,
-            "timestamp": datetime.now(timezone.utc).isoformat()
-        }
-        
-    async def setup_task_collections(self):
-        """Set up task-specific collections and indexes."""
-        start_time = datetime.now()
-        try:
-            # Create task updates collection
-            logger.info("Creating task_updates collection...")
-            self.episodic.store._ensure_collection()
-            
-            # Add task-specific indexes
-            logger.info("Creating task-specific indexes...")
-            index_configs = [
-                {"name": "task_id", "schema": "keyword"},
-                {"name": "status", "schema": "keyword"},
-                {"name": "domain", "schema": "keyword"},
-                {"name": "timestamp", "schema": "datetime"}
-            ]
-            
-            for config in index_configs:
-                try:
-                    await self.episodic.store.create_payload_index(
-                        collection_name="task_updates",
-                        field_name=config["name"],
-                        field_schema=config["schema"]
-                    )
-                    logger.info(f"Created index: {config['name']}")
-                except Exception as e:
-                    if "already exists" not in str(e):
-                        raise
-                    logger.warning(f"Index {config['name']} already exists")
-            
-            # Log performance metrics
-            setup_time = (datetime.now() - start_time).total_seconds()
-            logger.info(f"Task collections and indexes created successfully in {setup_time:.2f}s")
-            
-            # Verify setup
-            collections = await self.episodic.store.list_collections()
-            if "task_updates" not in collections:
-                raise Exception("task_updates collection not found after creation")
-                
-            indexes = await self.episodic.store.list_indexes("task_updates")
-            missing_indexes = [
-                config["name"] for config in index_configs
-                if not any(i["field_name"] == config["name"] for i in indexes)
-            ]
-            if missing_indexes:
-                raise Exception(f"Missing indexes after creation: {missing_indexes}")
-            
-            return True
-        except Exception as e:
-            logger.error(f"Failed to set up task collections: {str(e)}")
-            # Log detailed error information
-            logger.error(f"Error type: {type(e).__name__}")
-            logger.error(f"Error details: {str(e)}")
-            if hasattr(e, '__traceback__'):
-                import traceback
-                logger.error(f"Traceback:\n{''.join(traceback.format_tb(e.__traceback__))}")
-            return False
-
-    async def initialize(self):
-        """Initialize connections to Neo4j and vector store."""
-        if not self._initialized:
-            # Initialize layers
-            self.episodic = EpisodicLayer(self.vector_store)
-            self.semantic = SemanticLayer(uri=self.neo4j_uri)
-            
-            # Initialize Neo4j connection
-            if hasattr(self.semantic, 'connect'):
-                await self.semantic.connect()
-            
-            # Initialize vector store if needed
-            if hasattr(self.episodic.store, 'connect'):
-                await self.episodic.store.connect()
-                
-            # Set up task collections
-            await self.setup_task_collections()
-                
-            self._initialized = True
-            
-    async def cleanup(self):
-        """Clean up connections."""
-        if self._initialized:
-            # Close Neo4j connection
-            if hasattr(self.semantic, 'close'):
-                await self.semantic.close()
-                
-            # Close vector store connection if needed
-            if hasattr(self.episodic.store, 'close'):
-                await self.episodic.store.close()
-                
-            self._initialized = False
-            
-    async def prune(
-        self,
-        domain: Optional[str] = None,
-        metadata: Optional[Dict] = None
-    ) -> Dict[str, int]:
-        """Prune old memories and unused nodes."""
-        pruned_nodes = 0
-        pruned_relationships = 0
-        pruned_memories = 0
-        
-        try:
-            # Prune episodic memories
-            if hasattr(self.episodic.store, 'delete_vectors'):
-                # Get old consolidated memories
-                filter_conditions = [
-                    models.FieldCondition(
-                        key="metadata_consolidated",
-                        match=models.MatchValue(value=True)
-                    )
-                ]
-                if domain:
-                    filter_conditions.append(
-                        models.FieldCondition(
-                            key="metadata_domain",
-                            match=models.MatchValue(value=domain)
-                        )
-                    )
-                old_memories = await self.episodic.store.search_vectors(
-                    content={},  # Empty content since we're filtering by metadata
-                    filter_conditions=filter_conditions
-                )
-                
-                # Delete old memories
-                if old_memories:
-                    memory_ids = [m.id for m in old_memories if hasattr(m, 'id')]
-                    await self.episodic.store.delete_vectors(memory_ids)
-                    pruned_memories = len(memory_ids)
-            
-            # Prune semantic nodes
-            if hasattr(self.semantic, 'run_query'):
-                # Find unused nodes (no relationships)
-                unused_query = """
-                MATCH (n)
-                WHERE NOT (n)--()
-                AND (n.domain = $domain OR $domain IS NULL)
-                WITH n
-                LIMIT 1000
-                DETACH DELETE n
-                RETURN count(n) as deleted
-                """
-                
-                result = await self.semantic.run_query(
-                    unused_query,
-                    {"domain": domain}
-                )
-                pruned_nodes = result[0]["deleted"] if result else 0
-                
-                # Find and remove dangling relationships
-                dangling_query = """
-                MATCH ()-[r]->()
-                WHERE (r.domain = $domain OR $domain IS NULL)
-                AND r.last_accessed < datetime() - duration('P30D')
-                WITH r
-                LIMIT 1000
-                DELETE r
-                RETURN count(r) as deleted
-                """
-                
-                result = await self.semantic.run_query(
-                    dangling_query,
-                    {"domain": domain}
-                )
-                pruned_relationships = result[0]["deleted"] if result else 0
-                
-            return {
-                "pruned_nodes": pruned_nodes,
-                "pruned_relationships": pruned_relationships,
-                "pruned_memories": pruned_memories,
-                "timestamp": datetime.now(timezone.utc).isoformat()
-            }
-        except Exception as e:
-            logger.error(f"Failed to prune memory system: {str(e)}")
-            raise
-        
-    async def store_experience(self, experience: Memory) -> str:
-        """Store new experience in episodic memory."""
-        # Store in episodic memory first
-        memory_id = await self.episodic.store_memory(experience)
-        
-        # Store task updates in dedicated collection if it's a task update
-        if experience.type == MemoryType.TASK_UPDATE:
-            try:
-                await self.episodic.store.store_vector(
-                    content=experience.content,
-                    metadata={
-                        "task_id": experience.context.get("task_id"),
-                        "status": experience.context.get("status"),
-                        "domain": experience.context.get("domain", "general"),
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "importance": experience.importance
-                    },
-                    collection_name="task_updates"
-                )
-            except Exception as e:
-                logger.error(f"Failed to store task update: {str(e)}")
-        
-        # Check for consolidation if manager exists
-        if self.consolidation_manager and await self.consolidation_manager.should_consolidate():
-            await self.consolidate_memories()
-            
-        return memory_id
-            
-    async def consolidate_memories(self):
-        """Convert episodic memories to semantic knowledge."""
-        logger.info("Starting memory consolidation")
-        if not self.consolidation_manager:
-            logger.warning("No consolidation manager set")
-            return
-            
-        # Get memories ready for consolidation
-        memories = await self.episodic.get_consolidation_candidates()
-        logger.info(f"Found {len(memories)} consolidation candidates")
-        
-        if not memories:
-            logger.info("No memories to consolidate")
-            return
-            
-        # Log memory details
-        for memory in memories:
-            logger.info(f"Memory candidate - ID: {memory.id if hasattr(memory, 'id') else 'unknown'}, "
-                       f"Importance: {memory.importance if hasattr(memory, 'importance') else 'unknown'}, "
-                       f"Content: {memory.content if hasattr(memory, 'content') else 'unknown'}")
-            
-        # Extract patterns and relationships
-        logger.info("Extracting knowledge from memories")
-        knowledge = await self.consolidation_manager.extract_knowledge(memories)
-        logger.info(f"Extracted knowledge: {json.dumps(knowledge, separators=(',', ':'), ensure_ascii=False)}")
-        
-        # Store in semantic layer
-        logger.info("Storing knowledge in semantic layer")
-        await self.semantic.store_knowledge(knowledge)
-        
-        # Archive processed memories
-        memory_ids = [m.id for m in memories if hasattr(m, 'id')]
-        logger.info(f"Archiving {len(memory_ids)} processed memories")
-        await self.episodic.archive_memories(memory_ids)
-        logger.info("Memory consolidation complete")
-        
-    async def query_episodic(self, query: Dict) -> List[EpisodicMemory]:
-        """Query episodic memories."""
-        try:
-            # Extract filter and convert to vector store format
-            filter_dict = query.get("filter", {})
-            
-            # Convert filter to Qdrant format
-            filter_conditions = []
-            if filter_dict:
-                for key, value in filter_dict.items():
-                    if key.startswith("metadata."):
-                        # Handle any metadata field
-                        field = key.split(".", 1)[1]  # Get field name after "metadata."
-                        filter_conditions.append(
-                            models.FieldCondition(
-                                key=f"metadata_{field}",
-                                match=models.MatchValue(value=value)
-                            )
-                        )
-                    else:
-                        # Default handling
-                        filter_conditions.append(
-                            models.FieldCondition(
-                                key=key,
-                                match=models.MatchValue(value=value)
-                            )
-                        )
-
-            # Search with type and filter
-            results = await self.episodic.store.search_vectors(
-                content={"text": query.get("text", "")},  # Match the stored format
-                limit=query.get("limit", 5),
-                score_threshold=query.get("score_threshold", 0.7),
-                layer=query.get("layer", "episodic").lower(),  # Use specified layer or default to episodic
-                filter_conditions=filter_conditions if filter_conditions else None
-            )
-            return results
-        except Exception as e:
-            logger.error(f"Failed to query episodic memories: {str(e)}")
-            return []
-            
-    async def query_semantic(self, query: Dict) -> List[Dict]:
-        """Query semantic knowledge."""
-        return await self.semantic.query_knowledge(query)
-        
-    async def get_memory(self, memory_id: str) -> Optional[Memory]:
-        """Get a memory by its ID."""
-        try:
-            # Search for memory in episodic store
-            # Convert memory_id to content for searching
-            results = await self.episodic.store.search_vectors(
-                content={"id": memory_id},
-                limit=1,
-                score_threshold=0.99  # High threshold for exact match
-            )
-            if results and len(results) > 0:
-                # Convert first result to Memory object
-                memory_data = results[0]
-                
-                # Ensure content is properly formatted
-                content = memory_data.get("content", {})
-                if isinstance(content, dict):
-                    content = content.get("text", "")
-                elif isinstance(content, str):
-                    content = content
-                else:
-                    content = str(content)
-                    
-                memory_data["content"] = content
-                return Memory(**memory_data)
-            return None
-        except Exception as e:
-            logger.error(f"Failed to get memory {memory_id}: {str(e)}")
-            return None
-            
-    async def store(
-        self,
-        memory_id: Optional[str] = None,
-        content: Any = None,
-        memory_type: Optional[str] = None,
-        importance: float = 0.5,
-        context: Optional[Dict] = None,
-        metadata: Optional[Dict] = None,
-        data: Optional[Dict] = None
-    ) -> str:
-        """Store data in memory system.
-        
-        Args:
-            memory_id: Optional memory ID to use
-            content: Content to store
-            memory_type: Optional memory type
-            importance: Importance score (0-1)
-            context: Optional context dictionary
-            metadata: Optional metadata dictionary
-            data: Optional legacy data dictionary
-            
-        Returns:
-            str: Memory ID of the stored memory
-        """
-        try:
-            # Create Memory object
-            memory = Memory(
-                id=memory_id,
-                content=content or (data["content"] if data else ""),
-                type=MemoryType(memory_type) if memory_type else MemoryType.EPISODIC,
-                importance=importance,
-                timestamp=datetime.now(timezone.utc).isoformat(),
-                context=context or (data.get("context", {}) if data else {})
-            )
-            
-            # Store in episodic memory
-            memory_id = await self.episodic.store_memory(memory)
-            
-            # If semantic memory, also store in Neo4j
-            if memory.type == MemoryType.SEMANTIC:
-                # Store concept using base store's run_query
-                await self.semantic.run_query(
-                    """
-                    MERGE (c:Concept {name: $name})
-                    SET c.type = $type,
-                        c.description = $description,
-                        c.validation = $validation
-                    """,
-                    {
-                        "name": f"concept_{datetime.now().isoformat()}",
-                        "type": "concept",
-                        "description": memory.content if isinstance(memory.content, str) else memory.content.get("text", ""),
-                        "validation": json.dumps(ValidationSchema(
-                            domain=memory.context.get("domain", "general"),
-                            source=memory.context.get("source", "system"),
-                            confidence=memory.importance
-                        ).dict()) if memory.context else None
-                    }
-                )
-            return memory_id
-        except Exception as e:
-            logger.error(f"Failed to store data: {str(e)}")
-            raise  # Re-raise the exception to be handled by the caller
