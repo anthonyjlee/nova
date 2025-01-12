@@ -16,9 +16,9 @@ from nia.core.types.memory_types import Memory, MemoryType
 
 # Valid state transitions
 VALID_TRANSITIONS = {
-    TaskState.PENDING: [TaskState.IN_PROGRESS, TaskState.COMPLETED],
-    TaskState.IN_PROGRESS: [TaskState.BLOCKED, TaskState.COMPLETED],
-    TaskState.BLOCKED: [TaskState.IN_PROGRESS, TaskState.COMPLETED],
+    TaskState.PENDING: [TaskState.IN_PROGRESS],  # Can only start from pending
+    TaskState.IN_PROGRESS: [TaskState.BLOCKED, TaskState.COMPLETED],  # Can block or complete from in progress
+    TaskState.BLOCKED: [TaskState.IN_PROGRESS],  # Can only resume to in progress from blocked
     TaskState.COMPLETED: []  # No transitions from completed
 }
 
