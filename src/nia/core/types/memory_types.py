@@ -121,12 +121,72 @@ class DomainTransfer(BaseModel):
             d["approval_timestamp"] = self.approval_timestamp.isoformat()
         return d
 
+class TaskState(str, Enum):
+    """Task states in the system."""
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    BLOCKED = "blocked"
+    COMPLETED = "completed"
+
 class MemoryType(str, Enum):
     """Types of memories in the system."""
     EPISODIC = "episodic"
     SEMANTIC = "semantic"
     PROCEDURAL = "procedural"
     EMOTIONAL = "emotional"
+    TASK_UPDATE = "task_update"  # For task state changes and updates
+
+class TaskValidation(BaseModel):
+    """Validation schema for task-related data."""
+    state: TaskState
+    domain: str
+    team_id: Optional[str] = None
+    dependencies: List[str] = Field(default_factory=list)
+    blocked_by: List[str] = Field(default_factory=list)
+    validation_rules: Dict[str, Any] = Field(default_factory=dict)
+    last_transition: Optional[datetime] = None
+    transition_history: List[Dict[str, Any]] = Field(default_factory=list)
+
+    def dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        d = super().dict()
+        d["state"] = str(self.state)
+        if self.last_transition:
+            d["last_transition"] = self.last_transition.isoformat()
+        return d
+
+    @validator("state", pre=True)
+    def validate_state(cls, v):
+        """Validate task state."""
+        if isinstance(v, str):
+            return TaskState(v)
+        return v
+
+class TaskMemory(Memory):
+    """Task-specific memory model."""
+    type: MemoryType = MemoryType.TASK_UPDATE
+    task_id: str
+    previous_state: Optional[TaskState] = None
+    new_state: TaskState
+    validation: TaskValidation
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    def dict(self) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        d = super().dict()
+        if self.previous_state:
+            d["previous_state"] = str(self.previous_state)
+        d["new_state"] = str(self.new_state)
+        if self.validation:
+            d["validation"] = self.validation.dict()
+        return d
+
+    @validator("previous_state", "new_state", pre=True)
+    def validate_states(cls, v):
+        """Validate task states."""
+        if isinstance(v, str):
+            return TaskState(v)
+        return v
 
 class DomainContext(BaseModel):
     """Domain context for memories and concepts."""

@@ -1,11 +1,11 @@
 # UI/UX Development Tasks
 
 ## Overview
-NIA's frontend will be built using SvelteKit, featuring a three-panel layout with real-time updates via WebSocket integration.
+NIA's frontend will be built using SvelteKit, featuring a three-panel layout with real-time updates via WebSocket integration. The UI must respect the two-layer memory architecture and domain boundaries.
 
 ## Core Components
 
-### 1. Layout Structure
+### 1. Layout Structure (frontend/src/routes/+layout.svelte)
 - Three-panel layout:
   * Chat Interface (Left/Main Panel)
   * Graph Visualization (Right Panel)
@@ -15,229 +15,195 @@ NIA's frontend will be built using SvelteKit, featuring a three-panel layout wit
 - Dark/Light theme support based on user preferences
 
 ### 2. Chat Interface (Slack-like)
+Files:
+- frontend/src/routes/threads/[id]/+page.svelte
+- frontend/src/lib/components/AgentDetailsPanel.svelte
+- frontend/src/lib/components/AgentTeamView.svelte
+
+Features:
 - Real-time message updates via WebSocket
-- Thread support:
-  * Main conversation thread
-  * Sub-threads for specific tasks
-  * Agent-specific messages
-- Message components:
-  * Text messages
+- Thread support with domain context preservation
+- Message components with memory integration:
+  * Text messages (stored in Qdrant)
   * Code blocks with syntax highlighting
   * Media attachments
-  * Task cards
-- Input area with:
-  * Text input
-  * File upload
-  * Command shortcuts
-- Thread navigation and history
+  * Task cards with domain labels
+- Input area with domain validation
+- Thread navigation respecting domain boundaries
 
 ### 3. Graph Visualization
-- Integration with Cytoscape.js
-- Features:
-  * Node-edge visualization
-  * Interactive node selection
-  * Zoom and pan controls
-  * Search/Filter functionality
-  * Domain-labeled node coloring
-  * Task dependency visualization
-- Real-time graph updates via WebSocket
-- Node types:
-  * Domain entities (with name labels and descriptions)
-  * Tasks
-  * Agents
-  * Resources
-- Edge types:
+Files:
+- frontend/src/lib/components/GraphPanel.svelte
+- frontend/src/lib/services/graph.ts
+- frontend/src/lib/stores/workspace.ts
+
+Features:
+- Integration with both memory layers:
+  * Episodic data (Qdrant) for recent changes
+  * Semantic data (Neo4j) for relationships
+- Node types with domain labels:
+  * Domain entities
+  * Tasks with state
+  * Agents with roles
+  * Resources with access controls
+- Edge types preserving domain context:
   * Dependencies
-  * Relationships (with descriptive labels)
+  * Relationships
   * Data flow
-- Node details panel:
-  * Primary information (name, type, category)
-  * Metadata display with description
-  * Domain and other attributes
+- Real-time updates respecting domain boundaries
 
 ### 4. Control Panel
-- System status indicators:
-  * Connected agents
-  * Active tasks
-  * Memory system status
-- User profile section:
-  * Profile settings
-  * Preferences
-  * Domain access controls
-- Task management:
-  * Active tasks list
-  * Task creation
-  * Task filtering
-- Agent management:
-  * Agent status
-  * Agent configuration
-  * Pattern selection
+Files:
+- frontend/src/lib/components/DomainLabels.svelte (new)
+- frontend/src/lib/components/shared/ (new directory)
+
+Features:
+- Domain management:
+  * Access domain controls (personal/professional)
+  * Knowledge vertical selection
+  * Cross-domain operation approval
+- Memory system monitoring:
+  * Consolidation status
+  * Pattern detection progress
+  * Validation status
+- Task/Agent management with domain context
 
 ## Technical Requirements
 
-### 1. SvelteKit Setup
-- Project initialization
-- Routing configuration
-- State management setup
-- API integration
-- WebSocket configuration
+### 1. Memory System Integration
+Files:
+- src/nia/memory/two_layer.py
+- src/nia/memory/persistence.py
+- src/nia/core/types/memory_types.py
+
+Requirements:
+- Proper distribution of UI data across memory layers
+- Domain boundary enforcement in UI operations
+- Memory consolidation progress visualization
+- Validation status tracking and display
 
 ### 2. WebSocket Integration
+Files:
+- src/nia/nova/core/websocket.py
+- frontend/src/lib/services/graph.ts
+
+Features:
 - Real-time updates for:
-  * Chat messages
-  * Graph changes
-  * Agent status
-  * Task progress
-- Connection management
-- Error handling
-- Reconnection logic
+  * Memory consolidation status
+  * Domain boundary changes
+  * Task/Agent state changes
+  * Graph updates
+- Domain-aware event handling
 
 ### 3. Data Management
-- State management for:
-  * User session
-  * Active conversations
-  * Graph data
-  * System status
-- Caching strategy
-- Local storage usage
-- Data synchronization
+Files:
+- src/nia/core/neo4j/concept_manager.py
+- frontend/src/lib/stores/workspace.ts
+
+Features:
+- Domain-aware state management
+- Two-layer memory synchronization
+- Profile adaptation tracking
+- Validation data handling
 
 ### 4. UI Components
-- Reusable components:
-  * Message bubbles
-  * Task cards
-  * Agent status indicators
-  * Graph controls
-  * Input fields
-  * Buttons
-  * Icons
-- Component styling
-- Animation system
-- Loading states
+Files:
+- frontend/src/lib/components/shared/
+- frontend/src/app.css
 
-### 5. User Experience
-- Keyboard shortcuts
-- Drag and drop support
-- Context menus
-- Toast notifications
-- Loading indicators
-- Error handling UI
-- Help/Documentation access
+Requirements:
+- Domain-aware components
+- Memory system integration
+- Validation status display
+- Cross-domain operation UI
 
 ## Implementation Phases
 
-### Phase 1: Project Setup
-1. Initialize SvelteKit project
-2. Set up development environment
-3. Configure build system
-4. Establish project structure
-5. Set up testing framework
+### Phase 1: Memory Integration
+1. Implement two-layer memory integration
+2. Add domain boundary enforcement
+3. Create validation system UI
+4. Set up real-time updates
 
 ### Phase 2: Core Layout
 1. Implement three-panel layout
-2. Add panel resize/collapse functionality
-3. Create basic routing
-4. Implement theme system
-5. Add responsive design
+2. Add domain-aware routing
+3. Create memory status displays
+4. Add validation feedback UI
 
 ### Phase 3: Chat Interface
-1. Build message components
-2. Implement thread system
-3. Create input interface
-4. Add file upload support
-5. Implement real-time updates
+1. Build domain-aware components
+2. Implement thread system with memory integration
+3. Add validation feedback
+4. Create domain boundary indicators
 
 ### Phase 4: Graph Visualization
-1. Integrate Cytoscape.js
-2. Implement basic graph rendering
-3. Add interaction controls
-4. Create node/edge styling
-5. Add real-time updates
+1. Integrate with both memory layers
+2. Implement domain-aware rendering
+3. Add validation status display
+4. Create memory consolidation visualization
 
 ### Phase 5: Control Panel
-1. Create status indicators
-2. Implement task management
-3. Add agent management
-4. Create profile section
-5. Add system controls
-
-### Phase 6: Integration & Polish
-1. Connect to backend API
-2. Implement WebSocket handling
-3. Add error handling
-4. Optimize performance
-5. Add final styling and animations
+1. Create domain management UI
+2. Implement memory system monitoring
+3. Add validation controls
+4. Create profile adaptation UI
 
 ## Testing Strategy
 
-### 1. Unit Testing
-- Component testing
-- State management testing
-- Utility function testing
-- Event handling testing
+### 1. Memory Integration Tests
+Files:
+- tests/memory/test_two_layer.py
+- tests/test_consolidation.py
+- tests/memory/integration/test_memory_basic.py
 
-### 2. Integration Testing
-- Panel interaction testing
-- WebSocket integration testing
-- API integration testing
-- State synchronization testing
+Areas:
+- Two-layer memory operations
+- Domain boundary enforcement
+- Validation system
+- Profile adaptations
 
-### 3. End-to-End Testing
-- User flow testing
-- Real-time update testing
-- Cross-browser testing
-- Responsive design testing
+### 2. UI Integration Tests
+Files:
+- frontend/src/lib/components/tests/
+- frontend/e2e/
+
+Areas:
+- Domain-aware components
+- Memory system integration
+- Validation feedback
+- Cross-domain operations
 
 ## Performance Considerations
 
-### 1. Loading Performance
-- Code splitting
-- Lazy loading
-- Asset optimization
-- Caching strategy
+### 1. Memory System Performance
+- Efficient two-layer data distribution
+- Optimized domain validation
+- Smart consolidation visualization
+- Cached validation results
 
-### 2. Runtime Performance
-- WebSocket message batching
-- Graph rendering optimization
-- Memory management
-- Event debouncing
-
-### 3. Memory Management
-- Cleanup of unused resources
-- WebSocket connection management
-- Graph data management
-- Cache size limits
-
-## Accessibility
-
-### 1. Core Requirements
-- Keyboard navigation
-- Screen reader support
-- ARIA labels
-- Focus management
-
-### 2. Visual Accessibility
-- Color contrast
-- Font sizing
-- Animation controls
-- Alternative text
+### 2. UI Performance
+- Efficient domain boundary checking
+- Optimized memory layer access
+- Smart validation feedback
+- Cached domain context
 
 ## Documentation
 
-### 1. Code Documentation
-- Component documentation
-- API documentation
-- State management documentation
-- Utility function documentation
+### 1. Architecture Documentation
+- Two-layer memory system
+- Domain boundary system
+- Validation system
+- Profile adaptation system
 
-### 2. User Documentation
-- User guide
-- Keyboard shortcuts
-- Feature documentation
-- Troubleshooting guide
+### 2. UI Documentation
+- Domain-aware features
+- Memory system integration
+- Validation feedback
+- Cross-domain operations
 
 ## Next Steps
-1. Set up SvelteKit project
-2. Create basic three-panel layout
-3. Implement WebSocket connection
+1. Set up memory system integration
+2. Implement domain boundary UI
+3. Create validation feedback system
 4. Begin chat interface development

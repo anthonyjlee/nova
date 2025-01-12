@@ -1,63 +1,109 @@
-"""Pydantic models for structured responses."""
+"""Models for Nova endpoints."""
 
-from pydantic import BaseModel, Field
-from typing import List, Dict, Optional, Union, Any
+from pydantic import BaseModel, Field, validator
+from typing import Dict, Any, Optional, List, Union
 from datetime import datetime
-from nia.core.types.memory_types import AgentResponse  # Import AgentResponse instead of redefining it
+from enum import Enum
 
-# Chat Models
-class ThreadRequest(BaseModel):
-    """Request to create a new chat thread."""
-    title: str = Field(..., description="Title of the thread")
-    workspace: str = Field(..., description="Workspace for the thread (personal/professional)")
-    domain: Optional[str] = Field(None, description="Domain for the thread")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+class TaskState(str, Enum):
+    """Task states for Kanban-style interface."""
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    BLOCKED = "blocked"
+    COMPLETED = "completed"
 
-class MessageRequest(BaseModel):
-    """Request to add a message to a thread."""
-    content: str = Field(..., description="Message content")
-    sender_type: str = Field(..., description="Type of sender (user/agent)")
-    sender_id: str = Field(..., description="ID of the sender")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+class TaskStateTransition(BaseModel):
+    """Valid task state transitions."""
+    from_state: TaskState
+    to_state: TaskState
+    requires_validation: bool = False
+    validation_rules: Optional[Dict[str, Any]] = None
 
 class Message(BaseModel):
-    """A message in a thread."""
-    id: str = Field(..., description="Message ID")
-    content: str = Field(..., description="Message content")
-    sender_type: str = Field(..., description="Type of sender (user/agent)")
-    sender_id: str = Field(..., description="ID of the sender")
-    timestamp: str = Field(..., description="ISO format timestamp")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
-
-class ThreadResponse(BaseModel):
-    """Response containing thread details."""
-    id: str = Field(..., description="Thread ID")
-    title: str = Field(..., description="Thread title")
-    domain: Optional[str] = Field(None, description="Thread domain")
-    messages: List[Message] = Field(default_factory=list, description="Messages in the thread")
-    created_at: str = Field(..., description="ISO format timestamp")
-    updated_at: str = Field(..., description="ISO format timestamp")
-    metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
+    """Message model."""
+    id: str
+    content: str
+    sender_type: str
+    sender_id: str
+    timestamp: str
+    metadata: Dict[str, Any] = {}
 
 class MessageResponse(BaseModel):
-    """Response after adding a message."""
-    message: Message = Field(..., description="The added message")
-    thread_id: str = Field(..., description="ID of the thread")
-    timestamp: str = Field(..., description="ISO format timestamp")
+    """Response model for messages."""
+    id: str
+    content: str
+    timestamp: str
 
-class ThreadListResponse(BaseModel):
-    """Response containing list of threads."""
-    threads: List[ThreadResponse] = Field(..., description="List of threads")
-    total: int = Field(..., description="Total number of threads")
-    timestamp: str = Field(..., description="ISO format timestamp")
-
-# Base Models
-class Concept(BaseModel):
-    statement: str
-    type: str
-    confidence: float
+class TaskNode(BaseModel):
+    """Task node model."""
+    id: str
+    label: str
+    type: str = "task"
+    status: TaskState = TaskState.PENDING
     description: Optional[str] = None
+    team_id: Optional[str] = None
+    domain: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.utcnow)
+    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 
+    @validator('status')
+    def validate_status(cls, v):
+        if isinstance(v, str):
+            return TaskState(v)
+        return v
+
+class TaskEdge(BaseModel):
+    """Task edge model."""
+    source: str
+    target: str
+    type: str
+    label: Optional[str] = None
+
+class TaskDetails(BaseModel):
+    """Extended task details model."""
+    task: TaskNode
+    dependencies: List[str] = Field(default_factory=list)
+    blocked_by: List[str] = Field(default_factory=list)
+    sub_tasks: List[Dict[str, Any]] = Field(default_factory=list)
+    comments: List[Dict[str, Any]] = Field(default_factory=list)
+    time_active: Optional[str] = None
+    domain_access: List[str] = Field(default_factory=list)
+
+class TaskUpdate(BaseModel):
+    """Task update model."""
+    label: Optional[str] = None
+    status: Optional[TaskState] = None
+    description: Optional[str] = None
+    team_id: Optional[str] = None
+    domain: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    @validator('status')
+    def validate_status(cls, v):
+        if isinstance(v, str):
+            return TaskState(v)
+        return v
+
+class AgentInfo(BaseModel):
+    """Agent information model."""
+    id: str
+    name: str
+    type: str
+    status: str
+    role: str
+    team_id: Optional[str] = None
+    channel_id: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+class AgentTeam(BaseModel):
+    """Agent team model."""
+    id: str
+    name: str
+    agents: List[AgentInfo]
+    status: str
+    channel_id: str
+    metadata: Dict[str, Any] = Field(default_factory=dict)
 class KeyPoint(BaseModel):
     statement: str
     type: str

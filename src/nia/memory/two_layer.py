@@ -737,6 +737,70 @@ class TwoLayerMemorySystem:
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
         
+    async def setup_task_collections(self):
+        """Set up task-specific collections and indexes."""
+        start_time = datetime.now()
+        try:
+            # Create task updates collection
+            logger.info("Creating task_updates collection...")
+            await self.episodic.store.create_collection(
+                name="task_updates",
+                vectors_config={
+                    "size": 384,
+                    "distance": "Cosine"
+                }
+            )
+            
+            # Add task-specific indexes
+            logger.info("Creating task-specific indexes...")
+            index_configs = [
+                {"name": "task_id", "schema": "keyword"},
+                {"name": "status", "schema": "keyword"},
+                {"name": "domain", "schema": "keyword"},
+                {"name": "timestamp", "schema": "datetime"}
+            ]
+            
+            for config in index_configs:
+                try:
+                    await self.episodic.store.create_payload_index(
+                        collection_name="task_updates",
+                        field_name=config["name"],
+                        field_schema=config["schema"]
+                    )
+                    logger.info(f"Created index: {config['name']}")
+                except Exception as e:
+                    if "already exists" not in str(e):
+                        raise
+                    logger.warning(f"Index {config['name']} already exists")
+            
+            # Log performance metrics
+            setup_time = (datetime.now() - start_time).total_seconds()
+            logger.info(f"Task collections and indexes created successfully in {setup_time:.2f}s")
+            
+            # Verify setup
+            collections = await self.episodic.store.list_collections()
+            if "task_updates" not in collections:
+                raise Exception("task_updates collection not found after creation")
+                
+            indexes = await self.episodic.store.list_indexes("task_updates")
+            missing_indexes = [
+                config["name"] for config in index_configs
+                if not any(i["field_name"] == config["name"] for i in indexes)
+            ]
+            if missing_indexes:
+                raise Exception(f"Missing indexes after creation: {missing_indexes}")
+            
+            return True
+        except Exception as e:
+            logger.error(f"Failed to set up task collections: {str(e)}")
+            # Log detailed error information
+            logger.error(f"Error type: {type(e).__name__}")
+            logger.error(f"Error details: {str(e)}")
+            if hasattr(e, '__traceback__'):
+                import traceback
+                logger.error(f"Traceback:\n{''.join(traceback.format_tb(e.__traceback__))}")
+            return False
+
     async def initialize(self):
         """Initialize connections to Neo4j and vector store."""
         if not self._initialized:
@@ -747,6 +811,9 @@ class TwoLayerMemorySystem:
             # Initialize vector store if needed
             if hasattr(self.episodic.store, 'connect'):
                 await self.episodic.store.connect()
+                
+            # Set up task collections
+            await self.setup_task_collections()
                 
             self._initialized = True
             
@@ -851,6 +918,23 @@ class TwoLayerMemorySystem:
         """Store new experience in episodic memory."""
         # Store in episodic memory first
         memory_id = await self.episodic.store_memory(experience)
+        
+        # Store task updates in dedicated collection if it's a task update
+        if experience.type == MemoryType.TASK_UPDATE:
+            try:
+                await self.episodic.store.store_vector(
+                    content=experience.content,
+                    metadata={
+                        "task_id": experience.context.get("task_id"),
+                        "status": experience.context.get("status"),
+                        "domain": experience.context.get("domain", "general"),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "importance": experience.importance
+                    },
+                    collection_name="task_updates"
+                )
+            except Exception as e:
+                logger.error(f"Failed to store task update: {str(e)}")
         
         # Check for consolidation if manager exists
         if self.consolidation_manager and await self.consolidation_manager.should_consolidate():

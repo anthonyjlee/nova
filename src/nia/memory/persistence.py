@@ -13,13 +13,59 @@ from .memory_types import AgentResponse, Analysis
 logger = logging.getLogger(__name__)
 
 class MemoryStore:
-    """Memory persistence with command execution."""
+    """Memory persistence with command execution and task collections."""
     
     def __init__(self, working_dir: str = "/Users/alee5331/Documents/Projects/NIA"):
         """Initialize memory store."""
         self.working_dir = working_dir
         self.active_processes: Dict[str, subprocess.Popen] = {}
+        self.collections = {
+            "task_updates": {
+                "vectors_config": {
+                    "size": 384,
+                    "distance": "Cosine"
+                },
+                "indexes": [
+                    {"field_name": "task_id", "field_schema": "keyword"},
+                    {"field_name": "status", "field_schema": "keyword"},
+                    {"field_name": "domain", "field_schema": "keyword"},
+                    {"field_name": "timestamp", "field_schema": "datetime"}
+                ]
+            }
+        }
     
+    async def setup_collections(self):
+        """Set up required collections and indexes."""
+        try:
+            for collection_name, config in self.collections.items():
+                # Create collection if it doesn't exist
+                try:
+                    await self.create_collection(
+                        name=collection_name,
+                        vectors_config=config["vectors_config"]
+                    )
+                except Exception as e:
+                    if "already exists" not in str(e):
+                        raise
+
+                # Create indexes
+                for index in config["indexes"]:
+                    try:
+                        await self.create_payload_index(
+                            collection_name=collection_name,
+                            field_name=index["field_name"],
+                            field_schema=index["field_schema"]
+                        )
+                    except Exception as e:
+                        if "already exists" not in str(e):
+                            raise
+
+            logger.info("Collections and indexes set up successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to set up collections: {str(e)}")
+            return False
+
     async def execute_command(
         self,
         command: str,
