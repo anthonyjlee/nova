@@ -43,8 +43,19 @@ logs/
 .qdrant/
 data/qdrant/
 data/neo4j/
-scripts/data/
+scripts/data/neo4j/
+scripts/data/qdrant/
 agent_responses.log
+
+# Neo4j specific
+**/neo4j/data/
+**/neo4j/logs/
+**/neo4j/conf/
+**/neo4j/import/
+**/neo4j/plugins/
+**/neo4j/certificates/
+**/neo4j.conf
+**/auth
 
 # Qdrant specific
 **/qdrant/collections/

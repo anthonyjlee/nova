@@ -83,14 +83,24 @@ class ServiceManager:
             
             # Wait for services with longer timeout
             services_ready = True
-            for service in ["neo4j", "qdrant"]:
-                if not self.wait_for_service(service, timeout=60):
-                    services_ready = False
+            
+            # Neo4j needs extra time to initialize
+            print("\n⏳ Waiting for Neo4j to initialize (this may take a minute)...")
+            if not self.wait_for_service("neo4j", timeout=120):
+                services_ready = False
+            
+            # Then check Qdrant
+            if services_ready and not self.wait_for_service("qdrant", timeout=60):
+                services_ready = False
             
             if not services_ready:
                 print("❌ Some Docker services failed to start")
                 self.stop_services()
                 sys.exit(1)
+                
+            # Give Neo4j extra time to complete initialization
+            print("✅ Docker services started, waiting for full initialization...")
+            time.sleep(5)
                 
         except subprocess.CalledProcessError as e:
             print(f"❌ Error starting Docker services: {e}")
@@ -416,7 +426,7 @@ finance_memory_threshold = 0.7
                 default = config.get("DOMAINS", "default_domain", fallback="")
                 for domain in domains:
                     if domain:
-                        threshold = config.getfloat(f"{domain}_memory_threshold", fallback=0.5)
+                        threshold = config.getfloat("DOMAINS", f"{domain}_memory_threshold", fallback=0.5)
                         print(f"{domain.upper()}: Memory Threshold {threshold}")
                 print(f"Default Domain: {default.upper() if default else 'Not set'}")
         except Exception as e:
