@@ -20,9 +20,31 @@ class ConnectionManager:
         
     async def connect(self, websocket: WebSocket, client_id: str, connection_type: str):
         """Connect a client to a specific type of updates."""
-        await websocket.accept()
-        if connection_type in self.active_connections:
+        try:
+            if connection_type not in self.active_connections:
+                raise ValueError(f"Invalid connection type: {connection_type}")
+                
+            # Accept connection if not already accepted
+            if websocket.client_state.DISCONNECTED:
+                await websocket.accept()
+                
+            # Store connection
             self.active_connections[connection_type][client_id] = websocket
+            
+            # Send initial connection success message
+            await websocket.send_json({
+                "type": "connection_success",
+                "connection_type": connection_type,
+                "client_id": client_id,
+                "timestamp": datetime.now().isoformat()
+            })
+        except Exception as e:
+            print(f"Error connecting client {client_id}: {str(e)}")
+            try:
+                await websocket.close(code=1011, reason=str(e))
+            except:
+                pass
+            raise
             
     def disconnect(self, client_id: str, connection_type: str):
         """Disconnect a client."""
@@ -46,49 +68,65 @@ class ConnectionManager:
 
 class WebSocketServer:
     """WebSocket server for real-time updates."""
-    async def __init__(self, memory_system: Any):
+    def __init__(self, memory_system_provider: Any):
+        """Initialize WebSocket server.
+        
+        Args:
+            memory_system_provider: Memory system provider function or instance
+        """
         self.manager = ConnectionManager()
-        self.memory_system = memory_system
-        # Initialize memory system
-        await self._init_memory_system()
+        self.memory_system_provider = memory_system_provider
+        self.memory_system = None
+        self._initialized = False
+        self._init_lock = asyncio.Lock()
+        self._init_task = None
 
-    async def _init_memory_system(self):
-        """Initialize memory system if not already initialized."""
-        # Handle Depends object if needed
-        if str(type(self.memory_system).__name__) == 'Depends':
-            from .dependencies import get_memory_system
-            memory_system = await get_memory_system()
-            if memory_system is None:
-                raise ValueError("Failed to resolve memory system dependency")
-            self.memory_system = memory_system
+    @classmethod
+    async def create(cls, memory_system_provider: Any) -> 'WebSocketServer':
+        """Create and initialize a WebSocket server instance.
+        
+        Args:
+            memory_system_provider: Memory system provider function or instance
+            
+        Returns:
+            Initialized WebSocketServer instance
+        """
+        server = cls(memory_system_provider)
+        await server.initialize()
+        return server
 
-        # Ensure memory system has required attributes
-        if not hasattr(self.memory_system, 'vector_store'):
-            raise ValueError("Memory system must have vector_store")
+    async def initialize(self):
+        """Initialize the WebSocket server asynchronously."""
+        if self._initialized:
+            return
 
-        # Initialize episodic layer if needed
-        if not hasattr(self.memory_system, 'episodic'):
-            from nia.memory.two_layer import EpisodicLayer
-            self.memory_system.episodic = EpisodicLayer(self.memory_system.vector_store)
-            self.memory_system.episodic.store = self.memory_system.vector_store
+        async with self._init_lock:
+            if self._initialized:  # Double-check inside lock
+                return
 
-        # Initialize store if needed
-        if not hasattr(self.memory_system.episodic, 'store'):
-            self.memory_system.episodic.store = self.memory_system.vector_store
+            # Get memory system
+            if callable(self.memory_system_provider):
+                self.memory_system = await self.memory_system_provider()
+            else:
+                self.memory_system = self.memory_system_provider
+            
+            # Initialize memory system if needed
+            if not getattr(self.memory_system, '_initialized', False):
+                await self.memory_system.initialize()
+            
+            self._initialized = True
 
-        # Initialize semantic layer if needed
-        if not hasattr(self.memory_system, 'semantic'):
-            from nia.memory.two_layer import SemanticLayer
-            self.memory_system.semantic = SemanticLayer()
+    async def ensure_initialized(self):
+        """Ensure the WebSocket server is initialized."""
+        if not self._initialized:
+            if not self._init_task:
+                self._init_task = asyncio.create_task(self.initialize())
+            await self._init_task
 
-        # Initialize the system if needed
-        if not getattr(self.memory_system, '_initialized', False):
-            await self.memory_system.initialize()
-            self.memory_system._initialized = True
         
     async def handle_chat_connection(self, websocket: WebSocket, client_id: str):
         """Handle chat/channel WebSocket connections."""
-        await self._init_memory_system()
+        await self.ensure_initialized()
         await self.manager.connect(websocket, client_id, "chat")
         try:
             while True:
@@ -115,7 +153,7 @@ class WebSocketServer:
             
     async def handle_task_connection(self, websocket: WebSocket, client_id: str):
         """Handle task board WebSocket connections."""
-        await self._init_memory_system()
+        await self.ensure_initialized()
         await self.manager.connect(websocket, client_id, "tasks")
         try:
             while True:
@@ -156,7 +194,7 @@ class WebSocketServer:
             
     async def handle_agent_connection(self, websocket: WebSocket, client_id: str):
         """Handle agent status WebSocket connections."""
-        await self._init_memory_system()
+        await self.ensure_initialized()
         await self.manager.connect(websocket, client_id, "agents")
         try:
             while True:
@@ -197,7 +235,7 @@ class WebSocketServer:
             
     async def handle_graph_connection(self, websocket: WebSocket, client_id: str):
         """Handle knowledge graph WebSocket connections."""
-        await self._init_memory_system()
+        await self.ensure_initialized()
         await self.manager.connect(websocket, client_id, "graph")
         try:
             while True:
@@ -257,7 +295,7 @@ class WebSocketServer:
         while True:
             try:
                 # Ensure memory system is properly initialized
-                await self._init_memory_system()
+                await self.ensure_initialized()
                 
                 # Verify memory system is ready
                 if not hasattr(self.memory_system, 'episodic') or not hasattr(self.memory_system.episodic, 'store'):

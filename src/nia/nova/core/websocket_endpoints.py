@@ -1,8 +1,13 @@
 """WebSocket endpoints for real-time updates."""
 
-from fastapi import APIRouter, WebSocket, Depends
-from typing import Dict, Any, Optional
+from fastapi import APIRouter, WebSocket, Depends, WebSocketDisconnect
+from typing import Dict, Any, Optional, Literal
 import uuid
+import logging
+import asyncio
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
 
 from .dependencies import get_memory_system
 from .websocket_server import WebSocketServer
@@ -13,78 +18,86 @@ ws_router = APIRouter(prefix="/api/ws", tags=["WebSocket"])
 # Initialize WebSocket server and memory system
 _websocket_server: Optional[WebSocketServer] = None
 _memory_system: Optional[TwoLayerMemorySystem] = None
+_init_lock = asyncio.Lock()
 
-async def initialize_memory_system() -> TwoLayerMemorySystem:
-    """Initialize and verify memory system."""
-    global _memory_system
-    if _memory_system is None:
-        _memory_system = await get_memory_system()
-        if _memory_system is None:
-            raise ValueError("Failed to initialize memory system")
-    return _memory_system
+async def initialize_websocket_server():
+    """Initialize the WebSocket server if not already initialized."""
+    global _websocket_server
+    
+    async with _init_lock:
+        if _websocket_server is None:
+            try:
+                # Create and initialize WebSocket server using the new create method
+                _websocket_server = await WebSocketServer.create(get_memory_system)
+            except Exception as e:
+                logger.error(f"Error initializing WebSocket server: {str(e)}")
+                raise
 
-async def get_websocket_server() -> WebSocketServer:
-    """Get or create WebSocket server instance."""
-    global _websocket_server, _memory_system
+def get_websocket_server() -> WebSocketServer:
+    """Get the WebSocket server instance. Must be initialized first."""
     if _websocket_server is None:
-        try:
-            # Initialize memory system if needed
-            memory_system = await initialize_memory_system()
-            
-            # Create WebSocket server with initialized memory system
-            _websocket_server = await WebSocketServer(memory_system)
-                
-        except Exception as e:
-            print(f"Error initializing WebSocket server: {str(e)}")
-            _websocket_server = None
-            raise
-            
+        raise RuntimeError("WebSocket server not initialized")
     return _websocket_server
 
-# Start background task for memory updates
-@ws_router.on_event("startup")
 async def start_memory_updates():
     """Start background task for broadcasting memory updates."""
-    import asyncio
     try:
-        # Get or create WebSocket server
-        server = await get_websocket_server()
-        asyncio.create_task(server.broadcast_memory_updates())
+        server = get_websocket_server()
+        return await server.broadcast_memory_updates()
     except Exception as e:
-        print(f"Error starting memory updates: {str(e)}")
+        logger.error(f"Error starting memory updates: {str(e)}")
+        raise
 
-@ws_router.websocket("/chat/{client_id}")
-async def chat_websocket(
+# Register startup event handler
+@ws_router.on_event("startup")
+async def startup_event():
+    """Handle FastAPI startup event."""
+    try:
+        # Initialize server
+        await initialize_websocket_server()
+        # Start memory updates in background
+        asyncio.create_task(start_memory_updates())
+    except Exception as e:
+        logger.error(f"Error in startup event: {str(e)}")
+
+ConnectionType = Literal["chat", "tasks", "agents", "graph"]
+
+@ws_router.websocket("/{connection_type}/{client_id}")
+async def websocket_endpoint(
     websocket: WebSocket,
+    connection_type: ConnectionType,
     client_id: str
 ):
-    """WebSocket endpoint for chat/channel updates."""
-    server = await get_websocket_server()
-    await server.handle_chat_connection(websocket, client_id)
-
-@ws_router.websocket("/tasks/{client_id}")
-async def tasks_websocket(
-    websocket: WebSocket,
-    client_id: str
-):
-    """WebSocket endpoint for task board updates."""
-    server = await get_websocket_server()
-    await server.handle_task_connection(websocket, client_id)
-
-@ws_router.websocket("/agents/{client_id}")
-async def agents_websocket(
-    websocket: WebSocket,
-    client_id: str
-):
-    """WebSocket endpoint for agent status updates."""
-    server = await get_websocket_server()
-    await server.handle_agent_connection(websocket, client_id)
-
-@ws_router.websocket("/graph/{client_id}")
-async def graph_websocket(
-    websocket: WebSocket,
-    client_id: str
-):
-    """WebSocket endpoint for knowledge graph updates."""
-    server = await get_websocket_server()
-    await server.handle_graph_connection(websocket, client_id)
+    """WebSocket endpoint for real-time updates."""
+    try:
+        # Ensure server is initialized
+        server = get_websocket_server()
+        
+        # Map connection type to handler
+        handlers = {
+            "chat": server.handle_chat_connection,
+            "tasks": server.handle_task_connection,
+            "agents": server.handle_agent_connection,
+            "graph": server.handle_graph_connection
+        }
+        
+        if connection_type not in handlers:
+            raise ValueError(f"Invalid connection type: {connection_type}")
+            
+        handler = handlers[connection_type]
+        await handler(websocket, client_id)
+        
+    except WebSocketDisconnect:
+        logger.info(f"Client {client_id} disconnected from {connection_type}")
+    except RuntimeError as e:
+        logger.error(f"WebSocket server error: {str(e)}")
+        try:
+            await websocket.close(code=1011, reason=str(e))
+        except:
+            pass
+    except Exception as e:
+        logger.error(f"Error handling {connection_type} connection: {str(e)}")
+        try:
+            await websocket.close(code=1011, reason=str(e))
+        except:
+            pass
