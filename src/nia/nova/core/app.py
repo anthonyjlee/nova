@@ -48,29 +48,58 @@ Nova's analytics and orchestration API
 - POST /threads/{thread_id}/messages - Add message
 - GET /threads - List all threads
 
-## WebSocket Endpoints
+## WebSocket Endpoints (/api/ws)
 
-### Real-time Analytics (/api/ws/ws)
-Connect to receive real-time analytics updates. Supports:
-- Ping/pong heartbeat
-- Swarm monitoring
-- Agent coordination
-- Analytics updates
+### Chat WebSocket (/api/ws/chat/{client_id})
+Real-time chat updates including:
+- New messages
+- Thread updates
+- Message reactions
+- Typing indicators
+
+### Tasks WebSocket (/api/ws/tasks/{client_id})
+Real-time task board updates including:
+- Task state changes
+- Assignment updates
+- Comment notifications
+- Progress tracking
+
+### Agents WebSocket (/api/ws/agents/{client_id})
+Real-time agent status updates including:
+- Agent state changes
+- Team updates
+- Performance metrics
+- Capability changes
+
+### Graph WebSocket (/api/ws/graph/{client_id})
+Real-time knowledge graph updates including:
+- Node updates
+- Edge modifications
+- Domain changes
+- Relationship tracking
 
 Example connection:
 ```javascript
-const ws = new WebSocket('ws://localhost:8000/api/ws/ws');
+const ws = new WebSocket('ws://localhost:8000/api/ws/chat/client123');
 ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
     console.log('Received:', data);
 };
 ```
 
-Message Types:
-1. Ping: `{"type": "ping"}`
-2. Swarm Monitor: `{"type": "swarm_monitor", "task_id": "..."}`
-3. Agent Coordination: `{"type": "agent_coordination", "content": "..."}`
-4. Analytics Request: `{"type": "analytics", ...}`
+Message Format:
+```typescript
+interface WebSocketMessage {
+    type: string;          // Message type (e.g. 'message', 'status', 'update')
+    data: any;            // Message payload
+    timestamp: string;    // ISO timestamp
+    metadata?: {          // Optional metadata
+        source?: string;
+        domain?: string;
+        importance?: number;
+    }
+}
+```
 """,
     version="0.1.0"
 )
@@ -86,12 +115,6 @@ app.add_middleware(
     max_age=3600,
 )
 
-# Enable detailed error logging
-import logging
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger("uvicorn")
-logger.setLevel(logging.DEBUG)
-
 # Include routers
 app.include_router(root_router)           # Root endpoint (must be first)
 app.include_router(nova_router)           # Nova-specific endpoints
@@ -103,19 +126,6 @@ app.include_router(analytics_router)      # Analytics and insights
 app.include_router(user_router)           # User management
 app.include_router(ws_router)             # Real-time updates
 app.include_router(tasks_router)          # Task management
-
-# Add CORS middleware for specific routes
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    allow_headers=["Content-Type", "Authorization", "x-api-key", "Accept", "Origin", "X-Requested-With"],
-    expose_headers=["Content-Type", "Authorization"],
-    max_age=3600,
-)
-
-# Add lifecycle router
 app.include_router(lifecycle_router)      # Lifecycle events
 
 # Add event handlers

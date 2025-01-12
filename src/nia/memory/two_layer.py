@@ -716,12 +716,17 @@ class TwoLayerMemorySystem:
     def __init__(self, neo4j_uri: str = "bolt://localhost:7687", 
                  vector_store: Optional[VectorStore] = None,
                  llm = None):
-        self.vector_store = vector_store  # Store vector store first
-        self.episodic = EpisodicLayer(self.vector_store)  # Initialize episodic with vector store
-        self.semantic = SemanticLayer(uri=neo4j_uri)
-        self.consolidation_manager = None  # Will be set by ConsolidationManager
+        """Initialize the memory system.
+        
+        Note: This only sets up the basic structure. Call initialize() to fully initialize the system.
+        """
+        self.vector_store = vector_store
+        self.episodic = None  # Will be initialized in initialize()
+        self.semantic = None  # Will be initialized in initialize()
+        self.consolidation_manager = None
         self._initialized = False
-        self.llm = llm  # Store LLM interface
+        self.llm = llm
+        self.neo4j_uri = neo4j_uri
         
     def _create_validation_metadata(
         self,
@@ -743,13 +748,7 @@ class TwoLayerMemorySystem:
         try:
             # Create task updates collection
             logger.info("Creating task_updates collection...")
-            await self.episodic.store.create_collection(
-                name="task_updates",
-                vectors_config={
-                    "size": 384,
-                    "distance": "Cosine"
-                }
-            )
+            self.episodic.store._ensure_collection()
             
             # Add task-specific indexes
             logger.info("Creating task-specific indexes...")
@@ -804,6 +803,10 @@ class TwoLayerMemorySystem:
     async def initialize(self):
         """Initialize connections to Neo4j and vector store."""
         if not self._initialized:
+            # Initialize layers
+            self.episodic = EpisodicLayer(self.vector_store)
+            self.semantic = SemanticLayer(uri=self.neo4j_uri)
+            
             # Initialize Neo4j connection
             if hasattr(self.semantic, 'connect'):
                 await self.semantic.connect()

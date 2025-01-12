@@ -101,7 +101,7 @@
       ]);
 
       // Initialize specialized agent team if needed
-      if (threadId === 'nova-team' && (!agents || agents.length === 0)) {
+      if ((threadId === 'nova-team' || threadId === 'nova') && (!agents || agents.length === 0)) {
         const team = await createAgentTeam(
           threadId,
           [

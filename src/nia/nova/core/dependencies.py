@@ -1,182 +1,137 @@
-"""FastAPI dependency injection providers."""
+"""FastAPI dependencies for Nova's endpoints."""
 
-from typing import AsyncGenerator, Any
-from fastapi import Depends, APIRouter
+from typing import Any, Optional
+import uuid
 
-# Default models to use
-CHAT_MODEL = "default"  # Will use first available model from LMStudio
-EMBEDDING_MODEL = "all-MiniLM-L6-v2"  # Default embedding model from sentence-transformers
-
-# Create router for lifecycle events
-ws_router = APIRouter()
-
-from nia.core.neo4j.neo4j_store import Neo4jMemoryStore
-from nia.core.profiles.profile_manager import ProfileManager
-from nia.core.profiles.profile_agent import ProfileAgent
-from nia.agents.base import CoordinationAgent, AnalyticsAgent, ParsingAgent, OrchestrationAgent
-from nia.agents.tinytroupe_agent import TinyFactory
-from nia.memory.graph_store import GraphStore
-from nia.memory.agent_store import AgentStore
-from nia.memory.profile_store import ProfileStore
+from fastapi import Depends
 from nia.memory.two_layer import TwoLayerMemorySystem
-from nia.world.environment import NIAWorld
+from nia.core.neo4j.concept_manager import ConceptManager
+from nia.core.neo4j.graph_store import GraphStore
+from nia.core.neo4j.agent_store import AgentStore
+from nia.core.neo4j.profile_store import ProfileStore
 from nia.core.interfaces.llm_interface import LLMInterface
+from nia.agents.specialized.parsing_agent import ParsingAgent
+from nia.agents.specialized.coordination_agent import CoordinationAgent
+from nia.agents.specialized.analytics_agent import AnalyticsAgent
+from nia.agents.specialized.orchestration_agent import OrchestrationAgent
+from nia.agents.tiny_factory import TinyFactory
+from nia.world.world import World
+from .thread_manager import ThreadManager
+
+# Global instances
+_memory_system: Optional[TwoLayerMemorySystem] = None
+_world: Optional[World] = None
+_llm: Optional[LLMInterface] = None
+_parsing_agent: Optional[ParsingAgent] = None
+_coordination_agent: Optional[CoordinationAgent] = None
+_tiny_factory: Optional[TinyFactory] = None
+_analytics_agent: Optional[AnalyticsAgent] = None
+_orchestration_agent: Optional[OrchestrationAgent] = None
+_graph_store: Optional[GraphStore] = None
+_agent_store: Optional[AgentStore] = None
+_profile_store: Optional[ProfileStore] = None
+_thread_manager: Optional[ThreadManager] = None
+
+# Model configurations
+CHAT_MODEL = "gpt-4"
+EMBEDDING_MODEL = "text-embedding-ada-002"
+
+async def get_memory_system() -> TwoLayerMemorySystem:
+    """Get or create memory system instance."""
+    global _memory_system
+    if _memory_system is None:
+        _memory_system = TwoLayerMemorySystem()
+        await _memory_system.initialize()
+    return _memory_system
+
+async def get_world() -> World:
+    """Get or create world instance."""
+    global _world
+    if _world is None:
+        _world = World()
+        await _world.initialize()
+    return _world
 
 async def get_llm() -> LLMInterface:
-    """Get LLM interface instance."""
-    return LLMInterface()
+    """Get or create LLM interface instance."""
+    global _llm
+    if _llm is None:
+        _llm = LLMInterface()
+        await _llm.initialize()
+    return _llm
+
+async def get_parsing_agent() -> ParsingAgent:
+    """Get or create parsing agent instance."""
+    global _parsing_agent
+    if _parsing_agent is None:
+        _parsing_agent = ParsingAgent()
+        await _parsing_agent.initialize()
+    return _parsing_agent
+
+async def get_coordination_agent() -> CoordinationAgent:
+    """Get or create coordination agent instance."""
+    global _coordination_agent
+    if _coordination_agent is None:
+        _coordination_agent = CoordinationAgent()
+        await _coordination_agent.initialize()
+    return _coordination_agent
+
+async def get_tiny_factory() -> TinyFactory:
+    """Get or create tiny factory instance."""
+    global _tiny_factory
+    if _tiny_factory is None:
+        _tiny_factory = TinyFactory()
+        await _tiny_factory.initialize()
+    return _tiny_factory
+
+async def get_analytics_agent() -> AnalyticsAgent:
+    """Get or create analytics agent instance."""
+    global _analytics_agent
+    if _analytics_agent is None:
+        _analytics_agent = AnalyticsAgent()
+        await _analytics_agent.initialize()
+    return _analytics_agent
+
+async def get_orchestration_agent() -> OrchestrationAgent:
+    """Get or create orchestration agent instance."""
+    global _orchestration_agent
+    if _orchestration_agent is None:
+        _orchestration_agent = OrchestrationAgent()
+        await _orchestration_agent.initialize()
+    return _orchestration_agent
+
+async def get_graph_store() -> GraphStore:
+    """Get or create graph store instance."""
+    global _graph_store
+    if _graph_store is None:
+        _graph_store = GraphStore()
+        await _graph_store.initialize()
+    return _graph_store
+
+async def get_agent_store() -> AgentStore:
+    """Get or create agent store instance."""
+    global _agent_store
+    if _agent_store is None:
+        _agent_store = AgentStore()
+        await _agent_store.initialize()
+    return _agent_store
+
+async def get_profile_store() -> ProfileStore:
+    """Get or create profile store instance."""
+    global _profile_store
+    if _profile_store is None:
+        _profile_store = ProfileStore()
+        await _profile_store.initialize()
+    return _profile_store
+
+async def get_thread_manager() -> ThreadManager:
+    """Get or create thread manager instance."""
+    global _thread_manager
+    if _thread_manager is None:
+        memory_system = await get_memory_system()
+        _thread_manager = ThreadManager(memory_system)
+    return _thread_manager
 
 async def get_llm_interface() -> LLMInterface:
     """Get LLM interface instance."""
-    return LLMInterface()
-
-_memory_system = None
-
-async def get_memory_system() -> TwoLayerMemorySystem:
-    """Get memory system instance."""
-    global _memory_system
-    if _memory_system is None:
-        from nia.core.vector.vector_store import VectorStore
-        from nia.core.vector.embeddings import EmbeddingService
-        from nia.memory.two_layer import EpisodicLayer, SemanticLayer
-        
-        try:
-            # Initialize vector store with embedding service
-            embedding_service = EmbeddingService()
-            vector_store = VectorStore(embedding_service)
-            
-            # Create memory system with vector store
-            memory_system = TwoLayerMemorySystem(vector_store=vector_store)
-            
-            # Initialize layers
-            episodic = EpisodicLayer(vector_store)
-            episodic.store = vector_store  # Ensure store is set
-            semantic = SemanticLayer()
-            
-            # Set layers
-            memory_system.episodic = episodic
-            memory_system.semantic = semantic
-            memory_system.vector_store = vector_store  # Ensure vector_store is set
-            
-            # Initialize the system
-            await memory_system.initialize()
-            
-            # Verify initialization
-            if not hasattr(memory_system, 'episodic') or not hasattr(memory_system.episodic, 'store'):
-                # Try to re-initialize layers
-                memory_system.episodic = EpisodicLayer(vector_store)
-                memory_system.episodic.store = vector_store  # Ensure store is set
-                memory_system.semantic = SemanticLayer()
-                memory_system.vector_store = vector_store  # Ensure vector_store is set
-                await memory_system.initialize()
-                
-                # Verify again
-                if not hasattr(memory_system, 'episodic') or not hasattr(memory_system.episodic, 'store'):
-                    raise ValueError("Memory system not properly initialized")
-            
-            # Set initialized flag
-            memory_system._initialized = True
-            
-            # Store the initialized memory system
-            _memory_system = memory_system
-                
-        except Exception as e:
-            print(f"Error initializing memory system: {str(e)}")
-            _memory_system = None
-            raise
-    else:
-        # Verify existing memory system
-        if not hasattr(_memory_system, 'episodic') or not hasattr(_memory_system.episodic, 'store'):
-            print("Warning: Existing memory system missing required attributes")
-            _memory_system = None
-            return await get_memory_system()
-    return _memory_system
-
-@ws_router.on_event("shutdown")
-async def cleanup_memory_system():
-    """Clean up memory system on shutdown."""
-    global _memory_system
-    if _memory_system is not None:
-        await _memory_system.cleanup()
-        _memory_system = None
-
-async def get_world(
-    memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
-) -> AsyncGenerator[NIAWorld, None]:
-    """Get world instance."""
-    world = NIAWorld(memory_system=memory_system)
-    try:
-        yield world
-    finally:
-        await world.cleanup()
-
-async def get_graph_store() -> GraphStore:
-    """Get graph store instance."""
-    return GraphStore()
-
-async def get_coordination_agent() -> CoordinationAgent:
-    """Get coordination agent instance."""
-    return CoordinationAgent()
-
-async def get_analytics_agent() -> AnalyticsAgent:
-    """Get analytics agent instance."""
-    return AnalyticsAgent()
-
-async def get_parsing_agent() -> ParsingAgent:
-    """Get parsing agent instance."""
-    return ParsingAgent()
-
-async def get_orchestration_agent() -> OrchestrationAgent:
-    """Get orchestration agent instance."""
-    return OrchestrationAgent()
-
-async def get_profile_store() -> AsyncGenerator[ProfileStore, None]:
-    """Get profile store instance."""
-    store = ProfileStore()
-    try:
-        yield store
-    finally:
-        await store.close()
-
-async def get_agent_store() -> AsyncGenerator[AgentStore, None]:
-    """Get agent store instance."""
-    store = AgentStore()
-    try:
-        yield store
-    finally:
-        await store.close()
-
-async def get_neo4j_store() -> AsyncGenerator[Neo4jMemoryStore, None]:
-    """Get Neo4j store instance."""
-    store = Neo4jMemoryStore()
-    try:
-        yield store
-    finally:
-        await store.close()
-
-async def get_profile_manager(
-    store: Neo4jMemoryStore = Depends(get_neo4j_store)
-) -> AsyncGenerator[ProfileManager, None]:
-    """Get profile manager instance."""
-    manager = ProfileManager(store=store)
-    try:
-        yield manager
-    finally:
-        pass  # Manager cleanup if needed
-
-async def get_profile_agent(
-    manager: ProfileManager = Depends(get_profile_manager)
-) -> AsyncGenerator[ProfileAgent, None]:
-    """Get profile agent instance."""
-    agent = ProfileAgent(profile_manager=manager)
-    try:
-        yield agent
-    finally:
-        pass  # Agent cleanup if needed
-
-async def get_tiny_factory(
-    memory_system: TwoLayerMemorySystem = Depends(get_memory_system),
-    world: NIAWorld = Depends(get_world)
-) -> TinyFactory:
-    """Get TinyFactory instance."""
-    return TinyFactory(memory_system=memory_system, world=world)
+    return await get_llm()

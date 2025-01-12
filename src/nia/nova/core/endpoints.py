@@ -112,8 +112,13 @@ async def get_graph_data(
             "edges": graph_data.get("edges", []),
             "timestamp": datetime.now().isoformat()
         }
+    except ResourceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ServiceError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
-        raise ServiceError(str(e))
+        logger.error(f"Unexpected error in add_thread_agent: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 agent_router = APIRouter(
     prefix="/api/agents",
@@ -246,8 +251,13 @@ async def get_agent_graph(
             "edges": formatted_edges,
             "timestamp": datetime.now().isoformat()
         }
+    except ResourceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ServiceError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
-        raise ServiceError(str(e))
+        logger.error(f"Unexpected error in add_thread_agent: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 user_router = APIRouter(
     prefix="/api/users",
@@ -317,212 +327,98 @@ async def list_available_agents(
             for agent in agents
         ]
     except Exception as e:
-        raise ServiceError(str(e))
+        raise HTTPException(status_code=500, detail=str(e))
 
 @chat_router.get("/threads/{thread_id}/agents", response_model=List[Dict[str, Any]])
 async def get_thread_agents(
     thread_id: str,
     _: None = Depends(get_permission("read")),
-    memory_system: Any = Depends(get_memory_system)
+    thread_manager: Any = Depends(get_thread_manager)
 ) -> List[Dict[str, Any]]:
     """Get all agents in a thread."""
     try:
-        # Get thread
-        result = await memory_system.query_episodic({
-            "content": {},
-            "filter": {
-                "metadata.thread_id": thread_id,
-                "metadata.type": "thread"
-            },
-            "layer": "episodic"
-        })
-        
-        if not result:
-            raise ResourceNotFoundError(f"Thread {thread_id} not found")
-            
-        thread = result[0]["content"]["data"]
-        
-        # Return participants that are agents
-        return [
-            p for p in thread.get("metadata", {}).get("participants", [])
-            if p.get("type") == "agent"
-        ]
+        return await thread_manager.get_thread_agents(thread_id)
+    except ResourceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ServiceError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
-        raise ServiceError(str(e))
+        logger.error(f"Unexpected error in get_thread_agents: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @chat_router.post("/threads/{thread_id}/agents", response_model=Dict[str, Any])
 async def add_thread_agent(
     thread_id: str,
     request: Dict[str, Any],
     _: None = Depends(get_permission("write")),
-    memory_system: Any = Depends(get_memory_system),
+    thread_manager: Any = Depends(get_thread_manager),
     agent_store: Any = Depends(get_agent_store)
 ) -> Dict[str, Any]:
     """Add an agent to a thread."""
     try:
-        # Get thread first
-        result = await memory_system.query_episodic({
-            "content": {},
-            "filter": {
-                "metadata.thread_id": thread_id,
-                "metadata.type": "thread"
-            },
-            "layer": "episodic"
-        })
-        
-        if not result:
-            raise ResourceNotFoundError(f"Thread {thread_id} not found")
-            
-        thread = result[0]["content"]["data"]
-        
-        # Create agent
-        agent_type = request.get("agentType")
-        workspace = request.get("workspace", "personal")
-        domain = request.get("domain")
-        
-        agent = {
-            "id": f"{agent_type}-{str(uuid.uuid4())[:8]}",
-            "name": f"{agent_type.capitalize()}Agent",
-            "type": agent_type,
-            "workspace": workspace,
-            "domain": domain,
-            "status": "active",
-            "metadata": {
-                "capabilities": [f"{agent_type}_analysis"],
-                "created_at": datetime.now().isoformat()
-            }
-        }
-        
-        # Store agent
-        await agent_store.store_agent(agent)
-        
-        # Add agent to thread participants
-        if "participants" not in thread["metadata"]:
-            thread["metadata"]["participants"] = []
-        thread["metadata"]["participants"].append(agent)
-        thread["updated_at"] = datetime.now().isoformat()
-        
-        # Update thread
-        await memory_system.store_experience(Memory(
-            content={
-                "data": thread,
-                "metadata": {
-                    "type": "thread",
-                    "domain": thread.get("domain", "general"),
-                    "thread_id": thread_id,
-                    "timestamp": datetime.now().isoformat(),
-                    "id": thread_id
-                }
-            },
-            type=MemoryType.EPISODIC,
-            importance=0.8,
-            context={
-                "domain": thread.get("domain", "general"),
-                "thread_id": thread_id,
-                "source": "chat"
-            }
-        ))
-        
+        agent = await thread_manager.add_single_agent(
+            thread_id=thread_id,
+            agent_type=request.get("agentType"),
+            workspace=request.get("workspace", "personal"),
+            domain=request.get("domain"),
+            agent_store=agent_store
+        )
         return agent
+    except ResourceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ServiceError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
-        raise ServiceError(str(e))
+        logger.error(f"Unexpected error in add_thread_agent: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @chat_router.get("/threads/{thread_id}", response_model=ThreadResponse)
 async def get_thread(
     thread_id: str,
     _: None = Depends(get_permission("read")),
-    memory_system: Any = Depends(get_memory_system)
+    thread_manager: Any = Depends(get_thread_manager)
 ) -> ThreadResponse:
     """Get a specific thread."""
     try:
-        result = await memory_system.query_episodic({
-            "content": {},
-            "filter": {
-                "metadata.thread_id": thread_id,
-                "metadata.type": "thread"
-            },
-            "layer": "episodic"
-        })
-        
-        if not result:
-            raise ResourceNotFoundError(f"Thread {thread_id} not found")
-            
-        thread = result[0]["content"]["data"]
+        thread = await thread_manager.get_thread(thread_id)
         return ThreadResponse(**thread)
+    except ResourceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ServiceError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
-        raise ServiceError(str(e))
+        logger.error(f"Unexpected error in get_thread: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @chat_router.post("/threads/create", response_model=ThreadResponse)
 async def create_thread(
     request: ThreadRequest,
     _: None = Depends(get_permission("write")),
-    memory_system: Any = Depends(get_memory_system)
+    thread_manager: Any = Depends(get_thread_manager)
 ) -> ThreadResponse:
     """Create a new chat thread."""
     try:
-        thread_id = str(uuid.uuid4())
-        now = datetime.now().isoformat()
-        
-        thread = {
-            "id": thread_id,
-            "title": request.title,
-            "domain": request.domain or "general",
-            "messages": [],
-            "created_at": now,
-            "updated_at": now,
-            "metadata": request.metadata or {}
-        }
-        
-        # Store thread in memory system
-        memory = Memory(
-            content={
-                "data": thread,
-                "metadata": {
-                    "type": "thread",
-                    "domain": request.domain or "general",
-                    "thread_id": thread_id,
-                    "timestamp": now,
-                    "id": thread_id
-                }
-            },
-            type=MemoryType.EPISODIC,
-            importance=0.8,
-            context={
-                "domain": request.domain or "general",
-                "thread_id": thread_id,
-                "source": "chat"
-            }
+        thread = await thread_manager.create_thread(
+            title=request.title,
+            domain=request.domain or "general",
+            metadata=request.metadata
         )
-        await memory_system.store_experience(memory)
-        
         return ThreadResponse(**thread)
+    except ServiceError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
-        raise ServiceError(str(e))
+        logger.error(f"Unexpected error in create_thread: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @chat_router.post("/threads/{thread_id}/messages", response_model=MessageResponse)
 async def add_message(
     thread_id: str,
     request: MessageRequest,
     _: None = Depends(get_permission("write")),
-    memory_system: Any = Depends(get_memory_system)
+    thread_manager: Any = Depends(get_thread_manager)
 ) -> MessageResponse:
     """Add a message to a thread."""
     try:
-        # Get thread first
-        result = await memory_system.query_episodic({
-            "content": {},
-            "filter": {
-                "metadata.thread_id": thread_id,
-                "metadata.type": "thread"
-            },
-            "layer": "episodic"
-        })
-        
-        if not result:
-            raise ResourceNotFoundError(f"Thread {thread_id} not found")
-            
-        thread = result[0]["content"]["data"]
-        
         # Create message
         message = Message(
             id=str(uuid.uuid4()),
@@ -534,141 +430,63 @@ async def add_message(
         )
         
         # Add message to thread
-        thread["messages"].append(message.dict())
-        thread["updated_at"] = datetime.now().isoformat()
-        
-        # Update thread in memory
-        await memory_system.store_experience(Memory(
-            content={
-                "data": thread,
-                "metadata": {
-                    "type": "thread",
-                    "domain": thread.get("domain", "general"),
-                    "thread_id": thread_id,
-                    "timestamp": datetime.now().isoformat(),
-                    "id": thread_id
-                }
-            },
-            type=MemoryType.EPISODIC,
-            importance=0.8,
-            context={
-                "domain": thread.get("domain", "general"),
-                "thread_id": thread_id,
-                "source": "chat"
-            }
-        ))
+        thread = await thread_manager.add_message(thread_id, message.dict())
         
         return MessageResponse(
             message=message,
             thread_id=thread_id,
             timestamp=datetime.now().isoformat()
         )
+    except ResourceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ServiceError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
-        raise ServiceError(str(e))
+        logger.error(f"Unexpected error in add_message: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @chat_router.post("/threads/{thread_id}/agent-team", response_model=List[Dict[str, Any]])
 async def create_agent_team(
     thread_id: str,
     request: Dict[str, Any],
     _: None = Depends(get_permission("write")),
-    memory_system: Any = Depends(get_memory_system),
+    thread_manager: Any = Depends(get_thread_manager),
     agent_store: Any = Depends(get_agent_store)
 ) -> List[Dict[str, Any]]:
     """Create a team of agents in a thread."""
     try:
-        # Get thread first
-        result = await memory_system.query_episodic({
-            "content": {},
-            "filter": {
-                "metadata.thread_id": thread_id,
-                "metadata.type": "thread"
-            },
-            "layer": "episodic"
-        })
-        
-        if not result:
-            raise ResourceNotFoundError(f"Thread {thread_id} not found")
-            
-        thread = result[0]["content"]["data"]
-        
-        # Create each agent
-        agents = []
-        for agent_spec in request.get("agents", []):
-            agent_type = agent_spec.get("type")
-            workspace = agent_spec.get("workspace", "personal")
-            domain = agent_spec.get("domain")
-            
-            agent = {
-                "id": f"{agent_type}-{str(uuid.uuid4())[:8]}",
-                "name": f"{agent_type.capitalize()}Agent",
-                "type": agent_type,
-                "workspace": workspace,
-                "domain": domain,
-                "status": "active",
-                "metadata": {
-                    "capabilities": [f"{agent_type}_analysis"],
-                    "created_at": datetime.now().isoformat()
-                }
-            }
-            
-            # Store agent
-            await agent_store.store_agent(agent)
-            agents.append(agent)
-        
-        # Add agents to thread participants
-        if "participants" not in thread["metadata"]:
-            thread["metadata"]["participants"] = []
-        thread["metadata"]["participants"].extend(agents)
-        thread["updated_at"] = datetime.now().isoformat()
-        
-        # Update thread
-        await memory_system.store_experience(Memory(
-            content={
-                "data": thread,
-                "metadata": {
-                    "type": "thread",
-                    "domain": thread.get("domain", "general"),
-                    "thread_id": thread_id,
-                    "timestamp": datetime.now().isoformat(),
-                    "id": thread_id
-                }
-            },
-            type=MemoryType.EPISODIC,
-            importance=0.8,
-            context={
-                "domain": thread.get("domain", "general"),
-                "thread_id": thread_id,
-                "source": "chat"
-            }
-        ))
-        
+        agents = await thread_manager.add_agent_team(
+            thread_id=thread_id,
+            agent_specs=request.get("agents", []),
+            agent_store=agent_store
+        )
         return agents
+    except ResourceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ServiceError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
-        raise ServiceError(str(e))
+        logger.error(f"Unexpected error in create_agent_team: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @chat_router.get("/threads", response_model=ThreadListResponse)
 async def list_threads(
     _: None = Depends(get_permission("read")),
-    memory_system: Any = Depends(get_memory_system)
+    thread_manager: Any = Depends(get_thread_manager)
 ) -> ThreadListResponse:
     """List all chat threads."""
     try:
-        # Retrieve all threads from memory system
-        results = await memory_system.query_episodic({
-            "content": {},
-            "filter": {"metadata.type": "thread"},
-            "layer": "episodic"
-        })
-        
-        threads = [ThreadResponse(**result["content"]["data"]) for result in results]
-        
+        threads = await thread_manager.list_threads()
         return ThreadListResponse(
-            threads=threads,
+            threads=[ThreadResponse(**thread) for thread in threads],
             total=len(threads),
             timestamp=datetime.now().isoformat()
         )
+    except ServiceError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
-        raise ServiceError(str(e))
+        logger.error(f"Unexpected error in list_threads: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 # Create WebSocket router without dependencies
 ws_router = APIRouter(
@@ -768,13 +586,13 @@ async def handle_graph_subscribe(client_id: str, graph_store: Any):
         if "domain" in node:
             node_data["domain"] = node["domain"]
         if "metadata" in node:
-                try:
-                    metadata = node["metadata"]
-                    node_data["metadata"] = json.loads(metadata) if isinstance(metadata, str) else metadata
-                    logger.debug(f"Processed metadata for node {node['id']}: {node_data['metadata']}")
-                except Exception as e:
-                    logger.warning(f"Failed to process metadata for node {node['id']}: {e}")
-                    node_data["metadata"] = {}
+            try:
+                metadata = node["metadata"]
+                node_data["metadata"] = json.loads(metadata) if isinstance(metadata, str) else metadata
+                logger.debug(f"Processed metadata for node {node['id']}: {node_data['metadata']}")
+            except Exception as e:
+                logger.warning(f"Failed to process metadata for node {node['id']}: {e}")
+                node_data["metadata"] = {}
         
         node_data["color"] = (
             "#4A4AFF" if node.get("category") == "brand" else
@@ -811,7 +629,7 @@ async def handle_swarm_monitor(client_id: str, data: Dict, analytics_agent: Any,
     """Handle swarm monitoring request."""
     task_id = data.get("task_id")
     if not task_id:
-        raise ValidationError("swarm_monitor requires task_id")
+        raise HTTPException(status_code=400, detail="swarm_monitor requires task_id")
         
     result = await analytics_agent.process_analytics(
         content={

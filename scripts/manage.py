@@ -26,6 +26,11 @@ class ServiceManager:
                 "health_url": "http://localhost:6333/dashboard",
                 "startup_time": 5
             },
+            "redis": {
+                "port": 6379,
+                "health_url": "http://localhost:6379",
+                "startup_time": 2
+            },
             "lmstudio": {
                 "port": 1234,
                 "health_url": "http://localhost:1234/v1/models",
@@ -39,6 +44,11 @@ class ServiceManager:
             "frontend": {
                 "port": 5173,
                 "health_url": "http://localhost:5173",
+                "startup_time": 2
+            },
+            "celery": {
+                "port": None,
+                "health_url": None,
                 "startup_time": 2
             }
         }
@@ -219,6 +229,36 @@ finance_memory_threshold = 0.7
         print(f"⚠️  {name} did not start within {timeout} seconds")
         return False
 
+    def start_celery(self):
+        """Start Celery worker."""
+        print("\n🌾 Starting Celery worker...")
+        try:
+            # Set up environment
+            env = os.environ.copy()
+            env["PYTHONPATH"] = str(Path.cwd())
+            
+            # Start Celery worker
+            process = subprocess.Popen(
+                ["pdm", "run", "celery", "-A", "src.nia.nova.core.celery_app", "worker", "--loglevel=info"],
+                env=env,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            
+            # Check for immediate startup errors
+            time.sleep(1)
+            if process.poll() is not None:
+                _, stderr = process.communicate()
+                print(f"❌ Celery worker failed to start:\n{stderr}")
+                sys.exit(1)
+                
+            print("✅ Celery worker started")
+                
+        except Exception as e:
+            print(f"❌ Error starting Celery worker: {e}")
+            sys.exit(1)
+
     def start_fastapi(self):
         """Start FastAPI server."""
         print("\n🚀 Starting FastAPI server...")
@@ -309,6 +349,14 @@ finance_memory_threshold = 0.7
         except Exception as e:
             print(f"Warning: Error stopping frontend: {e}")
 
+    def stop_celery(self):
+        """Stop Celery worker."""
+        print("Stopping Celery worker...")
+        try:
+            subprocess.run(["pkill", "-f", "celery worker"], check=False)
+        except Exception as e:
+            print(f"Warning: Error stopping Celery worker: {e}")
+
     def stop_services(self):
         """Stop all services."""
         print("\n🛑 Stopping services...")
@@ -322,6 +370,9 @@ finance_memory_threshold = 0.7
             )
         except Exception as e:
             print(f"Warning: Error stopping FastAPI: {e}")
+        
+        # Stop Celery worker
+        self.stop_celery()
         
         # Stop frontend server
         print("Stopping frontend server...")
@@ -378,12 +429,13 @@ finance_memory_threshold = 0.7
         print("\n📊 Service Status:")
         
         # Check Docker services
-        for service in ["neo4j", "qdrant"]:
-            status = "✅ Running" if self.check_service(
-                service, 
-                self.services[service]["health_url"]
-            ) else "❌ Not running"
-            print(f"{service.title()}: {status}")
+        for service in ["neo4j", "qdrant", "redis"]:
+            if self.services[service]["health_url"]:
+                status = "✅ Running" if self.check_service(
+                    service, 
+                    self.services[service]["health_url"]
+                ) else "❌ Not running"
+                print(f"{service.title()}: {status}")
         
         # Check LMStudio
         status = "✅ Running" if self.check_service(
@@ -405,6 +457,16 @@ finance_memory_threshold = 0.7
             self.services["frontend"]["health_url"]
         ) else "❌ Not running"
         print(f"Frontend: {status}")
+
+        # Check Celery
+        try:
+            celery_output = subprocess.check_output(
+                ["pgrep", "-f", "celery worker"],
+                stderr=subprocess.DEVNULL
+            )
+            print("Celery Worker: ✅ Running")
+        except subprocess.CalledProcessError:
+            print("Celery Worker: ❌ Not running")
         
         # Check workspace configuration
         print("\n📊 Workspace Status:")
@@ -451,6 +513,7 @@ def main():
         if not manager.check_workspace_config():
             print("❌ Invalid workspace configuration")
             sys.exit(1)
+        manager.start_celery()
         manager.start_fastapi()
         manager.start_frontend()
         print("\n✨ All services started!")
@@ -467,6 +530,7 @@ def main():
         if not manager.check_workspace_config():
             print("❌ Invalid workspace configuration")
             sys.exit(1)
+        manager.start_celery()
         manager.start_fastapi()
         manager.start_frontend()
         print("\n✨ All services restarted!")

@@ -25,9 +25,71 @@ async def ask_nova(
 ) -> Dict[str, Any]:
     """Ask Nova a question."""
     try:
-        # Create a new thread for the conversation
-        thread_id = str(uuid.uuid4())
-        now = datetime.now().isoformat()
+        # Check if Nova thread exists
+        result = await memory_system.query_episodic({
+            "content": {},
+            "filter": {
+                "metadata.thread_id": "nova",
+                "metadata.type": "thread"
+            },
+            "layer": "episodic"
+        })
+        
+        if not result:
+            # Create Nova thread if it doesn't exist
+            now = datetime.now().isoformat()
+            thread = {
+                "id": "nova",
+                "title": "Nova Chat",
+                "domain": "general",
+                "messages": [],
+                "created_at": now,
+                "updated_at": now,
+                "workspace": "personal",
+                "metadata": {
+                    "type": "agent-team",
+                    "system": True,
+                    "pinned": True,
+                    "description": "Chat with Nova"
+                }
+            }
+            
+            # Store thread in memory system
+            memory = Memory(
+                content={
+                    "data": thread,
+                    "metadata": {
+                        "type": "thread",
+                        "domain": "general",
+                        "thread_id": "nova",
+                        "timestamp": now,
+                        "id": "nova"
+                    }
+                },
+                type=MemoryType.EPISODIC,
+                importance=0.8,
+                context={
+                    "domain": "general",
+                    "thread_id": "nova",
+                    "source": "nova"
+                }
+            )
+            await memory_system.store_experience(memory)
+            
+            # Verify thread was stored
+            result = await memory_system.query_episodic({
+                "content": {},
+                "filter": {
+                    "metadata.thread_id": "nova",
+                    "metadata.type": "thread"
+                },
+                "layer": "episodic"
+            })
+            
+            if not result:
+                raise ServiceError("Failed to store Nova thread")
+        
+        thread = result[0]["content"]["data"] if result else thread
         
         # Create Nova's response
         message = Message(
@@ -35,45 +97,38 @@ async def ask_nova(
             content=f"I understand you're asking about: {request['content']}. Let me help with that.",
             sender_type="agent",
             sender_id="nova",
-            timestamp=now,
+            timestamp=datetime.now().isoformat(),
             metadata={}
         )
         
-        # Create thread with the message
-        thread = {
-            "id": thread_id,
-            "title": "Nova Chat",
-            "domain": "general",
-            "messages": [message.dict()],
-            "created_at": now,
-            "updated_at": now,
-            "metadata": {}
-        }
+        # Add message to thread
+        thread["messages"].append(message.dict())
+        thread["updated_at"] = datetime.now().isoformat()
         
-        # Store thread in memory system
+        # Update thread in memory system
         memory = Memory(
             content={
                 "data": thread,
                 "metadata": {
                     "type": "thread",
                     "domain": "general",
-                    "thread_id": thread_id,
-                    "timestamp": now,
-                    "id": thread_id
+                    "thread_id": "nova",
+                    "timestamp": datetime.now().isoformat(),
+                    "id": "nova"
                 }
             },
             type=MemoryType.EPISODIC,
             importance=0.8,
             context={
                 "domain": "general",
-                "thread_id": thread_id,
+                "thread_id": "nova",
                 "source": "nova"
             }
         )
         await memory_system.store_experience(memory)
         
         return {
-            "threadId": thread_id,
+            "threadId": "nova",
             "message": message
         }
     except Exception as e:
