@@ -2,6 +2,40 @@
 
 This directory contains daily development logs documenting changes, improvements, and decisions made during the development of the NIA system.
 
+## Project Structure
+
+Key file locations for recent changes:
+
+1. Core Server Components:
+- src/nia/nova/core/
+  * thread_manager.py: Thread lifecycle management
+  * dependencies.py: FastAPI service dependencies
+  * app.py: Main FastAPI application
+  * endpoints.py: API endpoints
+  * websocket_endpoints.py: WebSocket handlers
+
+2. Memory System:
+- src/nia/memory/
+  * two_layer.py: Two-layer memory architecture
+  * vector_store.py: Qdrant vector operations
+  * embedding.py: Text embedding service
+
+3. Storage Layer:
+- src/nia/core/neo4j/
+  * agent_store.py: Agent persistence
+  * base_store.py: Base Neo4j operations
+  * concept_manager.py: Knowledge graph management
+
+4. Test Files:
+- scripts/
+  * test_thread_storage.py: Thread storage validation
+  * test_agent_storage.py: Agent storage testing
+  * test_thread.py: Thread operations testing
+
+5. Configuration:
+- config.ini: Core service configuration
+- scripts/docker/docker-compose.yml: Docker services
+
 ## Core Architecture
 
 The system is built on three key pillars:

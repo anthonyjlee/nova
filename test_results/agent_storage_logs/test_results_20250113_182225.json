@@ -1,0 +1,37 @@
+{
+  "session_id": "20250113_182211",
+  "summary": {
+    "total_tests": 4,
+    "passed": 3,
+    "failed": 1
+  },
+  "results": [
+    {
+      "test_name": "neo4j_check",
+      "success": true,
+      "timestamp": "2025-01-13T18:22:11.376411",
+      "details": {}
+    },
+    {
+      "test_name": "memory_check",
+      "success": true,
+      "timestamp": "2025-01-13T18:22:18.874594",
+      "details": {}
+    },
+    {
+      "test_name": "store_init",
+      "success": true,
+      "timestamp": "2025-01-13T18:22:18.908290",
+      "details": {}
+    },
+    {
+      "test_name": "agent_storage",
+      "success": false,
+      "timestamp": "2025-01-13T18:22:25.694057",
+      "details": {
+        "error": "'dict' object has no attribute 'type'",
+        "traceback": "Traceback (most recent call last):\n  File \"/Users/alee5331/Documents/Projects/NIA/scripts/test_agent_storage.py\", line 252, in test_agent_storage\n    await memory_system.store_experience({\n  File \"/Users/alee5331/Documents/Projects/NIA/src/nia/memory/two_layer.py\", line 418, in store_experience\n    logger.info(f\"Experience type: {experience.type}\")\n                                    ^^^^^^^^^^^^^^^\nAttributeError: 'dict' object has no attribute 'type'\n"
+      }
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "session_id": "20250113_183333",
+  "summary": {
+    "total_tests": 4,
+    "passed": 3,
+    "failed": 1
+  },
+  "results": [
+    {
+      "test_name": "neo4j_check",
+      "success": true,
+      "timestamp": "2025-01-13T18:33:33.744457",
+      "details": {}
+    },
+    {
+      "test_name": "memory_check",
+      "success": true,
+      "timestamp": "2025-01-13T18:33:41.098068",
+      "details": {}
+    },
+    {
+      "test_name": "store_init",
+      "success": true,
+      "timestamp": "2025-01-13T18:33:41.140047",
+      "details": {}
+    },
+    {
+      "test_name": "agent_storage",
+      "success": false,
+      "timestamp": "2025-01-13T18:33:49.891304",
+      "details": {
+        "error": "Unexpected Response: 400 (Bad Request)\nRaw response content:\nb'{\"status\":{\"error\":\"Format error in JSON body: value test-thread is not a valid point ID, valid values are either an unsigned integer or a UUID\"},\"time\":0.0}'",
+        "traceback": "Traceback (most recent call last):\n  File \"/Users/alee5331/Documents/Projects/NIA/scripts/test_agent_storage.py\", line 290, in test_agent_storage\n    await memory_system.store_experience(thread_memory)\n  File \"/Users/alee5331/Documents/Projects/NIA/src/nia/memory/two_layer.py\", line 426, in store_experience\n    memory_id = await self.episodic.store_memory(experience)\n                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/alee5331/Documents/Projects/NIA/src/nia/memory/two_layer.py\", line 216, in store_memory\n    await self.store.store_vector(\n  File \"/Users/alee5331/Documents/Projects/NIA/src/nia/memory/vector_store.py\", line 174, in store_vector\n    self.client.upsert(\n  File \"/Users/alee5331/Documents/Projects/NIA/.venv/lib/python3.12/site-packages/qdrant_client/qdrant_client.py\", line 1508, in upsert\n    return self._client.upsert(\n           ^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/alee5331/Documents/Projects/NIA/.venv/lib/python3.12/site-packages/qdrant_client/qdrant_remote.py\", line 1937, in upsert\n    http_result = self.openapi_client.points_api.upsert_points(\n                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/alee5331/Documents/Projects/NIA/.venv/lib/python3.12/site-packages/qdrant_client/http/api/points_api.py\", line 1871, in upsert_points\n    return self._build_for_upsert_points(\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/alee5331/Documents/Projects/NIA/.venv/lib/python3.12/site-packages/qdrant_client/http/api/points_api.py\", line 954, in _build_for_upsert_points\n    return self.api_client.request(\n           ^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/alee5331/Documents/Projects/NIA/.venv/lib/python3.12/site-packages/qdrant_client/http/api_client.py\", line 79, in request\n    return self.send(request, type_)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/alee5331/Documents/Projects/NIA/.venv/lib/python3.12/site-packages/qdrant_client/http/api_client.py\", line 102, in send\n    raise UnexpectedResponse.for_response(response)\nqdrant_client.http.exceptions.UnexpectedResponse: Unexpected Response: 400 (Bad Request)\nRaw response content:\nb'{\"status\":{\"error\":\"Format error in JSON body: value test-thread is not a valid point ID, valid values are either an unsigned integer or a UUID\"},\"time\":0.0}'\n"
+      }
+    }
+  ]
+}

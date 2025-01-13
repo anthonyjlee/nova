@@ -1,6 +1,7 @@
 """FastAPI dependencies for Nova's endpoints."""
 
 from typing import Any, Optional
+from pathlib import Path
 import uuid
 import asyncio
 import logging

@@ -5,12 +5,15 @@ import json
 import logging
 import traceback
 import shutil
+import os
+import uuid
+import aiohttp
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List
 
 from nia.core.neo4j.agent_store import AgentStore
-from nia.memory.two_layer import TwoLayerMemorySystem
+from nia.memory.two_layer import TwoLayerMemorySystem, Memory, MemoryType
 
 # Configure JSON logging
 LOGS_DIR = Path("test_results/agent_storage_logs")
@@ -23,6 +26,10 @@ TEST_DATA_DIR.mkdir(parents=True, exist_ok=True)
 NEO4J_DATA_DIR = Path("data/neo4j")
 NEO4J_BACKUP_DIR = TEST_DATA_DIR / "neo4j_backup"
 TEST_CONFIG_PATH = TEST_DATA_DIR / "test_config.ini"
+
+# API configuration
+API_BASE_URL = "http://localhost:8000/api"
+API_KEY = "test-key"  # For testing
 
 # Create session-specific log file
 session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -80,18 +87,33 @@ logger.addHandler(json_handler)
 
 def create_test_config():
     """Create test-specific Neo4j configuration."""
+    # Create test config in src directory
+    src_config = Path(__file__).parent.parent / "src" / "config.ini"
+    
     config_content = """[NEO4J]
-uri = bolt://localhost:7688
-user = neo4j_test
-password = test_password
-database = neo4j_test
+uri = bolt://localhost:7687
+user = neo4j
+password = password
+database = neo4j
 
 [QDRANT]
 host = localhost
-port = 6334
+port = 6333
 collection = test_memories
+
+[PATHS]
+project_root = /Users/alee5331/Documents/Projects/NIA
 """
+    # Create src config for imports
+    src_config.parent.mkdir(parents=True, exist_ok=True)
+    src_config.write_text(config_content)
+    
+    # Create test config
     TEST_CONFIG_PATH.write_text(config_content)
+    
+    # Set environment variable to use test config
+    os.environ["CONFIG_PATH"] = str(TEST_CONFIG_PATH)
+    
     return TEST_CONFIG_PATH
 
 def backup_neo4j_data():
@@ -235,7 +257,7 @@ async def test_agent_storage(results: TestResults):
         
         # Test 1: Create test thread
         logger.info("Creating test thread...", extra={"test_phase": "create_thread"})
-        thread_id = "test-thread"
+        thread_id = str(uuid.uuid4())  # Use UUID for thread ID
         thread_data = {
             "id": thread_id,
             "name": "Test Thread",
@@ -249,29 +271,54 @@ async def test_agent_storage(results: TestResults):
                 "pinned": False
             }
         }
-        await memory_system.store_experience({
-            "id": thread_id,
-            "content": thread_data,
-            "type": "EPISODIC",
-            "importance": 0.8,
-            "context": {
-                "domain": "test",
+        
+        # Create Memory object with proper structure
+        # First verify thread doesn't exist
+        existing = await memory_system.get_memory(thread_id)
+        if existing:
+            logger.warning(f"Thread {thread_id} already exists")
+            
+        # Create thread with complete metadata per 0113 requirements
+        thread_memory = Memory(
+            id=thread_id,
+            content=thread_data,  # Store complete thread data for episodic layer
+            type=MemoryType.EPISODIC,
+            importance=0.8,
+            timestamp=datetime.now().isoformat(),
+            context={
+                "domain": "test",  # Required domain
                 "source": "test",
-                "type": "thread"
-            },
-            "metadata": {
-                "thread_id": thread_id,
                 "type": "thread",
+                "workspace": "test"  # Required workspace
+            },
+            metadata={
+                "thread_id": thread_id,
+                "type": "thread",  # Required type
+                "system": False,    # Required system flag
+                "pinned": False,    # Required pinned flag
+                "description": "Test thread for agent storage",  # Required description
                 "consolidated": False
             }
-        })
+        )
+        
+        # Store and verify in both layers
+        await memory_system.store_experience(thread_memory)
+        
+        # Verify storage success
+        stored = await memory_system.get_memory(thread_id)
+        if not stored:
+            raise Exception(f"Failed to verify thread storage: {thread_id}")
+        
+        # Store thread memory
+        await memory_system.store_experience(thread_memory)
         logger.info("Test thread created", extra={"test_phase": "create_thread", "test_result": True})
         results.add_result("create_thread", True)
         
         # Test 2: Create test agent
         logger.info("Creating test agent...", extra={"test_phase": "create_agent"})
+        agent_id = str(uuid.uuid4())  # Use UUID for agent ID
         agent_data = {
-            "id": "test-agent",
+            "id": agent_id,
             "name": "Test Agent",
             "type": "test",
             "workspace": "test",
@@ -282,7 +329,7 @@ async def test_agent_storage(results: TestResults):
             "metadata_created_at": datetime.now().isoformat()
         }
         
-        agent_id = await agent_store.store_agent(agent_data, thread_id)
+        await agent_store.store_agent(agent_data, thread_id)
         logger.info(f"Test agent created with ID: {agent_id}", 
                    extra={"test_phase": "create_agent", "test_result": True})
         results.add_result("create_agent", True, {"agent_id": agent_id})
@@ -315,8 +362,9 @@ async def test_agent_storage(results: TestResults):
         
         # Test 5: Create agent relationship
         logger.info("Creating agent relationship...", extra={"test_phase": "create_relationship"})
+        other_agent_id = str(uuid.uuid4())  # Use UUID for other agent ID
         other_agent_data = {
-            "id": "other-test-agent",
+            "id": other_agent_id,
             "name": "Other Test Agent",
             "type": "test",
             "workspace": "test",
@@ -326,7 +374,7 @@ async def test_agent_storage(results: TestResults):
             "metadata_capabilities": ["testing"],
             "metadata_created_at": datetime.now().isoformat()
         }
-        other_agent_id = await agent_store.store_agent(other_agent_data)
+        await agent_store.store_agent(other_agent_data)
         
         await agent_store.create_agent_relationship(
             agent_id,
@@ -440,6 +488,120 @@ async def test_agent_storage(results: TestResults):
         except Exception as e:
             logger.error(f"Cleanup error: {str(e)}")
 
+async def test_agent_api(results: TestResults):
+    """Test agent-related API endpoints."""
+    try:
+        logger.info("Starting API tests...", extra={"test_phase": "api_tests"})
+        
+        async with aiohttp.ClientSession() as session:
+            # Test 1: List available agents
+            logger.info("Testing GET /api/agents...", extra={"test_phase": "api_list_agents"})
+            async with session.get(f"{API_BASE_URL}/agents") as response:
+                assert response.status == 200, f"Expected 200, got {response.status}"
+                agents = await response.json()
+                assert isinstance(agents, list), "Expected list of agents"
+                logger.info("GET /api/agents successful", 
+                          extra={"test_phase": "api_list_agents", "test_result": True})
+                results.add_result("api_list_agents", True, {
+                    "agents_count": len(agents)
+                })
+            
+            # Test 2: Get agent graph
+            logger.info("Testing GET /api/agents/graph...", extra={"test_phase": "api_agent_graph"})
+            async with session.get(f"{API_BASE_URL}/agents/graph") as response:
+                assert response.status == 200, f"Expected 200, got {response.status}"
+                graph = await response.json()
+                assert "nodes" in graph, "Expected nodes in graph"
+                assert "edges" in graph, "Expected edges in graph"
+                logger.info("GET /api/agents/graph successful", 
+                          extra={"test_phase": "api_agent_graph", "test_result": True})
+                results.add_result("api_agent_graph", True, {
+                    "nodes_count": len(graph["nodes"]),
+                    "edges_count": len(graph["edges"])
+                })
+            
+            # Test 3: Create test thread
+            logger.info("Testing POST /api/chat/threads/create...", 
+                       extra={"test_phase": "api_create_thread"})
+            thread_data = {
+                "title": "Test Thread",
+                "domain": "test",
+                "metadata": {
+                    "type": "test",
+                    "system": False,
+                    "pinned": False,
+                    "description": "Test thread for agent API testing"
+                }
+            }
+            async with session.post(
+                f"{API_BASE_URL}/chat/threads/create",
+                json=thread_data
+            ) as response:
+                assert response.status == 200, f"Expected 200, got {response.status}"
+                thread = await response.json()
+                thread_id = thread["id"]
+                logger.info("POST /api/chat/threads/create successful", 
+                          extra={"test_phase": "api_create_thread", "test_result": True})
+                results.add_result("api_create_thread", True, {
+                    "thread_id": thread_id
+                })
+            
+            # Test 4: Add agent to thread
+            logger.info("Testing POST /api/chat/threads/{thread_id}/agents...", 
+                       extra={"test_phase": "api_add_thread_agent"})
+            agent_data = {
+                "agentType": "test",
+                "workspace": "test",
+                "domain": "test"
+            }
+            async with session.post(
+                f"{API_BASE_URL}/chat/threads/{thread_id}/agents",
+                json=agent_data
+            ) as response:
+                assert response.status == 200, f"Expected 200, got {response.status}"
+                agent = await response.json()
+                logger.info("POST /api/chat/threads/{thread_id}/agents successful", 
+                          extra={"test_phase": "api_add_thread_agent", "test_result": True})
+                results.add_result("api_add_thread_agent", True, {
+                    "agent_id": agent["id"]
+                })
+            
+            # Test 5: Get thread agents
+            logger.info("Testing GET /api/chat/threads/{thread_id}/agents...", 
+                       extra={"test_phase": "api_get_thread_agents"})
+            async with session.get(
+                f"{API_BASE_URL}/chat/threads/{thread_id}/agents"
+            ) as response:
+                assert response.status == 200, f"Expected 200, got {response.status}"
+                agents = await response.json()
+                assert len(agents) > 0, "Expected at least one agent in thread"
+                logger.info("GET /api/chat/threads/{thread_id}/agents successful", 
+                          extra={"test_phase": "api_get_thread_agents", "test_result": True})
+                results.add_result("api_get_thread_agents", True, {
+                    "agents_count": len(agents)
+                })
+        
+        logger.info("All API tests passed successfully!", 
+                   extra={"test_phase": "api_tests", "test_result": True})
+        return True
+        
+    except AssertionError as e:
+        logger.error(f"API test failed: {str(e)}", 
+                    extra={"test_phase": "api_tests", "test_result": False})
+        results.add_result("api_tests", False, {
+            "error": str(e),
+            "type": "assertion_error"
+        })
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error in API tests: {str(e)}", 
+                    extra={"test_phase": "api_tests", "test_result": False})
+        results.add_result("api_tests", False, {
+            "error": str(e),
+            "traceback": str(traceback.format_exc())
+        })
+        return False
+
 async def run_tests():
     """Run all tests and save results."""
     logger.info("Starting test session...", extra={"test_phase": "session_start"})
@@ -467,6 +629,17 @@ async def run_tests():
             return
         logger.info("Agent storage tests completed successfully", 
                    extra={"test_phase": "agent_storage", "test_result": True})
+        
+        # Test agent APIs
+        logger.info("Starting agent API tests...", extra={"test_phase": "api_tests"})
+        api_success = await test_agent_api(results)
+        if not api_success:
+            logger.error("Agent API tests failed", 
+                        extra={"test_phase": "api_tests", "test_result": False})
+            results.save_results()
+            return
+        logger.info("Agent API tests completed successfully", 
+                   extra={"test_phase": "api_tests", "test_result": True})
             
         logger.info("All tests completed successfully", 
                    extra={"test_phase": "session_end", "test_result": True})
