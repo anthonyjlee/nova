@@ -1,0 +1,37 @@
+{
+  "session_id": "20250113_190205",
+  "summary": {
+    "total_tests": 4,
+    "passed": 3,
+    "failed": 1
+  },
+  "results": [
+    {
+      "test_name": "neo4j_check",
+      "success": true,
+      "timestamp": "2025-01-13T19:02:05.445567",
+      "details": {}
+    },
+    {
+      "test_name": "memory_check",
+      "success": true,
+      "timestamp": "2025-01-13T19:02:12.998776",
+      "details": {}
+    },
+    {
+      "test_name": "store_init",
+      "success": true,
+      "timestamp": "2025-01-13T19:02:13.021753",
+      "details": {}
+    },
+    {
+      "test_name": "agent_storage",
+      "success": false,
+      "timestamp": "2025-01-13T19:02:20.368157",
+      "details": {
+        "error": "Failed to verify thread storage: 46cb41de-6522-4edc-a0f2-40938911586f",
+        "traceback": "Traceback (most recent call last):\n  File \"/Users/alee5331/Documents/Projects/NIA/scripts/test_agent_storage.py\", line 320, in test_agent_storage\n    raise Exception(f\"Failed to verify thread storage: {memory_id}\")\nException: Failed to verify thread storage: 46cb41de-6522-4edc-a0f2-40938911586f\n"
+      }
+    }
+  ]
+}

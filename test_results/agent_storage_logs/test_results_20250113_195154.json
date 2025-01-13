@@ -1,0 +1,37 @@
+{
+  "session_id": "20250113_195138",
+  "summary": {
+    "total_tests": 4,
+    "passed": 3,
+    "failed": 1
+  },
+  "results": [
+    {
+      "test_name": "neo4j_check",
+      "success": true,
+      "timestamp": "2025-01-13T19:51:38.762979",
+      "details": {}
+    },
+    {
+      "test_name": "memory_check",
+      "success": true,
+      "timestamp": "2025-01-13T19:51:46.782872",
+      "details": {}
+    },
+    {
+      "test_name": "store_init",
+      "success": true,
+      "timestamp": "2025-01-13T19:51:46.798314",
+      "details": {}
+    },
+    {
+      "test_name": "agent_storage",
+      "success": false,
+      "timestamp": "2025-01-13T19:51:54.164524",
+      "details": {
+        "error": "Failed to retrieve memory with ID: 71b925c4-e810-468b-a2c8-4b7ffdd3b4f7",
+        "traceback": "Traceback (most recent call last):\n  File \"/Users/alee5331/Documents/Projects/NIA/scripts/test_agent_storage.py\", line 332, in test_agent_storage\n    raise Exception(f\"Failed to retrieve memory with ID: {memory_id}\")\nException: Failed to retrieve memory with ID: 71b925c4-e810-468b-a2c8-4b7ffdd3b4f7\n"
+      }
+    }
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "session_id": "20250113_195750",
+  "summary": {
+    "total_tests": 6,
+    "passed": 5,
+    "failed": 1
+  },
+  "results": [
+    {
+      "test_name": "neo4j_check",
+      "success": true,
+      "timestamp": "2025-01-13T19:57:58.386490",
+      "details": {}
+    },
+    {
+      "test_name": "qdrant_check",
+      "success": true,
+      "timestamp": "2025-01-13T19:58:05.607694",
+      "details": {}
+    },
+    {
+      "test_name": "vector_store_connect",
+      "success": true,
+      "timestamp": "2025-01-13T19:58:13.167609",
+      "details": {}
+    },
+    {
+      "test_name": "vector_store_add",
+      "success": true,
+      "timestamp": "2025-01-13T19:58:13.198590",
+      "details": {
+        "point_id": "60e268c2-206c-4add-b593-e0c5fa04acd5"
+      }
+    },
+    {
+      "test_name": "vector_store_search",
+      "success": true,
+      "timestamp": "2025-01-13T19:58:13.231521",
+      "details": {
+        "results_found": 0
+      }
+    },
+    {
+      "test_name": "thread_operations_test",
+      "success": false,
+      "timestamp": "2025-01-13T19:58:20.552890",
+      "details": {
+        "error": "'Memory' object has no attribute 'metadata'",
+        "traceback": "Traceback (most recent call last):\n  File \"/Users/alee5331/Documents/Projects/NIA/scripts/test_thread_storage.py\", line 253, in test_thread_operations\n    await memory_system.store_experience(memory)\n  File \"/Users/alee5331/Documents/Projects/NIA/src/nia/memory/two_layer.py\", line 458, in store_experience\n    print(f\"Experience metadata: {experience.metadata}\")\n                                  ^^^^^^^^^^^^^^^^^^^\n  File \"/Users/alee5331/Documents/Projects/NIA/.venv/lib/python3.12/site-packages/pydantic/main.py\", line 892, in __getattr__\n    raise AttributeError(f'{type(self).__name__!r} object has no attribute {item!r}')\nAttributeError: 'Memory' object has no attribute 'metadata'\n"
+      }
+    }
+  ]
+}

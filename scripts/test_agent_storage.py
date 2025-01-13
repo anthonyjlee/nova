@@ -278,10 +278,21 @@ async def test_agent_storage(results: TestResults):
         if existing:
             logger.warning(f"Thread {thread_id} already exists")
             
+        # Create test memory content
+        memory_content = {
+            "thread_id": thread_id,
+            "name": "Test Thread",
+            "type": "test",
+            "domain": "test",
+            "messages": [],
+            "participants": []
+        }
+        
         # Create thread with complete metadata per 0113 requirements
+        memory_id = str(uuid.uuid4())  # Generate unique memory ID
         thread_memory = Memory(
-            id=thread_id,
-            content=thread_data,  # Store complete thread data for episodic layer
+            id=memory_id,  # Use generated memory ID
+            content=json.dumps(memory_content),  # Serialize content to string
             type=MemoryType.EPISODIC,
             importance=0.8,
             timestamp=datetime.now().isoformat(),
@@ -292,7 +303,7 @@ async def test_agent_storage(results: TestResults):
                 "workspace": "test"  # Required workspace
             },
             metadata={
-                "thread_id": thread_id,
+                "thread_id": thread_id,  # Store thread ID in metadata
                 "type": "thread",  # Required type
                 "system": False,    # Required system flag
                 "pinned": False,    # Required pinned flag
@@ -301,16 +312,55 @@ async def test_agent_storage(results: TestResults):
             }
         )
         
-        # Store and verify in both layers
+        # Store memory
+        logger.info(f"Storing thread memory with ID: {memory_id}", 
+                   extra={"test_phase": "create_thread"})
+        logger.info(f"Thread memory content: {thread_memory.content}", 
+                   extra={"test_phase": "create_thread"})
+        logger.info(f"Thread memory metadata: {json.dumps(thread_memory.metadata, indent=2)}", 
+                   extra={"test_phase": "create_thread"})
+        
         await memory_system.store_experience(thread_memory)
         
-        # Verify storage success
-        stored = await memory_system.get_memory(thread_id)
-        if not stored:
-            raise Exception(f"Failed to verify thread storage: {thread_id}")
+        # Verify storage by retrieving the memory
+        logger.info(f"Verifying memory storage with ID: {memory_id}", 
+                   extra={"test_phase": "create_thread"})
+                   
+        # Verify using get_experience
+        retrieved_memory = await memory_system.get_experience(memory_id)
+        if retrieved_memory is None:
+            raise Exception(f"Failed to retrieve memory with ID: {memory_id}")
+            
+        # Log retrieved data for debugging
+        logger.info(f"Retrieved memory content: {retrieved_memory.content}", 
+                   extra={"test_phase": "create_thread"})
+        logger.info(f"Retrieved memory metadata: {json.dumps(retrieved_memory.metadata, indent=2)}", 
+                   extra={"test_phase": "create_thread"})
         
-        # Store thread memory
-        await memory_system.store_experience(thread_memory)
+        # Parse content to compare
+        try:
+            original_content = json.loads(thread_memory.content)
+            retrieved_content = json.loads(retrieved_memory.content)
+            
+            if original_content != retrieved_content:
+                raise Exception(
+                    f"Content mismatch - "
+                    f"Original: {json.dumps(original_content)}, "
+                    f"Retrieved: {json.dumps(retrieved_content)}"
+                )
+                
+            # Verify metadata matches
+            if retrieved_memory.metadata != thread_memory.metadata:
+                raise Exception(
+                    f"Metadata mismatch - "
+                    f"Original: {json.dumps(thread_memory.metadata)}, "
+                    f"Retrieved: {json.dumps(retrieved_memory.metadata)}"
+                )
+                
+            logger.info("Memory verification successful", 
+                       extra={"test_phase": "create_thread"})
+        except json.JSONDecodeError as e:
+            raise Exception(f"Failed to parse memory content: {str(e)}")
         logger.info("Test thread created", extra={"test_phase": "create_thread", "test_result": True})
         results.add_result("create_thread", True)
         

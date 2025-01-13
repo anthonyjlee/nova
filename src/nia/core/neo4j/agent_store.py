@@ -137,30 +137,48 @@ class AgentStore(Neo4jBaseStore):
 
                     # Store in episodic layer if memory system available
                     try:
+                        print("\n=== Storing in episodic layer ===")
                         from nia.memory.two_layer import TwoLayerMemorySystem
                         memory_system = TwoLayerMemorySystem()
+                        print("Initializing memory system...")
                         await memory_system.initialize()
+                        print("Memory system initialized")
                         
                         # Create memory object
+                        print("\nCreating memory object...")
+                        memory_id = f"agent_{agent_data['id']}"
+                        print(f"Memory ID: {memory_id}")
+                        
                         memory = {
-                            "id": f"agent_{agent_data['id']}",
-                            "content": agent_data,
+                            "id": memory_id,
+                            "content": json.dumps(agent_data),  # Serialize content to string
                             "type": "EPISODIC",
                             "importance": 0.8,
                             "context": {
                                 "domain": agent_data.get("domain", "general"),
                                 "source": "nova",
                                 "type": "agent",
-                                "thread_id": thread_id
+                                "thread_id": thread_id,
+                                "workspace": agent_data.get("workspace", "personal")  # Add required workspace
                             },
                             "metadata": {
                                 "type": "agent",
                                 "thread_id": thread_id,
-                                "consolidated": False
+                                "consolidated": False,
+                                "system": False,  # Add required system flag
+                                "pinned": False,  # Add required pinned flag
+                                "description": f"Agent {agent_data['name']}"  # Add required description
                             }
                         }
+                        print(f"\nMemory object created:")
+                        print(f"Content type: {type(memory['content'])}")
+                        print(f"Content: {json.dumps(memory['content'], indent=2)}")
+                        print(f"Context: {json.dumps(memory['context'], indent=2)}")
+                        print(f"Metadata: {json.dumps(memory['metadata'], indent=2)}")
                         
+                        print("\nStoring experience...")
                         await memory_system.store_experience(memory)
+                        print("Experience stored successfully")
                     except Exception as e:
                         logger.warning(f"Failed to store agent in episodic layer: {str(e)}")
                         # Continue since Neo4j storage succeeded

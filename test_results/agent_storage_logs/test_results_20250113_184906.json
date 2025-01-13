@@ -1,0 +1,37 @@
+{
+  "session_id": "20250113_184853",
+  "summary": {
+    "total_tests": 4,
+    "passed": 3,
+    "failed": 1
+  },
+  "results": [
+    {
+      "test_name": "neo4j_check",
+      "success": true,
+      "timestamp": "2025-01-13T18:48:53.128849",
+      "details": {}
+    },
+    {
+      "test_name": "memory_check",
+      "success": true,
+      "timestamp": "2025-01-13T18:49:00.243517",
+      "details": {}
+    },
+    {
+      "test_name": "store_init",
+      "success": true,
+      "timestamp": "2025-01-13T18:49:00.255284",
+      "details": {}
+    },
+    {
+      "test_name": "agent_storage",
+      "success": false,
+      "timestamp": "2025-01-13T18:49:06.900480",
+      "details": {
+        "error": "1 validation error for Memory\ncontent\n  Input should be a valid string [type=string_type, input_value={'id': 'a210ef57-6c38-42a...False, 'pinned': False}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.10/v/string_type",
+        "traceback": "Traceback (most recent call last):\n  File \"/Users/alee5331/Documents/Projects/NIA/scripts/test_agent_storage.py\", line 282, in test_agent_storage\n    thread_memory = Memory(\n                    ^^^^^^^\n  File \"/Users/alee5331/Documents/Projects/NIA/.venv/lib/python3.12/site-packages/pydantic/main.py\", line 214, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 1 validation error for Memory\ncontent\n  Input should be a valid string [type=string_type, input_value={'id': 'a210ef57-6c38-42a...False, 'pinned': False}}, input_type=dict]\n    For further information visit https://errors.pydantic.dev/2.10/v/string_type\n"
+      }
+    }
+  ]
+}

@@ -106,6 +106,12 @@ class EpisodicLayer:
     async def store_memory(self, memory: Memory) -> str:
         """Store a new episodic memory."""
         try:
+            print("\n=== Entering store_memory ===")
+            print(f"Memory type: {memory.type}")
+            print(f"Memory content type: {type(memory.content)}")
+            print(f"Memory content: {memory.content}")
+            print(f"Memory context: {memory.context}")
+            
             logger.debug(f"Storing memory with type: {memory.type}")
             
             # Validate memory
@@ -116,7 +122,37 @@ class EpisodicLayer:
             # Create embedding and store with detailed logging
             logger.info("Converting memory to dict...")
             memory_dict = memory.dict()
-            logger.info(f"Memory content: {json.dumps(memory_dict.get('content'), indent=2) if isinstance(memory_dict.get('content'), (dict, str)) else str(memory_dict.get('content'))}")
+            print(f"\nMemory dict before processing: {json.dumps(memory_dict, indent=2)}")
+            logger.info(f"Initial memory dict: {json.dumps(memory_dict, indent=2)}")
+            
+            # Content handling with detailed logging
+            logger.info(f"Initial content type: {type(memory_dict['content'])}")
+            logger.info(f"Initial content: {memory_dict['content']}")
+            
+            # Content handling with detailed logging
+            logger.info(f"Initial content type: {type(memory_dict['content'])}")
+            logger.info(f"Initial content: {memory_dict['content']}")
+            
+            # Ensure content is a string, but don't double-stringify JSON
+            if isinstance(memory_dict["content"], str):
+                logger.info("Content is already a string")
+                try:
+                    # Try parsing to validate JSON if it's a string
+                    json.loads(memory_dict["content"])
+                    logger.info("Content is valid JSON string")
+                except json.JSONDecodeError:
+                    logger.info("Content is plain string, not JSON")
+            elif isinstance(memory_dict["content"], (dict, list)):
+                logger.info("Converting dict/list content to JSON string")
+                memory_dict["content"] = json.dumps(memory_dict["content"])
+                logger.info(f"Stringified content: {memory_dict['content']}")
+            else:
+                logger.warning(f"Unexpected content type: {type(memory_dict['content'])}")
+                memory_dict["content"] = str(memory_dict["content"])
+                logger.info(f"Converted to string: {memory_dict['content']}")
+            
+            logger.info(f"Final content type: {type(memory_dict['content'])}")
+            logger.info(f"Final content: {memory_dict['content']}")
             logger.info(f"Memory metadata: {json.dumps(memory_dict.get('metadata'), indent=2)}")
             logger.info(f"Memory context: {json.dumps(memory_dict.get('context'), indent=2)}")
             
@@ -178,39 +214,40 @@ class EpisodicLayer:
             
             # Store with original content and set layer based on memory type
             logger.debug(f"Storing vector in layer: {memory_dict['type'].lower()}")
-            logger.debug(f"Storing with metadata: {json.dumps(metadata, indent=2)}")
             
             # Handle content for embedding based on type
+            print("\n=== Processing content for embedding ===")
             if isinstance(memory_dict.get('content'), str):
                 content_str = memory_dict['content']
+                print(f"Using string content directly: {content_str}")
             elif isinstance(memory_dict.get('content'), dict):
                 # If content has text field, use that
                 if 'text' in memory_dict['content']:
                     content_str = memory_dict['content']['text']
+                    print(f"Using text field from dict: {content_str}")
                 # Otherwise use the raw dict
                 else:
                     content_str = str(memory_dict['content'])
+                    print(f"Converting dict to string: {content_str}")
             else:
                 content_str = str(memory_dict.get('content', ''))
+                print(f"Converting to string: {content_str}")
             
             # Create embedding from processed content
             vector = await self.store.embedding_service.create_embedding(content_str)
-            
-            # Prepare payload with content and metadata
-            payload = {
-                "content": memory_dict,
-                **{f"metadata_{k}": v for k, v in metadata.items()}
-            }
-            
-            # Generate a unique point ID for vector store
-            point_id = str(uuid.uuid4())
-            logger.info(f"Generated vector store point ID: {point_id}")
             
             # Use memory ID as point ID for vector store
             memory_id = memory_dict.get("id")
             if not memory_id:
                 memory_id = str(uuid.uuid4())
                 memory_dict["id"] = memory_id
+            
+            # Prepare payload with content and metadata
+            payload = {
+                "id": memory_id,  # Store ID at top level
+                "content": memory_dict.get('content'),  # Store just the content, not the whole memory_dict
+                **{f"metadata_{k}": v for k, v in metadata.items()}
+            }
             
             # Store with vector embedding using memory ID as point ID
             await self.store.store_vector(
@@ -287,8 +324,7 @@ class EpisodicLayer:
                     {"consolidated": True}
                 )
                 # Then delete the memory
-                if hasattr(self.store, 'delete_vectors'):
-                    await self.store.delete_vectors([memory_id])
+                await self.store.delete_vectors([memory_id])
                 if memory_id in self.pending_consolidation:
                     self.pending_consolidation.remove(memory_id)
         except Exception as e:
@@ -414,17 +450,43 @@ class TwoLayerMemorySystem:
     async def store_experience(self, experience: Memory) -> str:
         """Store new experience in episodic memory."""
         try:
+            print("\n=== Entering store_experience ===")
+            # Convert Memory object to dict first
+            memory_dict = experience.dict()
+            
+            print(f"Experience type: {experience.type}")
+            print(f"Experience content type: {type(experience.content)}")
+            print(f"Experience content: {experience.content}")
+            print(f"Experience context: {experience.context}")
+            
             logger.info("Starting store_experience")
             logger.info(f"Experience type: {experience.type}")
             logger.info(f"Experience content: {json.dumps(experience.content, indent=2) if isinstance(experience.content, (dict, str)) else str(experience.content)}")
-            memory_dict = experience.dict()
-            logger.info(f"Experience metadata: {json.dumps(memory_dict.get('metadata'), indent=2) if memory_dict.get('metadata') else None}")
             logger.info(f"Experience context: {json.dumps(experience.context, indent=2) if experience.context else None}")
             
             # Store in episodic memory first
             logger.info("Storing in episodic memory")
+            # Convert Memory object to dict and extract just the content
+            memory_dict = experience.dict()
+            print(f"\nMemory dict before content processing: {memory_dict}")
+            
+            # Ensure content is stored as a string
+            if isinstance(memory_dict["content"], dict):
+                print(f"Converting dict content to JSON string: {memory_dict['content']}")
+                memory_dict["content"] = json.dumps(memory_dict["content"])
+            experience.content = memory_dict["content"]  # Update the Memory object with stringified content
+            print(f"Experience content after processing: {experience.content}")
+            
             memory_id = await self.episodic.store_memory(experience)
+            print(f"Stored in episodic memory with ID: {memory_id}")
             logger.info(f"Stored in episodic memory with ID: {memory_id}")
+            
+            # Add debug logging
+            logger.info(f"Attempting to verify storage with ID: {memory_id}")
+            stored = await self.get_memory(memory_id)
+            logger.info(f"Verification result: {stored is not None}")
+            if stored:
+                logger.info(f"Retrieved content: {stored.content}")
             
             # Check for consolidation if manager exists
             if self.consolidation_manager and await self.consolidation_manager.should_consolidate():
@@ -538,29 +600,103 @@ class TwoLayerMemorySystem:
         
     async def get_memory(self, memory_id: str) -> Optional[Memory]:
         """Get a memory by its ID."""
+        return await self.get_experience(memory_id)
+            
+    async def get_experience(self, memory_id: str) -> Optional[Memory]:
+        """Get an experience by its ID."""
         try:
-            # Search for memory in episodic store
-            # Convert memory_id to content for searching
-            results = await self.episodic.store.search_vectors(
-                content={"id": memory_id},
-                limit=1,
-                score_threshold=0.99  # High threshold for exact match
-            )
-            if results and len(results) > 0:
-                # Convert first result to Memory object
-                memory_data = results[0]
+            # Search for memory in episodic store using ID
+            try:
+                filter_conditions = [
+                    models.FieldCondition(
+                        key="metadata_id",
+                        match=models.MatchValue(value=memory_id)
+                    )
+                ]
                 
-                # Ensure content is properly formatted
-                content = memory_data.get("content", {})
-                if isinstance(content, dict):
-                    content = content.get("text", "")
-                elif isinstance(content, str):
-                    content = content
-                else:
-                    content = str(content)
+                # Log the search attempt
+                logger.info(f"Searching for memory with ID: {memory_id}")
+                
+                results = await self.episodic.store.search_vectors(
+                    content={},  # Empty content since we're filtering by metadata
+                    filter_conditions=filter_conditions,
+                    limit=1,
+                    score_threshold=0.0,  # No threshold for exact metadata match
+                    collection_name="memories"
+                )
+                
+                # Log search results
+                logger.info(f"Search results: {results}")
+                
+                if not results:
+                    logger.info(f"No results found for memory ID: {memory_id}")
+                    return None
                     
-                memory_data["content"] = content
-                return Memory(**memory_data)
+            except Exception as e:
+                logger.error(f"Error searching for memory: {str(e)}")
+                return None
+            if results and len(results) > 0:
+                try:
+                    # Convert first result to Memory object
+                    memory_data = results[0]
+                    
+                    # Get content from the payload and ensure it's a string
+                    content = memory_data.get("content", "")
+                    if not isinstance(content, str):
+                        content = json.dumps(content)
+                    
+                    # Get memory type, handling both enum and string formats
+                    memory_type_str = memory_data.get("metadata_type", "episodic")
+                    if isinstance(memory_type_str, str):
+                        # Remove any MemoryType. prefix and convert to uppercase for enum
+                        memory_type_str = memory_type_str.replace("MemoryType.", "").upper()
+                        try:
+                            memory_type = MemoryType[memory_type_str]
+                        except KeyError:
+                            # Default to EPISODIC if invalid type
+                            logger.warning(f"Invalid memory type: {memory_type_str}, defaulting to EPISODIC")
+                            memory_type = MemoryType.EPISODIC
+                    else:
+                        memory_type = MemoryType.EPISODIC
+                    
+                    # Create Memory object with proper metadata
+                    memory_dict = {
+                        "id": memory_id,
+                        "content": content,
+                        "type": memory_type,
+                        "importance": float(memory_data.get("metadata_importance", 0.5)),
+                        "timestamp": memory_data.get("metadata_timestamp", datetime.now().isoformat()),
+                        "context": {
+                            "domain": memory_data.get("metadata_domain", "general"),
+                            "source": memory_data.get("metadata_source", "system"),
+                            "type": memory_data.get("metadata_type", "memory"),
+                            "workspace": memory_data.get("metadata_workspace", "personal")
+                        },
+                        "metadata": {
+                            "thread_id": memory_data.get("metadata_thread_id"),
+                            "type": memory_data.get("metadata_type", "memory"),
+                            "system": bool(memory_data.get("metadata_system", False)),
+                            "pinned": bool(memory_data.get("metadata_pinned", False)),
+                            "description": str(memory_data.get("metadata_description", "")),
+                            "consolidated": bool(memory_data.get("metadata_consolidated", False))
+                        }
+                    }
+                    
+                    # Log the memory dict for debugging
+                    logger.info(f"Creating Memory object with dict: {json.dumps(memory_dict, indent=2)}")
+                    
+                    # Create Memory object from dict
+                    memory = Memory(**memory_dict)
+                    
+                    # Log the reconstructed memory for debugging
+                    logger.info(f"Retrieved memory ID: {memory_id}")
+                    logger.info(f"Retrieved memory content: {memory.content}")
+                    logger.info(f"Retrieved memory metadata: {json.dumps(memory.metadata, indent=2)}")
+                    logger.info(f"Retrieved memory context: {json.dumps(memory.context, indent=2)}")
+                    return memory
+                except Exception as e:
+                    logger.error(f"Failed to reconstruct memory: {str(e)}")
+                    return None
             return None
         except Exception as e:
             logger.error(f"Failed to get memory {memory_id}: {str(e)}")

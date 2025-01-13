@@ -15,7 +15,6 @@ from .error_handling import ResourceNotFoundError, ServiceError
 from qdrant_client.http import models
 
 import os
-from datetime import datetime
 
 # Configure logging with consistent format
 logger = logging.getLogger(__name__)
