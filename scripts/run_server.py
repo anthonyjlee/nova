@@ -6,6 +6,7 @@ import json
 import uvicorn
 import logging
 import asyncio
+import aiohttp
 import subprocess
 import traceback
 from pathlib import Path
@@ -131,28 +132,24 @@ async def wait_for_qdrant(max_retries: int = 30, retry_interval: int = 1):
     """Wait for Qdrant to be ready."""
     retry_count = 0
     
-    while retry_count < max_retries:
-        try:
-            # Check Qdrant container status
-            result = subprocess.run(
-                ["docker", "inspect", "-f", "{{.State.Health.Status}}", "docker-qdrant-1"],
-                capture_output=True,
-                text=True
-            )
+    async with aiohttp.ClientSession() as session:
+        while retry_count < max_retries:
+            try:
+                # Check Qdrant health via HTTP
+                async with session.get('http://localhost:6333/healthz') as response:
+                    if response.status == 200:
+                        logger.info("Qdrant is ready!", extra={"service": "qdrant", "status": "healthy"})
+                        return
+                    
+                logger.debug("Waiting for Qdrant to be ready...", extra={"service": "qdrant", "status": "waiting"})
+                
+            except Exception as e:
+                logger.warning(f"Error checking Qdrant status: {str(e)}", 
+                             extra={"service": "qdrant", "status": "error"})
+                
+            retry_count += 1
+            await asyncio.sleep(retry_interval)
             
-            if result.stdout.strip() == "healthy":
-                logger.info("Qdrant is ready!", extra={"service": "qdrant", "status": "healthy"})
-                return
-            
-            logger.debug("Waiting for Qdrant to be ready...", extra={"service": "qdrant", "status": "waiting"})
-            
-        except Exception as e:
-            logger.warning(f"Error checking Qdrant status: {str(e)}", 
-                         extra={"service": "qdrant", "status": "error"})
-            
-        retry_count += 1
-        await asyncio.sleep(retry_interval)
-        
     raise RuntimeError("Qdrant failed to become ready in time")
 
 async def main():
