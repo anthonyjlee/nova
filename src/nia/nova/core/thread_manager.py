@@ -8,6 +8,7 @@ import uuid
 import json
 import logging
 import traceback
+from logging.handlers import RotatingFileHandler
 
 from nia.core.types.memory_types import Memory, MemoryType, EpisodicMemory
 from nia.memory.two_layer import TwoLayerMemorySystem
@@ -19,6 +20,8 @@ import os
 # Configure logging with consistent format
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+# Prevent propagation to root logger
+logger.propagate = False
 
 # Create logs directory if it doesn't exist
 LOGS_DIR = Path("logs/thread_manager")
@@ -28,18 +31,17 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 session_log = LOGS_DIR / f"session_{session_id}.json"
 
-class JsonLogHandler:
-    def __init__(self, log_file):
-        self.log_file = log_file
-        self.logs = []
-        
-    def emit(self, record):
+class JsonFormatter(logging.Formatter):
+    """Format log records as JSON."""
+    def format(self, record):
         log_entry = {
             "timestamp": datetime.fromtimestamp(record.created).isoformat(),
             "level": record.levelname,
             "message": record.getMessage(),
             "function": record.funcName,
-            "line": record.lineno
+            "line": record.lineno,
+            "thread_id": record.thread,
+            "process_id": record.process
         }
         
         # Add exception info if present
@@ -50,19 +52,17 @@ class JsonLogHandler:
                 "traceback": traceback.format_exception(*record.exc_info)
             }
             
-        self.logs.append(log_entry)
-        self._save_logs()
-        
-    def _save_logs(self):
-        with open(self.log_file, 'w') as f:
-            json.dump({
-                "session_id": session_id,
-                "logs": self.logs
-            }, f, indent=2)
+        return json.dumps(log_entry)
 
-# Add JSON handler
-json_handler = JsonLogHandler(session_log)
-logger.addHandler(json_handler)
+# Configure logging with RotatingFileHandler
+handler = RotatingFileHandler(
+    session_log,
+    maxBytes=10*1024*1024,  # 10MB
+    backupCount=5,
+    encoding='utf-8'
+)
+handler.setFormatter(JsonFormatter())
+logger.addHandler(handler)
 
 class ThreadManager:
     """Manages thread lifecycle and operations."""
@@ -70,9 +70,24 @@ class ThreadManager:
     def __init__(self, memory_system: TwoLayerMemorySystem):
         self.memory_system = memory_system
 
+    # System thread UUIDs
+    NOVA_TEAM_UUID = "00000000-0000-4000-a000-000000000001"
+    NOVA_UUID = "00000000-0000-4000-a000-000000000002"
+    
     async def get_thread(self, thread_id: str, max_retries: int = 3, retry_delay: float = 0.5) -> Dict[str, Any]:
         """Get a thread by ID, creating system threads if needed."""
         logger.debug(f"Getting thread {thread_id}")
+        
+        # Map legacy IDs to UUIDs
+        id_mapping = {
+            "nova-team": self.NOVA_TEAM_UUID,
+            "nova": self.NOVA_UUID
+        }
+        
+        # Convert legacy IDs to UUIDs
+        if thread_id in id_mapping:
+            thread_id = id_mapping[thread_id]
+            
         for attempt in range(max_retries):
             try:
                 # Check episodic layer first
@@ -109,7 +124,7 @@ class ThreadManager:
                     return result[0]["content"]
 
                 # Handle system threads
-                if thread_id in ["nova-team", "nova"]:
+                if thread_id in [self.NOVA_TEAM_UUID, self.NOVA_UUID]:
                     logger.debug(f"Creating system thread {thread_id}")
                     return await self._create_system_thread(thread_id)
 
@@ -151,7 +166,7 @@ class ThreadManager:
         # Define core agents for nova-team
         core_agents = [
             {
-                "id": "nova-orchestrator",
+                "id": str(uuid.uuid4()),
                 "name": "Nova Orchestrator",
                 "type": "orchestrator",
                 "workspace": "system",
@@ -162,7 +177,7 @@ class ThreadManager:
                 "metadata_created_at": now
             },
             {
-                "id": "belief-agent",
+                "id": str(uuid.uuid4()),
                 "name": "Belief Agent",
                 "type": "belief",
                 "workspace": "system",
@@ -173,7 +188,7 @@ class ThreadManager:
                 "metadata_created_at": now
             },
             {
-                "id": "desire-agent",
+                "id": str(uuid.uuid4()),
                 "name": "Desire Agent",
                 "type": "desire",
                 "workspace": "system",
@@ -187,18 +202,18 @@ class ThreadManager:
 
         thread = {
             "id": thread_id,
-            "name": "Nova Team" if thread_id == "nova-team" else "Nova",
+            "name": "Nova Team" if thread_id == self.NOVA_TEAM_UUID else "Nova",
             "domain": "general",
             "messages": [],
             "createdAt": now,
             "updatedAt": now,
             "workspace": "system",  # Changed to system workspace
-            "participants": core_agents if thread_id == "nova-team" else [],
+            "participants": core_agents if thread_id == self.NOVA_TEAM_UUID else [],
             "metadata": {
                 "type": "agent-team",
                 "system": True,
                 "pinned": True,
-                "description": "This is where NOVA and core agents collaborate." if thread_id == "nova-team" else "Primary Nova thread"
+                "description": "This is where NOVA and core agents collaborate." if thread_id == self.NOVA_TEAM_UUID else "Primary Nova thread"
             }
         }
 
@@ -484,6 +499,15 @@ class ThreadManager:
         
         # Add additional filters if provided
         if filter_params:
+            # Map legacy IDs to UUIDs in filter params
+            if "thread_id" in filter_params:
+                id_mapping = {
+                    "nova-team": self.NOVA_TEAM_UUID,
+                    "nova": self.NOVA_UUID
+                }
+                if filter_params["thread_id"] in id_mapping:
+                    filter_params["thread_id"] = id_mapping[filter_params["thread_id"]]
+                    
             for key, value in filter_params.items():
                 filter_dict["must"].append({
                     "key": f"metadata_{key}",
@@ -562,11 +586,17 @@ class ThreadManager:
     async def get_thread_agents(self, thread_id: str) -> List[Dict[str, Any]]:
         """Get all agents in a thread."""
         try:
-            # Create system threads if they don't exist
-            if thread_id in ["nova-team", "nova"]:
-                thread = await self._create_system_thread(thread_id)
-            else:
-                thread = await self.get_thread(thread_id)
+            # Map legacy IDs to UUIDs
+            id_mapping = {
+                "nova-team": self.NOVA_TEAM_UUID,
+                "nova": self.NOVA_UUID
+            }
+            
+            # Convert legacy IDs to UUIDs
+            if thread_id in id_mapping:
+                thread_id = id_mapping[thread_id]
+                
+            thread = await self.get_thread(thread_id)
                 
             return [
                 p for p in thread.get("participants", [])
