@@ -176,9 +176,17 @@ async def main():
         
         # Configure uvicorn logging
         log_config = uvicorn.config.LOGGING_CONFIG
-        log_config["formatters"]["access"]["fmt"] = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        log_config["handlers"]["access"]["filename"] = str(log_file)
-        log_config["handlers"]["access"]["formatter"] = "access"
+        log_config["formatters"]["default"]["fmt"] = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+        log_config["handlers"]["default"] = {
+            "formatter": "default",
+            "class": "logging.FileHandler",
+            "filename": str(log_file)
+        }
+        log_config["handlers"]["access"] = {
+            "formatter": "access",
+            "class": "logging.FileHandler",
+            "filename": str(log_file)
+        }
         
         # Run server
         logger.info("Starting uvicorn server...", extra={"service": "fastapi", "status": "starting"})
