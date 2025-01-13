@@ -175,7 +175,7 @@ async def main():
         logger.debug(f"Reload: {reload}")
         
         # Configure uvicorn logging
-        log_config = uvicorn.config.LOGGING_CONFIG
+        log_config = uvicorn.config.LOGGING_CONFIG.copy()
         log_config["formatters"]["default"]["fmt"] = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         log_config["handlers"]["default"] = {
             "formatter": "default",
