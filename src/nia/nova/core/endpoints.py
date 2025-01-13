@@ -351,12 +351,11 @@ async def chat_options_handler(request: Request):
 @chat_router.get("/threads", response_model=ThreadListResponse)
 async def list_threads(
     _: None = Depends(get_permission("read")),
-    thread_manager: Any = Depends(get_thread_manager),
-    filter_params: Optional[Dict[str, Any]] = None
+    thread_manager: Any = Depends(get_thread_manager)
 ) -> ThreadListResponse:
     """List all chat threads with optional filtering."""
     try:
-        threads = await thread_manager.list_threads(filter_params)
+        threads = await thread_manager.list_threads(None)
         response = ThreadListResponse(
             threads=[ThreadResponse(**thread) for thread in threads],
             total=len(threads),
@@ -384,6 +383,48 @@ async def list_available_agents(
 ) -> List[Dict[str, Any]]:
     """List all available agents."""
     try:
+        # Create core agents if they don't exist
+        core_agents = [
+            {
+                "id": "nova-orchestrator",
+                "name": "Nova Orchestrator",
+                "type": "orchestrator",
+                "workspace": "system",
+                "domain": "general",
+                "status": "active",
+                "metadata_type": "agent",
+                "metadata_capabilities": ["orchestration"],
+                "metadata_created_at": datetime.now().isoformat()
+            },
+            {
+                "id": "belief-agent",
+                "name": "Belief Agent", 
+                "type": "belief",
+                "workspace": "system",
+                "domain": "general",
+                "status": "active",
+                "metadata_type": "agent",
+                "metadata_capabilities": ["belief_management"],
+                "metadata_created_at": datetime.now().isoformat()
+            },
+            {
+                "id": "desire-agent",
+                "name": "Desire Agent",
+                "type": "desire", 
+                "workspace": "system",
+                "domain": "general",
+                "status": "active",
+                "metadata_type": "agent",
+                "metadata_capabilities": ["desire_management"],
+                "metadata_created_at": datetime.now().isoformat()
+            }
+        ]
+        
+        # Store core agents
+        for agent in core_agents:
+            await agent_store.store_agent(agent)
+            
+        # Get all agents including core agents
         agents = await agent_store.get_all_agents()
         return [
             {
@@ -400,6 +441,8 @@ async def list_available_agents(
             for agent in agents
         ]
     except Exception as e:
+        logger.error(f"Error listing agents: {str(e)}")
+        logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=str(e))
 
 @chat_router.get("/threads/{thread_id}/agents", response_model=List[Dict[str, Any]])
@@ -453,7 +496,11 @@ async def get_thread_messages(
 ) -> List[Dict[str, Any]]:
     """Get messages from a thread."""
     try:
-        thread = await thread_manager.get_thread(thread_id)
+        # Create system threads if they don't exist
+        if thread_id in ["nova-team", "nova"]:
+            thread = await thread_manager._create_system_thread(thread_id)
+        else:
+            thread = await thread_manager.get_thread(thread_id)
         return thread.get("messages", [])
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -471,7 +518,11 @@ async def get_thread(
 ) -> ThreadResponse:
     """Get a specific thread."""
     try:
-        thread = await thread_manager.get_thread(thread_id)
+        # Create system threads if they don't exist
+        if thread_id in ["nova-team", "nova"]:
+            thread = await thread_manager._create_system_thread(thread_id)
+        else:
+            thread = await thread_manager.get_thread(thread_id)
         return ThreadResponse(**thread)
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))

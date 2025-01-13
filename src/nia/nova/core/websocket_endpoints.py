@@ -75,13 +75,13 @@ async def websocket_endpoint(
 ):
     """WebSocket endpoint for real-time updates."""
     try:
-        # Accept connection first
-        await websocket.accept()
-
-        # Validate API key
+        # Validate API key first
         if not validate_api_key(api_key):
             await websocket.close(code=4000, reason="Invalid API key")
             return
+
+        # Accept connection after validation
+        await websocket.accept()
 
         # Ensure server is initialized
         server = get_websocket_server()

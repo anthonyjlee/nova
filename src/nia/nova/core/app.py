@@ -1,6 +1,7 @@
 """FastAPI application configuration."""
 
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, APIRouter, Request, HTTPException
+from .auth import validate_api_key
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from datetime import datetime
@@ -37,13 +38,13 @@ sys.excepthook = log_exception
 
 from .endpoints import (
     root_router,
-    graph_router,
     agent_router,
     user_router,
     analytics_router,
     orchestration_router,
     chat_router
 )
+from .graph_endpoints import graph_router
 from .knowledge_endpoints import kg_router
 from .nova_endpoints import nova_router
 from .tasks_endpoints import tasks_router
@@ -126,8 +127,8 @@ app.add_middleware(
     allow_origins=["http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"],
-    expose_headers=["*", "Content-Type", "Authorization"],
+    allow_headers=["*", "X-API-Key"],
+    expose_headers=["*", "Content-Type", "Authorization", "X-API-Key"],
     max_age=3600,
 )
 
@@ -153,14 +154,20 @@ async def status_options():
         headers={
             "Access-Control-Allow-Origin": "http://localhost:5173",
             "Access-Control-Allow-Methods": "*",
-            "Access-Control-Allow-Headers": "*",
+            "Access-Control-Allow-Headers": "*,X-API-Key",
             "Access-Control-Allow-Credentials": "true",
         }
     )
 
 @app.get("/api/status")
-async def get_status():
+async def get_status(request: Request):
     """Get server status."""
+    api_key = request.headers.get("X-API-Key")
+    if not api_key or not validate_api_key(api_key):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing API key"
+        )
     return JSONResponse(
         content={
             "status": "running",
@@ -286,7 +293,7 @@ async def startup_event():
                 max_retries = 10
                 while retry_count < max_retries:
                     try:
-                        uri = "bolt://neo4j:7687"  # Use Docker service name
+                        uri = "bolt://localhost:7687"  # Use localhost instead of service name
                         driver = GraphDatabase.driver(uri, auth=("neo4j", "password"))
                         driver.verify_connectivity()
                         logger.debug("Neo4j connection verified")

@@ -148,6 +148,44 @@ class ThreadManager:
     async def _create_system_thread(self, thread_id: str) -> Dict[str, Any]:
         """Create a system thread."""
         now = datetime.now().isoformat()
+        
+        # Define core agents for nova-team
+        core_agents = [
+            {
+                "id": "nova-orchestrator",
+                "name": "Nova Orchestrator",
+                "type": "orchestrator",
+                "workspace": "system",
+                "domain": "general",
+                "status": "active",
+                "metadata_type": "agent",
+                "metadata_capabilities": ["orchestration"],
+                "metadata_created_at": now
+            },
+            {
+                "id": "belief-agent",
+                "name": "Belief Agent",
+                "type": "belief",
+                "workspace": "system",
+                "domain": "general",
+                "status": "active",
+                "metadata_type": "agent",
+                "metadata_capabilities": ["belief_management"],
+                "metadata_created_at": now
+            },
+            {
+                "id": "desire-agent",
+                "name": "Desire Agent",
+                "type": "desire",
+                "workspace": "system",
+                "domain": "general",
+                "status": "active",
+                "metadata_type": "agent",
+                "metadata_capabilities": ["desire_management"],
+                "metadata_created_at": now
+            }
+        ]
+
         thread = {
             "id": thread_id,
             "name": "Nova Team" if thread_id == "nova-team" else "Nova",
@@ -155,8 +193,8 @@ class ThreadManager:
             "messages": [],
             "createdAt": now,
             "updatedAt": now,
-            "workspace": "personal",
-            "participants": [],
+            "workspace": "system",  # Changed to system workspace
+            "participants": core_agents if thread_id == "nova-team" else [],
             "metadata": {
                 "type": "agent-team",
                 "system": True,
@@ -524,11 +562,20 @@ class ThreadManager:
 
     async def get_thread_agents(self, thread_id: str) -> List[Dict[str, Any]]:
         """Get all agents in a thread."""
-        thread = await self.get_thread(thread_id)
-        return [
-            p for p in thread.get("participants", [])
-            if p.get("type") == "agent"
-        ]
+        try:
+            # Create system threads if they don't exist
+            if thread_id in ["nova-team", "nova"]:
+                thread = await self._create_system_thread(thread_id)
+            else:
+                thread = await self.get_thread(thread_id)
+                
+            return [
+                p for p in thread.get("participants", [])
+                if p.get("type") in ["agent", "orchestrator", "belief", "desire"]
+            ]
+        except Exception as e:
+            logger.error(f"Error getting thread agents: {str(e)}")
+            raise
 
     async def _update_existing_thread(self, thread: Dict[str, Any]) -> None:
         """Update an existing thread without verification."""
