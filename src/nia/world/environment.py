@@ -62,7 +62,7 @@ class NIAWorld(TinyWorld):
         """Execute an agent action."""
         # Log action
         if self.memory:
-            await self.memory.store_experience(
+            await self.memory.episodic.store_memory(
                 EpisodicMemory(
                     content={
                         "action": action,
@@ -153,7 +153,7 @@ class NIAWorld(TinyWorld):
         self.state["tasks_paused"] = True
         
         if self.memory:
-            await self.memory.store_experience(
+            await self.memory.episodic.store_memory(
                 EpisodicMemory(
                     content="Tasks paused",
                     source="world",
@@ -170,7 +170,7 @@ class NIAWorld(TinyWorld):
         self.state["tasks_paused"] = False
         
         if self.memory:
-            await self.memory.store_experience(
+            await self.memory.episodic.store_memory(
                 EpisodicMemory(
                     content="Tasks resumed",
                     source="world",
@@ -213,7 +213,7 @@ class NIAWorld(TinyWorld):
     async def cleanup(self):
         """Clean up world resources."""
         if self.memory:
-            await self.memory.store_experience(
+            await self.memory.episodic.store_memory(
                 EpisodicMemory(
                     content="World cleanup",
                     source="world",

@@ -406,9 +406,9 @@ class ThreadManager:
                 memory = EpisodicMemory(**memory_data)
                 logger.info(f"Created memory object with ID: {memory.id}")
                 
-                # Store memory
+                # Store memory directly in episodic layer
                 logger.info("Storing memory in episodic layer")
-                store_result = await self.memory_system.store_experience(memory)
+                store_result = await self.memory_system.episodic.store_memory(memory)
                 logger.info(f"Store result: {json.dumps(store_result, indent=2) if store_result else None}")
                 logger.debug("Successfully stored in episodic layer")
 
@@ -659,7 +659,7 @@ class ThreadManager:
             }
             
             memory = EpisodicMemory(**memory_data)
-            await self.memory_system.store_experience(memory)
+            await self.memory_system.episodic.store_memory(memory)
             logger.info(f"Successfully updated thread {thread['id']}")
             
         except Exception as e:

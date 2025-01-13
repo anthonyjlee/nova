@@ -48,7 +48,7 @@ class BaseAgent:
                 concepts=concepts or [],
                 relationships=relationships or []
             )
-            return await self.memory_system.store_experience(memory)
+            return await self.memory_system.episodic.store_memory(memory)
         return ""
         
     async def recall_memories(

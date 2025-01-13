@@ -1,0 +1,68 @@
+{
+  "session_id": "20250113_220033",
+  "summary": {
+    "total_tests": 9,
+    "passed": 9,
+    "failed": 0
+  },
+  "results": [
+    {
+      "test_name": "neo4j_check",
+      "success": true,
+      "timestamp": "2025-01-13T22:00:41.242146",
+      "details": {}
+    },
+    {
+      "test_name": "qdrant_check",
+      "success": true,
+      "timestamp": "2025-01-13T22:00:48.427847",
+      "details": {}
+    },
+    {
+      "test_name": "vector_store_connect",
+      "success": true,
+      "timestamp": "2025-01-13T22:00:55.687614",
+      "details": {}
+    },
+    {
+      "test_name": "vector_store_add",
+      "success": true,
+      "timestamp": "2025-01-13T22:00:55.740402",
+      "details": {
+        "point_id": "ace94108-69ec-4da6-8b61-b7b847209fc4"
+      }
+    },
+    {
+      "test_name": "vector_store_search",
+      "success": true,
+      "timestamp": "2025-01-13T22:00:55.758101",
+      "details": {
+        "results_found": 0
+      }
+    },
+    {
+      "test_name": "system_thread_create",
+      "success": true,
+      "timestamp": "2025-01-13T22:01:03.254362",
+      "details": {}
+    },
+    {
+      "test_name": "agent_thread_create",
+      "success": true,
+      "timestamp": "2025-01-13T22:01:03.307672",
+      "details": {}
+    },
+    {
+      "test_name": "invalid_thread",
+      "success": true,
+      "timestamp": "2025-01-13T22:01:03.357595",
+      "details": {}
+    },
+    {
+      "test_name": "thread_delete",
+      "success": true,
+      "timestamp": "2025-01-13T22:01:03.359233",
+      "details": {}
+    }
+  ]
+}

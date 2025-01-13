@@ -15,6 +15,7 @@ class ServiceManager:
     def __init__(self):
         """Initialize service manager."""
         self.docker_compose_file = "scripts/docker/docker-compose.yml"
+        self.debug = False  # Control debug output
         self.services = {
             "neo4j": {
                 "port": 7687,
@@ -373,29 +374,58 @@ finance_memory_threshold = 0.7
         except Exception as e:
             print(f"Warning: Error stopping Celery worker: {e}")
 
+    def cleanup_data(self):
+        """Clean up all data stores."""
+        print("\n🧹 Cleaning up data stores...")
+        
+        # Stop all services first
+        self.stop_services()
+        
+        try:
+            # Clear Redis data
+            print("Clearing Redis data...")
+            subprocess.run(
+                ["docker", "compose", "-f", self.docker_compose_file, "run", "redis", "redis-cli", "FLUSHALL"],
+                check=True
+            )
+            
+            # Clear Neo4j data
+            print("Clearing Neo4j data...")
+            data_path = Path("scripts/data/neo4j")
+            if data_path.exists():
+                subprocess.run(["rm", "-rf", str(data_path)], check=True)
+            
+            # Clear Qdrant data
+            print("Clearing Qdrant data...")
+            qdrant_path = Path("scripts/data/qdrant")
+            if qdrant_path.exists():
+                subprocess.run(["rm", "-rf", str(qdrant_path)], check=True)
+                
+            print("✅ All data stores cleaned")
+            
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Error during cleanup: {e}")
+            sys.exit(1)
+
     def stop_services(self):
         """Stop all services."""
         print("\n🛑 Stopping services...")
         
-        # Stop FastAPI (find and kill process)
-        print("Stopping FastAPI...")
-        try:
-            subprocess.run(
-                ["pkill", "-f", "scripts/run_server.py"],
-                check=False
-            )
-        except Exception as e:
-            print(f"Warning: Error stopping FastAPI: {e}")
+        # Stop all processes
+        processes = [
+            "scripts/run_server.py",  # FastAPI
+            "celery worker",          # Celery
+            "vite",                   # Frontend
+            "redis-server"            # Redis
+        ]
         
-        # Stop Celery worker
-        self.stop_celery()
-        
-        # Stop frontend server
-        print("Stopping frontend server...")
-        self.stop_frontend()
+        for process in processes:
+            try:
+                subprocess.run(["pkill", "-f", process], check=False)
+            except Exception as e:
+                print(f"Warning: Error stopping {process}: {e}")
         
         # Stop Docker services
-        print("Stopping Docker services...")
         try:
             subprocess.run(
                 ["docker", "compose", "-f", self.docker_compose_file, "down"],
@@ -515,12 +545,18 @@ def main():
     parser = argparse.ArgumentParser(description="Manage NIA services")
     parser.add_argument(
         "action",
-        choices=["start", "stop", "restart", "status", "check-workspace"],
+        choices=["start", "stop", "restart", "status", "check-workspace", "cleanup"],
         help="Action to perform"
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug output"
     )
     
     args = parser.parse_args()
     manager = ServiceManager()
+    manager.debug = args.debug
     
     if args.action == "start":
         manager.start_docker_services()
@@ -556,6 +592,8 @@ def main():
         
     elif args.action == "status":
         manager.show_status()
+    elif args.action == "cleanup":
+        manager.cleanup_data()
 
 if __name__ == "__main__":
     main()

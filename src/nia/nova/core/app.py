@@ -10,22 +10,55 @@ import sys
 import traceback
 import asyncio
 
-# Enable detailed error logging
+# Configure minimal logging
 import logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger("uvicorn")
-logger.setLevel(logging.DEBUG)
+from datetime import datetime, time
 
-# Add file handler for persistent logging
-logs_dir = Path("logs/fastapi")
-logs_dir.mkdir(parents=True, exist_ok=True)
-log_file = logs_dir / f"fastapi_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-file_handler = logging.FileHandler(log_file)
-file_handler.setLevel(logging.DEBUG)
-logger.addHandler(file_handler)
+class RateLimitedLogger:
+    def __init__(self, name: str, rate_limit: float = 1.0):  # Increased rate limit to 1 second
+        self.logger = logging.getLogger(name)
+        self.rate_limit = rate_limit
+        self.last_log = {}
+        
+        # Configure basic logging
+        logs_dir = Path("logs/fastapi")
+        logs_dir.mkdir(parents=True, exist_ok=True)
+        log_file = logs_dir / f"fastapi_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        
+        # File handler for all logs
+        file_handler = logging.FileHandler(log_file)
+        file_handler.setLevel(logging.INFO)
+        file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        
+        # Configure logger - Set base level to INFO for file logging
+        self.logger.setLevel(logging.INFO)
+        self.logger.addHandler(file_handler)
+    
+    def _should_log(self, level: int, msg: str) -> bool:
+        now = datetime.now().timestamp()
+        key = f"{level}:{msg}"
+        if key not in self.last_log or (now - self.last_log[key]) >= self.rate_limit:
+            self.last_log[key] = now
+            return True
+        return False
+    
+    def debug(self, msg: str, *args, **kwargs):
+        if self._should_log(logging.DEBUG, msg):
+            self.logger.debug(msg, *args, **kwargs)
+    
+    def info(self, msg: str, *args, **kwargs):
+        if self._should_log(logging.INFO, msg):
+            self.logger.info(msg, *args, **kwargs)
+    
+    def warning(self, msg: str, *args, **kwargs):
+        if self._should_log(logging.WARNING, msg):
+            self.logger.warning(msg, *args, **kwargs)
+    
+    def error(self, msg: str, *args, **kwargs):
+        if self._should_log(logging.ERROR, msg):
+            self.logger.error(msg, *args, **kwargs)
+
+logger = RateLimitedLogger("uvicorn")
 
 def log_exception(exc_type, exc_value, exc_traceback):
     """Log uncaught exceptions."""
@@ -279,83 +312,61 @@ async def startup_event():
         logger.info("Application starting up...")
         
         # Initialize services with non-blocking retries
-        logger.info("Initializing services...")
+        logger.warning("Initializing services...")
         
         async def initialize_services():
             """Initialize all required services."""
             try:
                 # Check Neo4j connection first
-                logger.debug("Checking Neo4j connection...")
-                from neo4j import GraphDatabase
-                from neo4j.exceptions import ServiceUnavailable
-                
                 retry_count = 0
                 max_retries = 10
                 while retry_count < max_retries:
                     try:
-                        uri = "bolt://localhost:7687"  # Use localhost instead of service name
+                        uri = "bolt://localhost:7687"
                         driver = GraphDatabase.driver(uri, auth=("neo4j", "password"))
                         driver.verify_connectivity()
-                        logger.debug("Neo4j connection verified")
+                        logger.info("Neo4j connection verified")
                         driver.close()
                         break
                     except Exception as e:
                         retry_count += 1
                         if retry_count == max_retries:
-                            logger.warning(f"Neo4j connection failed after {max_retries} retries: {str(e)}")
-                            # Continue without Neo4j
+                            logger.error(f"Neo4j connection failed after {max_retries} retries")
                             break
-                        logger.warning(f"Neo4j connection attempt {retry_count} failed: {str(e)}")
+                        if retry_count == 1:  # Only log on first attempt
+                            logger.warning("Waiting for Neo4j...")
                         await asyncio.sleep(2)
                 
                 # Initialize memory system with retries
-                logger.debug("Initializing memory system...")
                 retry_count = 0
                 max_retries = 5
                 while retry_count < max_retries:
                     try:
                         memory_system = await get_memory_system()
-                        logger.debug("Memory system initialization complete")
+                        logger.info("Memory system initialized")
                         break
                     except Exception as e:
                         retry_count += 1
                         if retry_count == max_retries:
-                            logger.warning(f"Memory system initialization failed after {max_retries} retries: {str(e)}")
-                            # Continue without full initialization
+                            logger.error("Memory system initialization failed")
                             break
-                        logger.warning(f"Memory system initialization attempt {retry_count} failed: {str(e)}")
-                        await asyncio.sleep(1)
+                        if retry_count == 1:  # Only log on first attempt
+                            logger.warning("Waiting for memory system...")
+                        await asyncio.sleep(2)
                 
-                # Initialize system threads without blocking
-                logger.debug("Initializing system threads...")
+                # Initialize system threads
                 try:
                     await initialize_system_threads()
-                    logger.debug("System threads initialized")
+                    logger.info("System threads initialized")
                 except Exception as e:
-                    logger.warning(f"System threads initialization failed: {str(e)}")
-                    # Continue without system threads
+                    logger.error("System threads initialization failed")
                     
             except Exception as e:
-                logger.error(f"Service initialization error: {str(e)}")
-                # Don't raise - allow startup to continue
+                logger.error("Service initialization error")
                 
         # Start initialization in background
         asyncio.create_task(initialize_services())
         logger.info("Service initialization started in background")
-        
-        # Log router status
-        logger.info("Checking router status...")
-        for router in [
-            root_router, nova_router, chat_router, graph_router,
-            orchestration_router, agent_router, analytics_router,
-            user_router, ws_router, tasks_router
-        ]:
-            logger.info(f"Router {router.prefix} initialized with {len(router.routes)} routes")
-        
-        # Log middleware status
-        logger.info("Checking middleware status...")
-        for middleware in app.user_middleware:
-            logger.info(f"Middleware {middleware.cls.__name__} initialized")
         
         logger.info("Startup complete!")
     except Exception as e:
@@ -370,7 +381,7 @@ async def shutdown_event():
 # Add error handlers
 @app.exception_handler(Exception)
 async def global_exception_handler(request, exc):
-    logger.error(f"Global error handler caught: {exc}", exc_info=True)
+    logger.error(f"Error: {exc}")
     return {
         "detail": str(exc),
         "type": type(exc).__name__,

@@ -176,9 +176,9 @@ class AgentStore(Neo4jBaseStore):
                         print(f"Context: {json.dumps(memory['context'], indent=2)}")
                         print(f"Metadata: {json.dumps(memory['metadata'], indent=2)}")
                         
-                        print("\nStoring experience...")
-                        await memory_system.store_experience(memory)
-                        print("Experience stored successfully")
+                        print("\nStoring in episodic layer directly...")
+                        await memory_system.episodic.store_memory(memory)
+                        print("Memory stored successfully")
                     except Exception as e:
                         logger.warning(f"Failed to store agent in episodic layer: {str(e)}")
                         # Continue since Neo4j storage succeeded

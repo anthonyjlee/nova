@@ -13,52 +13,58 @@ from logging.handlers import RotatingFileHandler
 from fastapi import HTTPException as ServiceError
 from .thread_manager import ThreadManager
 
-# Configure logging with consistent format
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-# Prevent propagation to root logger
-logger.propagate = False
-
-# Create logs directory if it doesn't exist
-LOGS_DIR = Path("logs/celery")
-LOGS_DIR.mkdir(parents=True, exist_ok=True)
-
-# Create session-specific log file
-session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
-session_log = LOGS_DIR / f"celery_{session_id}.json"
-
-class JsonFormatter(logging.Formatter):
-    """Format log records as JSON."""
-    def format(self, record):
-        log_entry = {
-            "timestamp": datetime.fromtimestamp(record.created).isoformat(),
-            "level": record.levelname,
-            "message": record.getMessage(),
-            "function": record.funcName,
-            "line": record.lineno,
-            "thread_id": record.thread,
-            "process_id": record.process
-        }
+# Configure minimal logging with rate limiting
+class RateLimitedLogger:
+    def __init__(self, name: str, rate_limit: float = 1.0):  # Increased rate limit to 1 second
+        self.logger = logging.getLogger(name)
+        self.rate_limit = rate_limit
+        self.last_log = {}
         
-        # Add exception info if present
-        if record.exc_info:
-            log_entry["exception"] = {
-                "type": record.exc_info[0].__name__,
-                "message": str(record.exc_info[1]),
-                "traceback": traceback.format_exception(*record.exc_info)
-            }
-            
-        return json.dumps(log_entry)
+        # Configure basic logging
+        LOGS_DIR = Path("logs/celery")
+        LOGS_DIR.mkdir(parents=True, exist_ok=True)
+        log_file = LOGS_DIR / f"celery_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        
+        # File handler with rotation for all logs
+        handler = RotatingFileHandler(
+            log_file,
+            maxBytes=1024*1024,  # 1MB
+            backupCount=3,
+            encoding='utf-8'
+        )
+        handler.setLevel(logging.INFO)  # Changed to INFO for more detailed file logging
+        handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+        
+        # Configure logger - Set base level to INFO for file logging
+        self.logger.setLevel(logging.INFO)
+        self.logger.addHandler(handler)
+        self.logger.propagate = False  # Prevent duplicate logging
+    
+    def _should_log(self, level: int, msg: str) -> bool:
+        now = datetime.now().timestamp()
+        key = f"{level}:{msg}"
+        if key not in self.last_log or (now - self.last_log[key]) >= self.rate_limit:
+            self.last_log[key] = now
+            return True
+        return False
+    
+    def debug(self, msg: str, *args, **kwargs):
+        if self._should_log(logging.DEBUG, msg):
+            self.logger.debug(msg, *args, **kwargs)
+    
+    def info(self, msg: str, *args, **kwargs):
+        if self._should_log(logging.INFO, msg):
+            self.logger.info(msg, *args, **kwargs)
+    
+    def warning(self, msg: str, *args, **kwargs):
+        if self._should_log(logging.WARNING, msg):
+            self.logger.warning(msg, *args, **kwargs)
+    
+    def error(self, msg: str, *args, **kwargs):
+        if self._should_log(logging.ERROR, msg):
+            self.logger.error(msg, *args, **kwargs)
 
-# Configure logging with RotatingFileHandler
-handler = RotatingFileHandler(
-    session_log,
-    maxBytes=10*1024*1024,  # 10MB
-    backupCount=5,
-    encoding='utf-8'
-)
-handler.setFormatter(JsonFormatter())
-logger.addHandler(handler)
+logger = RateLimitedLogger(__name__)
 
 # Initialize Celery app
 celery_app = Celery(
@@ -81,7 +87,12 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     task_always_eager=False,
     task_eager_propagates=True,
+    task_default_retry_delay=5,  # 5 seconds between retries
+    task_max_retries=3,  # Maximum of 3 retries
 )
+
+# Flag to prevent recursive store_experience calls
+_storing_experience = False
 
 def run_async(coro):
     """Run an async function synchronously."""
@@ -98,12 +109,10 @@ def get_sync_memory_system():
     try:
         memory_system = run_async(get_memory_system())
         if not memory_system:
-            logger.error("Failed to get memory system")
             raise RuntimeError("Memory system not available")
         return memory_system
     except Exception as e:
-        logger.error(f"Error getting memory system: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error("Memory system error")  # Simplified error message
         raise
 
 def get_sync_agent_store():
@@ -112,19 +121,16 @@ def get_sync_agent_store():
     try:
         agent_store = run_async(get_agent_store())
         if not agent_store:
-            logger.error("Failed to get agent store")
             raise RuntimeError("Agent store not available")
         return agent_store
     except Exception as e:
-        logger.error(f"Error getting agent store: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error("Agent store error")  # Simplified error message
         raise
 
 @celery_app.task(bind=True, name='nova.create_thread')
 def create_thread(self, title: str, domain: str = "general", metadata: Optional[Dict] = None) -> Dict[str, Any]:
     """Create a new thread."""
     try:
-        logger.debug(f"Creating thread: {title} (domain: {domain})")
         thread_id = str(uuid.uuid4())
         now = datetime.now().isoformat()
         
@@ -162,22 +168,23 @@ def create_thread(self, title: str, domain: str = "general", metadata: Optional[
             "metadata": metadata
         }
 
-        # Store thread directly
-        run_async(thread_manager._store_thread(thread_content))
-        
-        # Update task state
-        self.update_state(state='STORED', meta={'thread_id': thread_id})
+        # Store thread with recursion prevention
+        global _storing_experience
+        if not _storing_experience:
+            try:
+                _storing_experience = True
+                run_async(thread_manager._store_thread(thread_content))
+            finally:
+                _storing_experience = False
         
         # Verify storage
         stored_thread = run_async(thread_manager.get_thread(thread_id))
         if not stored_thread:
             raise ServiceError(f"Failed to verify thread creation for {thread_id}")
         
-        logger.debug(f"Successfully created thread {thread_id}")
         return stored_thread
     except Exception as e:
-        logger.error(f"Error creating thread: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error("Thread creation error")  # Simplified error message
         raise
 
 @celery_app.task(bind=True, name='nova.add_agent_to_thread')
@@ -190,7 +197,6 @@ def add_agent_to_thread(
 ) -> Dict[str, Any]:
     """Add an agent to a thread."""
     try:
-        logger.debug(f"Adding agent to thread {thread_id}: {agent_type}")
         memory_system = get_sync_memory_system()
         agent_store = get_sync_agent_store()
         thread_manager = ThreadManager(memory_system)
@@ -216,29 +222,30 @@ def add_agent_to_thread(
         
         # Store agent
         run_async(agent_store.store_agent(agent))
-        self.update_state(state='AGENT_STORED', meta={'agent_id': agent['id']})
         
         # Add agent to thread participants
         if "participants" not in thread["metadata"]:
             thread["metadata"]["participants"] = []
         thread["metadata"]["participants"].append(agent)
         
-        # Update thread
-        run_async(thread_manager.update_thread(thread))
-        self.update_state(state='THREAD_UPDATED')
+        # Update thread with recursion prevention
+        global _storing_experience
+        if not _storing_experience:
+            try:
+                _storing_experience = True
+                run_async(thread_manager.update_thread(thread))
+            finally:
+                _storing_experience = False
         
-        logger.debug(f"Successfully added agent {agent['id']} to thread {thread_id}")
         return agent
     except Exception as e:
-        logger.error(f"Error adding agent to thread: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error("Add agent error")  # Simplified error message
         raise
 
 @celery_app.task(bind=True, name='nova.store_chat_message')
 def store_chat_message(self, data: Dict[str, Any]) -> Dict[str, Any]:
     """Store a chat message."""
     try:
-        logger.debug(f"Storing chat message: {data}")
         memory_system = get_sync_memory_system()
         thread_manager = ThreadManager(memory_system)
         
@@ -262,22 +269,23 @@ def store_chat_message(self, data: Dict[str, Any]) -> Dict[str, Any]:
             "metadata": data.get("metadata", {})
         })
         
-        # Update thread
-        run_async(thread_manager.update_thread(thread))
-        self.update_state(state='MESSAGE_STORED')
-        
-        logger.debug(f"Successfully stored message in thread {thread_id}")
+        # Update thread with recursion prevention
+        global _storing_experience
+        if not _storing_experience:
+            try:
+                _storing_experience = True
+                run_async(thread_manager.update_thread(thread))
+            finally:
+                _storing_experience = False
         return thread
     except Exception as e:
-        logger.error(f"Error storing chat message: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error("Store message error")  # Simplified error message
         raise
 
 @celery_app.task(bind=True, name='nova.store_task_update')
 def store_task_update(self, data: Dict[str, Any]) -> Dict[str, Any]:
     """Store a task update."""
     try:
-        logger.debug(f"Storing task update: {data}")
         memory_system = get_sync_memory_system()
         thread_manager = ThreadManager(memory_system)
         
@@ -314,22 +322,23 @@ def store_task_update(self, data: Dict[str, Any]) -> Dict[str, Any]:
                     "updated_at": datetime.now().isoformat()
                 })
         
-        # Update thread
-        run_async(thread_manager.update_thread(thread))
-        self.update_state(state='TASK_UPDATED')
-        
-        logger.debug(f"Successfully updated task in thread {thread_id}")
+        # Update thread with recursion prevention
+        global _storing_experience
+        if not _storing_experience:
+            try:
+                _storing_experience = True
+                run_async(thread_manager.update_thread(thread))
+            finally:
+                _storing_experience = False
         return thread
     except Exception as e:
-        logger.error(f"Error storing task update: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error("Task update error")  # Simplified error message
         raise
 
 @celery_app.task(bind=True, name='nova.store_agent_status')
 def store_agent_status(self, data: Dict[str, Any]) -> Dict[str, Any]:
     """Store an agent status update."""
     try:
-        logger.debug(f"Storing agent status: {data}")
         agent_store = get_sync_agent_store()
         
         agent_id = data.get("agent_id")
@@ -350,20 +359,15 @@ def store_agent_status(self, data: Dict[str, Any]) -> Dict[str, Any]:
         
         # Store updated agent
         run_async(agent_store.update_agent(agent))
-        self.update_state(state='STATUS_UPDATED')
-        
-        logger.debug(f"Successfully updated agent {agent_id} status")
         return agent
     except Exception as e:
-        logger.error(f"Error storing agent status: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error("Status update error")  # Simplified error message
         raise
 
 @celery_app.task(bind=True, name='nova.store_graph_update')
 def store_graph_update(self, data: Dict[str, Any]) -> Dict[str, Any]:
     """Store a knowledge graph update."""
     try:
-        logger.debug(f"Storing graph update: {data}")
         memory_system = get_sync_memory_system()
         
         # Extract graph data
@@ -373,17 +377,12 @@ def store_graph_update(self, data: Dict[str, Any]) -> Dict[str, Any]:
         # Store nodes and edges
         for node in nodes:
             run_async(memory_system.store_node(node))
-            self.update_state(state='NODE_STORED', meta={'node_id': node.get('id')})
-            
         for edge in edges:
             run_async(memory_system.store_edge(edge))
-            self.update_state(state='EDGE_STORED', meta={'edge_id': edge.get('id')})
             
-        logger.debug(f"Successfully stored graph update with {len(nodes)} nodes and {len(edges)} edges")
         return data
     except Exception as e:
-        logger.error(f"Error storing graph update: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error("Graph update error")  # Simplified error message
         raise
 
 @celery_app.task(bind=True, name='nova.add_agent_team_to_thread')
@@ -394,7 +393,6 @@ def add_agent_team_to_thread(
 ) -> List[Dict[str, Any]]:
     """Add a team of agents to a thread."""
     try:
-        logger.debug(f"Adding agent team to thread {thread_id}")
         memory_system = get_sync_memory_system()
         agent_store = get_sync_agent_store()
         thread_manager = ThreadManager(memory_system)
@@ -427,7 +425,6 @@ def add_agent_team_to_thread(
             # Store agent
             run_async(agent_store.store_agent(agent))
             agents.append(agent)
-            self.update_state(state='AGENT_STORED', meta={'agent_id': agent['id']})
         
         # Add agents to thread participants
         if "participants" not in thread["metadata"]:
@@ -436,11 +433,7 @@ def add_agent_team_to_thread(
         
         # Update thread
         run_async(thread_manager.update_thread(thread))
-        self.update_state(state='THREAD_UPDATED')
-        
-        logger.debug(f"Successfully added {len(agents)} agents to thread {thread_id}")
         return agents
     except Exception as e:
-        logger.error(f"Error adding agent team to thread: {str(e)}")
-        logger.error(traceback.format_exc())
+        logger.error("Add team error")  # Simplified error message
         raise
