@@ -2,6 +2,7 @@
 
 import logging
 from typing import Dict, List, Any, Optional
+from enum import Enum
 from datetime import datetime
 import json
 import uuid
@@ -9,6 +10,10 @@ from qdrant_client import QdrantClient
 from qdrant_client.http import models
 from .embeddings import EmbeddingService
 from ..types.memory_types import JSONSerializable
+
+# Disable httpx logging to prevent recursion
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +23,8 @@ def serialize_for_vector_store(obj: Any) -> Any:
         return obj.dict()
     elif isinstance(obj, datetime):
         return obj.isoformat()
+    elif isinstance(obj, Enum):  # Add Enum handling
+        return obj.value
     elif isinstance(obj, dict):
         return {k: serialize_for_vector_store(v) for k, v in obj.items()}
     elif isinstance(obj, list):
@@ -30,12 +37,12 @@ class VectorStore:
     def __init__(
         self,
         embedding_service: EmbeddingService,
-        host: str = "0.0.0.0",
+        host: str = "localhost",
         port: int = 6333
     ):
         """Initialize vector store."""
         self.embedding_service = embedding_service
-        self.client = QdrantClient(host=host, port=port)
+        self.client = QdrantClient(host=host, port=port, prefer_grpc=True)  # Use gRPC to avoid HTTP middleware
         self.collection_name = "memories"
         self._ensure_collection()
     
@@ -188,6 +195,20 @@ class VectorStore:
             logger.error(f"Error searching vectors: {str(e)}")
             return []
     
+    async def delete_vector(self, point_id: str) -> bool:
+        """Delete a single vector from collection."""
+        try:
+            self.client.delete(
+                collection_name=self.collection_name,
+                points_selector=models.PointIdsList(
+                    points=[point_id]
+                )
+            )
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting vector {point_id}: {str(e)}")
+            return False
+
     async def delete_vectors(
         self,
         ids: Optional[List[str]] = None,

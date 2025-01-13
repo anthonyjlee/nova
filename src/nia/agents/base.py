@@ -4,7 +4,7 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 import logging
 
-from nia.memory.types.memory_types import Memory, MemoryType, EpisodicMemory
+from nia.core.types.memory_types import Memory, MemoryType, EpisodicMemory
 
 logger = logging.getLogger(__name__)
 

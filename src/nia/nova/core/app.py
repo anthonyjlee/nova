@@ -1,5 +1,6 @@
 """FastAPI application configuration."""
 
+from neo4j import GraphDatabase
 from fastapi import FastAPI, APIRouter, Request, HTTPException
 from .auth import validate_api_key
 from fastapi.middleware.cors import CORSMiddleware
@@ -226,7 +227,6 @@ async def verify_thread_manager():
             title="Test Thread",
             domain="system",
             metadata={
-                "type": "test",
                 "system": True,
                 "pinned": False,
                 "description": "Startup test thread"
@@ -279,14 +279,14 @@ async def initialize_system_threads():
         # Just log status and continue - don't block startup
         try:
             # Try to get nova-team thread
-            nova_team = await thread_manager.get_thread("nova-team")
+            nova_team = await thread_manager.get_thread(thread_manager.NOVA_TEAM_UUID)
             if nova_team:
                 logger.info("Nova team thread exists")
             else:
                 logger.warning("Nova team thread not found")
                 
             # Try to get nova thread
-            nova = await thread_manager.get_thread("nova")
+            nova = await thread_manager.get_thread(thread_manager.NOVA_UUID)
             if nova:
                 logger.info("Nova thread exists")
             else:

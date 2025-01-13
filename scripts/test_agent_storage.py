@@ -266,7 +266,6 @@ async def test_agent_storage(results: TestResults):
             "messages": [],
             "participants": [],
             "metadata": {
-                "type": "test",
                 "system": False,
                 "pinned": False
             }
@@ -293,18 +292,17 @@ async def test_agent_storage(results: TestResults):
         thread_memory = Memory(
             id=memory_id,  # Use generated memory ID
             content=json.dumps(memory_content),  # Serialize content to string
-            type=MemoryType.EPISODIC,
+            type="episodic",
             importance=0.8,
             timestamp=datetime.now().isoformat(),
             context={
                 "domain": "test",  # Required domain
                 "source": "test",
-                "type": "thread",
+                "type": MemoryType.EPISODIC.value,
                 "workspace": "test"  # Required workspace
             },
             metadata={
                 "thread_id": thread_id,  # Store thread ID in metadata
-                "type": "thread",  # Required type
                 "system": False,    # Required system flag
                 "pinned": False,    # Required pinned flag
                 "description": "Test thread for agent storage",  # Required description
@@ -531,9 +529,8 @@ async def test_agent_storage(results: TestResults):
         })
         return False
     finally:
-        # Cleanup
+        # Cleanup memory system only
         try:
-            await agent_store.cleanup()
             await memory_system.cleanup()
         except Exception as e:
             logger.error(f"Cleanup error: {str(e)}")
@@ -577,7 +574,6 @@ async def test_agent_api(results: TestResults):
                 "title": "Test Thread",
                 "domain": "test",
                 "metadata": {
-                    "type": "test",
                     "system": False,
                     "pinned": False,
                     "description": "Test thread for agent API testing"
@@ -706,34 +702,3 @@ async def run_tests():
         results_file = results.save_results()
         logger.info(f"Test results saved to: {results_file}", 
                    extra={"test_phase": "session_end"})
-
-async def cleanup():
-    """Clean up test environment."""
-    try:
-        logger.info("Starting cleanup...", extra={"test_phase": "cleanup"})
-        
-        # Restore original Neo4j data
-        restore_neo4j_data()
-        
-        # Remove test config
-        if TEST_CONFIG_PATH.exists():
-            TEST_CONFIG_PATH.unlink()
-            logger.info("Test configuration removed", extra={"test_phase": "cleanup"})
-        
-        # Remove test data directory if empty
-        if TEST_DATA_DIR.exists() and not any(TEST_DATA_DIR.iterdir()):
-            TEST_DATA_DIR.rmdir()
-            logger.info("Test data directory removed", extra={"test_phase": "cleanup"})
-            
-        logger.info("Cleanup completed", extra={"test_phase": "cleanup"})
-        
-    except Exception as e:
-        logger.error(f"Cleanup failed: {str(e)}", 
-                    extra={"test_phase": "cleanup", "test_result": False})
-
-if __name__ == "__main__":
-    try:
-        asyncio.run(run_tests())
-    finally:
-        # Always attempt cleanup
-        asyncio.run(cleanup())

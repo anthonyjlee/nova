@@ -135,53 +135,37 @@ class AgentStore(Neo4jBaseStore):
                             "thread_id": thread_id
                         })
 
-                    # Store in episodic layer if memory system available
-                    try:
-                        print("\n=== Storing in episodic layer ===")
-                        from nia.memory.two_layer import TwoLayerMemorySystem
-                        memory_system = TwoLayerMemorySystem()
-                        print("Initializing memory system...")
-                        await memory_system.initialize()
-                        print("Memory system initialized")
-                        
-                        # Create memory object
-                        print("\nCreating memory object...")
-                        memory_id = f"agent_{agent_data['id']}"
-                        print(f"Memory ID: {memory_id}")
-                        
-                        memory = {
-                            "id": memory_id,
-                            "content": json.dumps(agent_data),  # Serialize content to string
-                            "type": "EPISODIC",
-                            "importance": 0.8,
-                            "context": {
-                                "domain": agent_data.get("domain", "general"),
-                                "source": "nova",
-                                "type": "agent",
-                                "thread_id": thread_id,
-                                "workspace": agent_data.get("workspace", "personal")  # Add required workspace
-                            },
-                            "metadata": {
-                                "type": "agent",
-                                "thread_id": thread_id,
-                                "consolidated": False,
-                                "system": False,  # Add required system flag
-                                "pinned": False,  # Add required pinned flag
-                                "description": f"Agent {agent_data['name']}"  # Add required description
-                            }
-                        }
-                        print(f"\nMemory object created:")
-                        print(f"Content type: {type(memory['content'])}")
-                        print(f"Content: {json.dumps(memory['content'], indent=2)}")
-                        print(f"Context: {json.dumps(memory['context'], indent=2)}")
-                        print(f"Metadata: {json.dumps(memory['metadata'], indent=2)}")
-                        
-                        print("\nStoring in episodic layer directly...")
-                        await memory_system.episodic.store_memory(memory)
-                        print("Memory stored successfully")
-                    except Exception as e:
-                        logger.warning(f"Failed to store agent in episodic layer: {str(e)}")
-                        # Continue since Neo4j storage succeeded
+                        # Store in episodic layer if memory system available
+                        try:
+                            from nia.memory.two_layer import EpisodicLayer
+                            from nia.core.types.memory_types import EpisodicMemory, MemoryType
+                            
+                            episodic = EpisodicLayer()
+                            memory = EpisodicMemory(
+                                content=agent_data,
+                                type=MemoryType.EPISODIC,
+                                importance=0.8,
+                                context={
+                                    "domain": agent_data.get("domain", "general"),
+                                    "source": "nova",
+                                    "type": "agent",
+                                    "thread_id": thread_id,
+                                    "workspace": agent_data.get("workspace", "personal")
+                                },
+                                metadata={
+                                    "type": "agent",
+                                    "thread_id": thread_id,
+                                    "consolidated": False,
+                                    "system": False,
+                                    "pinned": False,
+                                    "description": f"Agent {agent_data['name']}"
+                                }
+                            )
+                            await episodic.store_memory(memory)
+                            logger.info(f"Stored agent {agent_data['id']} in episodic layer")
+                        except Exception as e:
+                            logger.warning(f"Failed to store agent in episodic layer: {str(e)}")
+                            # Continue since Neo4j storage succeeded
                         
                     await tx.commit()
             
@@ -623,12 +607,9 @@ class AgentStore(Neo4jBaseStore):
                         
                         # Also remove from episodic layer
                         try:
-                            from nia.memory.two_layer import TwoLayerMemorySystem
-                            memory_system = TwoLayerMemorySystem()
-                            await memory_system.initialize()
-                            
-                            # Delete agent memory
-                            await memory_system.episodic.store.delete_vectors([f"agent_{agent_id}"])
+                            from nia.memory.two_layer import EpisodicLayer
+                            episodic = EpisodicLayer()
+                            await episodic.store.delete_vectors([f"agent_{agent_id}"])
                         except Exception as e:
                             logger.warning(f"Failed to delete agent from episodic layer: {str(e)}")
                     
@@ -723,4 +704,19 @@ class AgentStore(Neo4jBaseStore):
             logger.info(f"Removed agent {agent_id} from thread {thread_id}")
         except Exception as e:
             logger.error(f"Failed to remove agent {agent_id} from thread {thread_id}: {str(e)}")
+            raise
+
+    async def cleanup(self) -> None:
+        """Clean up resources."""
+        try:
+            logger.info("Cleaning up agent store...")
+            # Delete all agents and relationships
+            query = """
+            MATCH (a:Agent)
+            DETACH DELETE a
+            """
+            await self.run_query(query)
+            logger.info("Successfully cleaned up agent store")
+        except Exception as e:
+            logger.error(f"Failed to clean up agent store: {str(e)}")
             raise

@@ -83,7 +83,7 @@ class Nova(MetaAgent):
     ):
         """Store memory in the memory system."""
         if self.memory_system:
-            await self.memory_system.store_experience(
+            await self.memory_system.episodic.store_memory(
                 EpisodicMemory(
                     content=str(content) if not isinstance(content, str) else content,
                     type=MemoryType.EPISODIC,

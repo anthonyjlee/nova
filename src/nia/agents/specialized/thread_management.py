@@ -30,7 +30,7 @@ class ThreadManagement:
             "metadata": metadata or {}
         }
         
-        await self.memory_system.store_experience(
+        await self.memory_system.episodic.store_memory(
             Memory(
                 content=thread_data,
                 type="thread",
@@ -183,7 +183,7 @@ class ThreadManagement:
         }
         
         # Store message in memory system
-        await self.memory_system.store_experience(
+        await self.memory_system.episodic.store_memory(
             Memory(
                 content=message_data,
                 type="message",
@@ -201,7 +201,7 @@ class ThreadManagement:
         thread["message_count"] += 1
         
         # Store updated thread
-        await self.memory_system.store_experience(
+        await self.memory_system.episodic.store_memory(
             Memory(
                 content=thread,
                 type="thread",

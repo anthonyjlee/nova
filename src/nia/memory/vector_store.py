@@ -26,10 +26,9 @@ class VectorStore:
         config.read("config.ini")
         
         self.embedding_service = embedding_service
-        self.client = QdrantClient(
-            host=config.get("QDRANT", "host", fallback="qdrant"),
-            port=config.getint("QDRANT", "port", fallback=6333)
-        )
+        host = config.get("QDRANT", "host", fallback="127.0.0.1")
+        port = config.getint("QDRANT", "port", fallback=6333)
+        self.client = QdrantClient(url=f"http://{host}:{port}")
         
     async def connect(self):
         """Initialize connection and collections."""
@@ -98,12 +97,10 @@ class VectorStore:
             
     async def store_vector(
         self,
-        collection_name: str,
-        payload: dict,
-        vector: Optional[List[float]] = None,
-        point_id: Optional[str] = None,
-        max_retries: int = 3
-    ) -> str:
+        content: Any,
+        metadata: Optional[Dict[str, Any]] = None,
+        layer: str = "episodic"
+    ) -> bool:
         """Store a vector in the specified collection with verification.
         
         Args:
@@ -117,141 +114,41 @@ class VectorStore:
             str: ID of stored vector
         """
         try:
-            print("\n=== Entering store_vector ===")
-            print(f"Collection name: {collection_name}")
-            print(f"Point ID: {point_id}")
-            print(f"Payload: {json.dumps(payload, indent=2)}")
-            print(f"Vector provided: {vector is not None}")
-            
-            # Use provided point_id or generate a new UUID
-            if point_id is None:
-                point_id = str(uuid.uuid4())
+            # Generate a unique ID for this vector
+            point_id = str(uuid.uuid4())
             logger.info(f"Using point ID: {point_id}")
             
-            # Generate vector embedding if not provided
-            if vector is None:
-                # Only serialize the content for embedding, not the entire payload
-                content = payload.get('content', '')
-                print(f"\nContent for embedding:")
-                print(f"Content type: {type(content)}")
-                print(f"Content: {content}")
-                
-                content_str = content if isinstance(content, str) else json.dumps(content)
-                print(f"Content string for embedding: {content_str}")
-                
-                vector = await self.embedding_service.create_embedding(content_str)
-                print("Generated vector embedding")
-                logger.info("Generated vector embedding")
+            # Convert content to string for embedding
+            if isinstance(content, dict):
+                content_str = json.dumps(content)
+            else:
+                content_str = str(content)
             
-            # Store with retry logic
-            for attempt in range(max_retries):
-                try:
-                    print(f"\nAttempting to store vector (attempt {attempt + 1}/{max_retries})")
-                    logger.info(f"Attempting to store vector (attempt {attempt + 1}/{max_retries})")
-                    
-                    # Prepare payload - handle content and metadata separately
-                    processed_payload = {}
-                    
-                    # Handle content as direct dictionary without JSON serialization
-                    if 'content' in payload:
-                        content = payload['content']
-                        print(f"\nProcessing content:")
-                        print(f"Content type: {type(content)}")
-                        print(f"Content: {content}")
-                        
-                        # If content is already a dict, use it directly
-                        if isinstance(content, dict):
-                            processed_payload['content'] = content
-                            print("Using dict content directly")
-                        # If content is a string, keep it as is
-                        elif isinstance(content, str):
-                            processed_payload['content'] = content
-                            print("Using string content directly")
-                        # For other types, convert to string
-                        else:
-                            processed_payload['content'] = str(content)
-                            print(f"Converted to string: {processed_payload['content']}")
-                    
-                    # Process metadata fields with proper type handling
-                    print("\nProcessing metadata fields:")
-                    for k, v in payload.items():
-                        if k.startswith('metadata_'):
-                            print(f"\nProcessing {k}:")
-                            print(f"Original value type: {type(v)}")
-                            print(f"Original value: {v}")
-                            
-                            # Handle special metadata fields
-                            if k == 'metadata_timestamp':
-                                # Keep timestamp as string if it is one
-                                processed_payload[k] = v if isinstance(v, str) else datetime.now().isoformat()
-                                print(f"Processed timestamp: {processed_payload[k]}")
-                            elif k == 'metadata_importance':
-                                # Ensure importance is float
-                                processed_payload[k] = float(v)
-                                print(f"Processed importance: {processed_payload[k]}")
-                            elif k in ['metadata_consolidated', 'metadata_system', 'metadata_pinned']:
-                                # Handle boolean fields
-                                processed_payload[k] = bool(v)
-                                print(f"Processed boolean: {processed_payload[k]}")
-                            elif isinstance(v, (dict, list)):
-                                # Serialize complex metadata fields
-                                processed_payload[k] = json.dumps(v)
-                                print(f"Processed complex field: {processed_payload[k]}")
-                            else:
-                                # Keep simple values as is
-                                processed_payload[k] = v
-                                print(f"Kept as is: {processed_payload[k]}")
-                    
-                    # Add memory ID to metadata
-                    processed_payload['metadata_id'] = point_id
-                    print(f"\nFinal processed payload: {json.dumps(processed_payload, indent=2)}")
-                    
-                    # Store the point with processed payload
-                    print("\nStoring point in Qdrant...")
-                    self.client.upsert(
-                        collection_name=collection_name,
-                        points=[
-                            models.PointStruct(
-                                id=point_id,
-                                vector=vector,
-                                payload=processed_payload
-                            )
-                        ],
-                        wait=True  # Wait for operation to complete
-                    )
-                    print("Vector storage operation completed")
-                    logger.info("Vector storage operation completed")
-                    
-                    # Verify the point was stored
-                    print("\nVerifying stored point...")
-                    logger.info("Verifying stored point...")
-                    stored_point = self.client.retrieve(
-                        collection_name=collection_name,
-                        ids=[point_id],
-                        with_payload=True,
-                        with_vectors=True
-                    )
-                    
-                    print(f"Retrieved point: {stored_point}")
-                    if stored_point and stored_point[0]:
-                        print("\nVerification successful:")
-                        print(f"Stored payload: {json.dumps(stored_point[0].payload, indent=2)}")
-                        print(f"Vector exists: {stored_point[0].vector is not None}")
-                    else:
-                        print("Verification failed: Point not found")
-                        raise Exception("Point not found after storage")
-                        
-                    logger.info(f"Successfully verified stored point: {point_id}")
-                    return point_id
-                    
-                except Exception as e:
-                    logger.error(f"Storage attempt {attempt + 1} failed: {str(e)}")
-                    if attempt == max_retries - 1:
-                        raise
-                    import time
-                    time.sleep(1)  # Wait before retrying
+            # Generate vector embedding
+            vector = await self.embedding_service.create_embedding(content_str)
             
-            raise Exception(f"Failed to store vector after {max_retries} attempts")
+            # Prepare payload
+            payload = {
+                "content": content,
+                "metadata": metadata or {},
+                "layer": layer,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            # Store in Qdrant
+            self.client.upsert(
+                collection_name="memories",
+                points=[
+                    models.PointStruct(
+                        id=point_id,
+                        vector=vector,
+                        payload=payload
+                    )
+                ],
+                wait=True
+            )
+            
+            return True
         except Exception as e:
             logger.error(f"Failed to store vector: {str(e)}")
             raise

@@ -46,6 +46,7 @@ data/neo4j/
 scripts/data/neo4j/
 scripts/data/qdrant/
 agent_responses.log
+test_results/
 
 # Neo4j specific
 **/neo4j/data/

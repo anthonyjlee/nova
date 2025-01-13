@@ -74,7 +74,7 @@ async def ask_nova(
                     "source": "nova"
                 }
             )
-            await memory_system.store_experience(memory)
+            await memory_system.episodic.store_memory(memory)
             
             # Verify thread was stored
             result = await memory_system.query_episodic({
@@ -125,7 +125,7 @@ async def ask_nova(
                 "source": "nova"
             }
         )
-        await memory_system.store_experience(memory)
+        await memory_system.episodic.store_memory(memory)
         
         return {
             "threadId": "nova",

@@ -35,7 +35,7 @@ class TaskManagement:
         }
         
         # Store task in memory system
-        await self.memory_system.store_experience(
+        await self.memory_system.episodic.store_memory(
             Memory(
                 content=task,
                 type="task",
@@ -104,7 +104,7 @@ class TaskManagement:
         })
         
         # Store updated task
-        await self.memory_system.store_experience(
+        await self.memory_system.episodic.store_memory(
             Memory(
                 content=task,
                 type="task",

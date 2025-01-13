@@ -101,7 +101,7 @@ class ThreadManager:
                         },
                         {
                             "key": "metadata_type",
-                            "match": {"value": "episodic"}
+                            "match": {"value": MemoryType.EPISODIC.value}
                         },
                         {
                             "key": "metadata_consolidated",
@@ -110,7 +110,7 @@ class ThreadManager:
                     ]
                 }
                 
-                result = await self.memory_system.query_episodic({
+                result = await self.memory_system.episodic.store.search_vectors({
                     "content": {},
                     "filter": filter_dict,
                     "layer": "episodic",
@@ -320,7 +320,7 @@ class ThreadManager:
                 
                 # Check if thread already exists in episodic layer
                 logger.debug("Checking for existing thread...")
-                existing_thread = await self.memory_system.query_episodic({
+                existing_thread = await self.memory_system.episodic.store.search_vectors({
                     "content": {},
                     "filter": {
                         "must": [
@@ -330,7 +330,7 @@ class ThreadManager:
                             },
                             {
                                 "key": "metadata_type",
-                                "match": {"value": "episodic"}
+                                "match": {"value": MemoryType.EPISODIC.value}
                             },
                             {
                                 "key": "metadata_consolidated",
@@ -364,7 +364,7 @@ class ThreadManager:
                 # Prepare metadata first
                 metadata = {
                     "thread_id": thread["id"],  # Set thread_id in metadata
-                    "type": "episodic",
+                    "type": MemoryType.EPISODIC.value,
                     "consolidated": False,
                     "layer": "episodic",
                     "domain": thread.get("domain", "general"),
@@ -381,18 +381,18 @@ class ThreadManager:
                 memory_data = {
                     "id": thread_id,  # Set explicit ID
                     "content": thread,  # Store full thread data directly
-                    "type": MemoryType.EPISODIC,
+                    "type": MemoryType.EPISODIC.value,  # Use proper memory type
                     "importance": 0.8,
                     "timestamp": datetime.now().isoformat(),
                     "context": {
                         "domain": thread.get("domain", "general"),
                         "source": "nova",
-                        "type": "thread",
+                        "type": MemoryType.EPISODIC.value,  # Use proper memory type
                         "thread_id": thread_id
                     },
                     "metadata": {
                         "thread_id": thread_id,
-                        "type": "episodic",
+                        "type": MemoryType.EPISODIC.value,  # Use proper memory type
                         "consolidated": False,
                         "layer": "episodic",
                         "domain": thread.get("domain", "general"),
@@ -488,7 +488,7 @@ class ThreadManager:
             "must": [
                 {
                     "key": "metadata_type",
-                    "match": {"value": "episodic"}
+                    "match": {"value": MemoryType.EPISODIC.value}
                 },
                 {
                     "key": "metadata_consolidated",
@@ -515,7 +515,7 @@ class ThreadManager:
                 })
         
         try:
-            results = await self.memory_system.query_episodic({
+                results = await self.memory_system.episodic.store.search_vectors({
                 "content": {},
                 "filter": filter_dict,
                 "layer": "episodic"
@@ -639,18 +639,18 @@ class ThreadManager:
             memory_data = {
                 "id": thread["id"],
                 "content": thread,
-                "type": MemoryType.EPISODIC,
+                "type": MemoryType.EPISODIC.value,  # Use proper memory type
                 "importance": 0.8,
                 "timestamp": datetime.now().isoformat(),
                 "context": {
                     "domain": thread.get("domain", "general"),
                     "source": "nova",
-                    "type": "thread",
+                    "type": MemoryType.EPISODIC.value,  # Use proper memory type
                     "thread_id": thread["id"]
                 },
                 "metadata": {
                     "thread_id": thread["id"],
-                    "type": "episodic",
+                    "type": MemoryType.EPISODIC.value,  # Use proper memory type
                     "consolidated": False,
                     "layer": "episodic",
                     "domain": thread.get("domain", "general"),
@@ -665,6 +665,29 @@ class ThreadManager:
         except Exception as e:
             logger.error(f"Failed to update thread {thread['id']}: {str(e)}")
             raise ServiceError(f"Failed to update thread {thread['id']}: {str(e)}")
+
+    async def delete_thread(self, thread_id: str) -> bool:
+        """Delete a thread from both episodic and semantic layers."""
+        try:
+            logger.debug(f"Deleting thread {thread_id}")
+            
+            # Delete from episodic layer
+            await self.memory_system.episodic.delete_memory(thread_id)
+            
+            # Delete from semantic layer
+            await self.memory_system.semantic.run_query(
+                """
+                MATCH (t:Thread {id: $id})
+                DETACH DELETE t
+                """,
+                {"id": thread_id}
+            )
+            
+            logger.info(f"Successfully deleted thread {thread_id}")
+            return True
+        except Exception as e:
+            logger.error(f"Error deleting thread {thread_id}: {str(e)}")
+            raise ServiceError(f"Failed to delete thread {thread_id}: {str(e)}")
 
     async def add_single_agent(self, thread_id: str, agent_type: str, workspace: str = "personal", domain: Optional[str] = None, agent_store: Any = None) -> Dict[str, Any]:
         """Add a single agent to a thread."""

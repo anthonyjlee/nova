@@ -174,7 +174,7 @@ class TinyTroupeAgent(TinyPerson, MemoryBaseAgent):
         )
         
         # Store in memory system
-        memory_id = await self.memory_system.store_experience(memory)
+        memory_id = await self.memory_system.episodic.store_memory(memory)
         
         # Update memory references
         if memory_id:
