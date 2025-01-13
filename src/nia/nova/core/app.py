@@ -4,6 +4,7 @@ from fastapi import FastAPI, APIRouter
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from datetime import datetime
+from pathlib import Path
 import sys
 import traceback
 import asyncio
@@ -18,7 +19,10 @@ logger = logging.getLogger("uvicorn")
 logger.setLevel(logging.DEBUG)
 
 # Add file handler for persistent logging
-file_handler = logging.FileHandler('fastapi.log')
+logs_dir = Path("logs/fastapi")
+logs_dir.mkdir(parents=True, exist_ok=True)
+log_file = logs_dir / f"fastapi_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+file_handler = logging.FileHandler(log_file)
 file_handler.setLevel(logging.DEBUG)
 logger.addHandler(file_handler)
 
