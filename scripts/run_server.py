@@ -13,16 +13,18 @@ from datetime import datetime
 from typing import List, Dict, Any
 
 # Add project root to Python path
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).parent.parent.resolve()
 sys.path.append(str(project_root))
 
 # Configure logging
-LOGS_DIR = Path("logs/server")
+LOGS_DIR = project_root / "logs" / "server"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 log_file = LOGS_DIR / f"server_{session_id}.log"
 json_log = LOGS_DIR / f"server_{session_id}.json"
+
+print(f"Logs will be written to:\n- {log_file}\n- {json_log}")
 
 # Configure file handler for detailed logs
 file_handler = logging.FileHandler(log_file)
@@ -160,7 +162,6 @@ async def main():
         logger.info("Starting Nova FastAPI server...", extra={"service": "fastapi", "status": "starting"})
         logger.debug(f"Project root: {project_root}")
         logger.debug(f"Python path: {sys.path}")
-        logger.info(f"Logs will be written to: {log_file}")
         
         # Wait for services
         await wait_for_neo4j()
