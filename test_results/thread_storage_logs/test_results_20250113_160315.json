@@ -1,0 +1,121 @@
+{
+  "session_id": "20250113_160227",
+  "summary": {
+    "total_tests": 16,
+    "passed": 15,
+    "failed": 1
+  },
+  "results": [
+    {
+      "test_name": "neo4j_check",
+      "success": true,
+      "timestamp": "2025-01-13T16:02:34.347816",
+      "details": {}
+    },
+    {
+      "test_name": "qdrant_check",
+      "success": true,
+      "timestamp": "2025-01-13T16:02:41.057443",
+      "details": {}
+    },
+    {
+      "test_name": "vector_store",
+      "success": true,
+      "timestamp": "2025-01-13T16:02:47.808505",
+      "details": {
+        "point_id": "2deaf81a-43eb-48b1-861c-fd102dcc3b6f"
+      }
+    },
+    {
+      "test_name": "vector_inspect",
+      "success": true,
+      "timestamp": "2025-01-13T16:02:47.819064",
+      "details": {
+        "points_count": 52
+      }
+    },
+    {
+      "test_name": "vector_delete",
+      "success": true,
+      "timestamp": "2025-01-13T16:02:47.823314",
+      "details": {}
+    },
+    {
+      "test_name": "neo4j_node_create",
+      "success": true,
+      "timestamp": "2025-01-13T16:02:54.524449",
+      "details": {}
+    },
+    {
+      "test_name": "neo4j_node_delete",
+      "success": true,
+      "timestamp": "2025-01-13T16:02:54.530772",
+      "details": {}
+    },
+    {
+      "test_name": "vector_store_connect",
+      "success": true,
+      "timestamp": "2025-01-13T16:03:01.199520",
+      "details": {}
+    },
+    {
+      "test_name": "vector_store_add",
+      "success": true,
+      "timestamp": "2025-01-13T16:03:01.223933",
+      "details": {
+        "point_id": "6bad2f8f-ac95-480e-bbd4-7bcb3c4198ef"
+      }
+    },
+    {
+      "test_name": "vector_store_search",
+      "success": true,
+      "timestamp": "2025-01-13T16:03:01.235777",
+      "details": {
+        "results_found": 0
+      }
+    },
+    {
+      "test_name": "memory_system_init",
+      "success": true,
+      "timestamp": "2025-01-13T16:03:08.322568",
+      "details": {}
+    },
+    {
+      "test_name": "store_experience",
+      "success": true,
+      "timestamp": "2025-01-13T16:03:08.347103",
+      "details": {
+        "memory_id": "28643f5f-35dc-484e-85ef-be153bc11050"
+      }
+    },
+    {
+      "test_name": "query_episodic",
+      "success": true,
+      "timestamp": "2025-01-13T16:03:08.361124",
+      "details": {
+        "results_found": 0
+      }
+    },
+    {
+      "test_name": "thread_create",
+      "success": true,
+      "timestamp": "2025-01-13T16:03:15.304931",
+      "details": {}
+    },
+    {
+      "test_name": "thread_update",
+      "success": true,
+      "timestamp": "2025-01-13T16:03:15.333900",
+      "details": {}
+    },
+    {
+      "test_name": "thread_operations_test",
+      "success": false,
+      "timestamp": "2025-01-13T16:03:15.353503",
+      "details": {
+        "error": "list index out of range",
+        "traceback": "Traceback (most recent call last):\n  File \"/Users/alee5331/Documents/Projects/NIA/scripts/test_thread_storage.py\", line 319, in test_thread_operations\n    updated_thread = query_result[0][\"content\"]\n                     ~~~~~~~~~~~~^^^\nIndexError: list index out of range\n"
+      }
+    }
+  ]
+}

@@ -65,7 +65,7 @@ async def main():
         
         # Get configuration from environment
         host = os.getenv("NOVA_HOST", "127.0.0.1")
-        port = int(os.getenv("NOVA_PORT", "8001"))
+        port = int(os.getenv("NOVA_PORT", "8000"))  # Changed to match manage.py health check
         reload = os.getenv("NOVA_RELOAD", "true").lower() == "true"
         
         # Log configuration

@@ -1,0 +1,31 @@
+{
+  "session_id": "20250113_155229",
+  "summary": {
+    "total_tests": 3,
+    "passed": 2,
+    "failed": 1
+  },
+  "results": [
+    {
+      "test_name": "neo4j_check",
+      "success": true,
+      "timestamp": "2025-01-13T15:52:36.544017",
+      "details": {}
+    },
+    {
+      "test_name": "qdrant_check",
+      "success": true,
+      "timestamp": "2025-01-13T15:52:43.176724",
+      "details": {}
+    },
+    {
+      "test_name": "direct_api_test",
+      "success": false,
+      "timestamp": "2025-01-13T15:52:49.894510",
+      "details": {
+        "error": "'VectorStore' object has no attribute 'create_collection'",
+        "traceback": "Traceback (most recent call last):\n  File \"/Users/alee5331/Documents/Projects/NIA/scripts/test_thread_storage.py\", line 141, in test_direct_api\n    await vector_store.create_collection(test_collection)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\nAttributeError: 'VectorStore' object has no attribute 'create_collection'. Did you mean: 'inspect_collection'?\n"
+      }
+    }
+  ]
+}

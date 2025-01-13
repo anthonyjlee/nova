@@ -20,8 +20,16 @@ class VectorStore:
         Args:
             embedding_service: Service for creating embeddings
         """
+        # Read config
+        import configparser
+        config = configparser.ConfigParser()
+        config.read("config.ini")
+        
         self.embedding_service = embedding_service
-        self.client = QdrantClient(host="localhost", port=6333)
+        self.client = QdrantClient(
+            host=config.get("QDRANT", "host", fallback="qdrant"),
+            port=config.getint("QDRANT", "port", fallback=6333)
+        )
         
     async def connect(self):
         """Initialize connection and collections."""
@@ -115,7 +123,9 @@ class VectorStore:
             
             # Generate vector embedding if not provided
             if vector is None:
-                content_str = json.dumps(payload) if isinstance(payload, dict) else str(payload)
+                # Only serialize the content for embedding, not the entire payload
+                content = payload.get('content', '')
+                content_str = content if isinstance(content, str) else json.dumps(content)
                 vector = await self.embedding_service.create_embedding(content_str)
                 logger.info("Generated vector embedding")
             
@@ -124,14 +134,50 @@ class VectorStore:
                 try:
                     logger.info(f"Attempting to store vector (attempt {attempt + 1}/{max_retries})")
                     
-                    # Store the point
+                    # Prepare payload - handle content and metadata separately
+                    processed_payload = {}
+                    
+                    # Handle content as direct dictionary without JSON serialization
+                    if 'content' in payload:
+                        content = payload['content']
+                        # If content is already a dict, use it directly
+                        if isinstance(content, dict):
+                            processed_payload['content'] = content
+                        # If content is a string, keep it as is
+                        elif isinstance(content, str):
+                            processed_payload['content'] = content
+                        # For other types, convert to string
+                        else:
+                            processed_payload['content'] = str(content)
+                    
+                    # Process metadata fields with proper type handling
+                    for k, v in payload.items():
+                        if k.startswith('metadata_'):
+                            # Handle special metadata fields
+                            if k == 'metadata_timestamp':
+                                # Keep timestamp as string if it is one
+                                processed_payload[k] = v if isinstance(v, str) else datetime.now().isoformat()
+                            elif k == 'metadata_importance':
+                                # Ensure importance is float
+                                processed_payload[k] = float(v)
+                            elif k in ['metadata_consolidated', 'metadata_system', 'metadata_pinned']:
+                                # Handle boolean fields
+                                processed_payload[k] = bool(v)
+                            elif isinstance(v, (dict, list)):
+                                # Serialize complex metadata fields
+                                processed_payload[k] = json.dumps(v)
+                            else:
+                                # Keep simple values as is
+                                processed_payload[k] = v
+                    
+                    # Store the point with processed payload
                     self.client.upsert(
                         collection_name=collection_name,
                         points=[
                             models.PointStruct(
                                 id=point_id,
                                 vector=vector,
-                                payload=payload
+                                payload=processed_payload
                             )
                         ],
                         wait=True  # Wait for operation to complete
@@ -188,13 +234,20 @@ class VectorStore:
             List[Dict]: Search results
         """
         try:
-            # Convert content to string
-            if isinstance(content, dict):
-                content_str = json.dumps(content)
+            # Handle content for embedding based on type
+            if isinstance(content, str):
+                content_str = content
+            elif isinstance(content, dict):
+                # If content has text field, use that
+                if 'text' in content:
+                    content_str = content['text']
+                # Otherwise use the raw dict
+                else:
+                    content_str = str(content)
             else:
                 content_str = str(content)
-                
-            # Create query embedding
+            
+            # Create query embedding from processed content
             query_vector = await self.embedding_service.create_embedding(content_str)
             
             # Process and validate filter conditions
@@ -250,12 +303,9 @@ class VectorStore:
             # Process results
             processed = []
             for hit in results:
+                # Get content from payload
                 result = hit.payload.get("content", {})
-                if isinstance(result, str):
-                    try:
-                        result = json.loads(result)
-                    except:
-                        pass
+                # Keep content in its original form without JSON parsing
                 # Add metadata
                 metadata = {
                     k[9:]: v for k, v in hit.payload.items()

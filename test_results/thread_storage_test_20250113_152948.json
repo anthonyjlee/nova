@@ -1,0 +1,53 @@
+{
+  "summary": {
+    "total_tests": 6,
+    "passed": 6,
+    "failed": 0
+  },
+  "results": [
+    {
+      "test_name": "vector_store_connect",
+      "success": true,
+      "timestamp": "2025-01-13T15:29:41.875630",
+      "details": {}
+    },
+    {
+      "test_name": "vector_store_add",
+      "success": true,
+      "timestamp": "2025-01-13T15:29:41.895742",
+      "details": {
+        "point_id": "34d01d04-0d05-4a3f-b070-993c9d505185"
+      }
+    },
+    {
+      "test_name": "vector_store_search",
+      "success": true,
+      "timestamp": "2025-01-13T15:29:41.911027",
+      "details": {
+        "results_found": 0
+      }
+    },
+    {
+      "test_name": "memory_system_init",
+      "success": true,
+      "timestamp": "2025-01-13T15:29:48.708331",
+      "details": {}
+    },
+    {
+      "test_name": "store_experience",
+      "success": true,
+      "timestamp": "2025-01-13T15:29:48.742287",
+      "details": {
+        "memory_id": "4c9d866c-6d38-4a92-b557-f26f1f093092"
+      }
+    },
+    {
+      "test_name": "query_episodic",
+      "success": true,
+      "timestamp": "2025-01-13T15:29:48.754036",
+      "details": {
+        "results_found": 0
+      }
+    }
+  ]
+}

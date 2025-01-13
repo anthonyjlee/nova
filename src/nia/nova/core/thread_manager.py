@@ -13,15 +13,56 @@ from nia.memory.two_layer import TwoLayerMemorySystem
 from .error_handling import ResourceNotFoundError, ServiceError
 from qdrant_client.http import models
 
+import os
+from datetime import datetime
+
 # Configure logging with consistent format
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-# Add file handler for persistent logging
-file_handler = logging.FileHandler('thread_manager.log')
-file_handler.setLevel(logging.DEBUG)
-formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-file_handler.setFormatter(formatter)
-logger.addHandler(file_handler)
+
+# Create logs directory if it doesn't exist
+LOGS_DIR = Path("logs/thread_manager")
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+
+# Create session-specific log file
+session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+session_log = LOGS_DIR / f"session_{session_id}.json"
+
+class JsonLogHandler:
+    def __init__(self, log_file):
+        self.log_file = log_file
+        self.logs = []
+        
+    def emit(self, record):
+        log_entry = {
+            "timestamp": datetime.fromtimestamp(record.created).isoformat(),
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "function": record.funcName,
+            "line": record.lineno
+        }
+        
+        # Add exception info if present
+        if record.exc_info:
+            log_entry["exception"] = {
+                "type": record.exc_info[0].__name__,
+                "message": str(record.exc_info[1]),
+                "traceback": traceback.format_exception(*record.exc_info)
+            }
+            
+        self.logs.append(log_entry)
+        self._save_logs()
+        
+    def _save_logs(self):
+        with open(self.log_file, 'w') as f:
+            json.dump({
+                "session_id": session_id,
+                "logs": self.logs
+            }, f, indent=2)
+
+# Add JSON handler
+json_handler = JsonLogHandler(session_log)
+logger.addHandler(json_handler)
 
 class ThreadManager:
     """Manages thread lifecycle and operations."""
@@ -64,9 +105,8 @@ class ThreadManager:
 
                 if result:
                     logger.debug("Found thread in episodic layer")
-                    # Parse the JSON string back into a dict
-                    content = json.loads(result[0]["content"]) if isinstance(result[0]["content"], str) else result[0]["content"]
-                    return content
+                    # Get content directly without parsing
+                    return result[0]["content"]
 
                 # Handle system threads
                 if thread_id in ["nova-team", "nova"]:
@@ -425,10 +465,7 @@ class ThreadManager:
         # Parse JSON strings back into dicts
         threads = []
         for result in results:
-            content = result["content"]
-            if isinstance(content, str):
-                content = json.loads(content)
-            threads.append(content)
+            threads.append(result["content"])
         return threads
 
     async def add_message(self, thread_id: str, message: Dict[str, Any]) -> Dict[str, Any]:

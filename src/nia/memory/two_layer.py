@@ -180,8 +180,20 @@ class EpisodicLayer:
             logger.debug(f"Storing vector in layer: {memory_dict['type'].lower()}")
             logger.debug(f"Storing with metadata: {json.dumps(metadata, indent=2)}")
             
-            # Convert content to string for embedding
-            content_str = json.dumps(memory_dict)
+            # Handle content for embedding based on type
+            if isinstance(memory_dict.get('content'), str):
+                content_str = memory_dict['content']
+            elif isinstance(memory_dict.get('content'), dict):
+                # If content has text field, use that
+                if 'text' in memory_dict['content']:
+                    content_str = memory_dict['content']['text']
+                # Otherwise use the raw dict
+                else:
+                    content_str = str(memory_dict['content'])
+            else:
+                content_str = str(memory_dict.get('content', ''))
+            
+            # Create embedding from processed content
             vector = await self.store.embedding_service.create_embedding(content_str)
             
             # Prepare payload with content and metadata
@@ -289,20 +301,29 @@ class TwoLayerMemorySystem:
     Episodic memories can be consolidated into semantic knowledge over time.
     """
     
-    def __init__(self, neo4j_uri: str = "bolt://localhost:7687", 
+    def __init__(self, neo4j_uri: Optional[str] = None, 
                  vector_store: Optional[VectorStore] = None,
                  llm = None):
         """Initialize the memory system.
         
         Note: This only sets up the basic structure. Call initialize() to fully initialize the system.
         """
+        # Read config
+        import configparser
+        config = configparser.ConfigParser()
+        config.read("config.ini")
+        
         self.vector_store = vector_store
         self.episodic = None  # Will be initialized in initialize()
         self.semantic = None  # Will be initialized in initialize()
         self.consolidation_manager = None
         self._initialized = False
         self.llm = llm
-        self.neo4j_uri = neo4j_uri
+        
+        # Use config values or defaults
+        self.neo4j_uri = neo4j_uri or config.get("NEO4J", "uri", fallback="bolt://localhost:7687")
+        self.neo4j_user = config.get("NEO4J", "user", fallback="neo4j")
+        self.neo4j_password = config.get("NEO4J", "password", fallback="password")
         
     def _create_validation_metadata(
         self,
@@ -328,23 +349,47 @@ class TwoLayerMemorySystem:
                 logger.debug("Creating episodic layer...")
                 self.episodic = EpisodicLayer(self.vector_store)
                 logger.debug("Creating semantic layer...")
-                self.semantic = SemanticLayer(uri=self.neo4j_uri)
+                self.semantic = SemanticLayer(
+                    uri=self.neo4j_uri,
+                    user=self.neo4j_user,
+                    password=self.neo4j_password
+                )
                 
-                # Initialize Neo4j connection
-                logger.debug("Initializing Neo4j connection...")
-                if hasattr(self.semantic, 'connect'):
-                    await self.semantic.connect()
-                    logger.debug("Neo4j connection established")
-                else:
-                    logger.debug("No connect method found for semantic layer")
+                # Initialize connections with retries
+                retry_count = 0
+                max_retries = 5
+                while retry_count < max_retries:
+                    try:
+                        # Try Neo4j connection
+                        if hasattr(self.semantic, 'connect'):
+                            await self.semantic.connect()
+                            logger.debug("Neo4j connection established")
+                        break
+                    except Exception as e:
+                        retry_count += 1
+                        if retry_count == max_retries:
+                            logger.warning(f"Neo4j connection failed after {max_retries} retries: {str(e)}")
+                            # Continue without Neo4j - don't block startup
+                        else:
+                            logger.warning(f"Neo4j connection attempt {retry_count} failed: {str(e)}")
+                            await asyncio.sleep(1)
                 
-                # Initialize vector store if needed
-                logger.debug("Initializing vector store...")
-                if hasattr(self.episodic.store, 'connect'):
-                    await self.episodic.store.connect()
-                    logger.debug("Vector store connection established")
-                else:
-                    logger.debug("No connect method found for vector store")
+                # Initialize vector store separately
+                retry_count = 0
+                while retry_count < max_retries:
+                    try:
+                        if hasattr(self.episodic.store, 'connect'):
+                            await self.episodic.store.connect()
+                            logger.debug("Vector store connection established")
+                        break
+                    except Exception as e:
+                        retry_count += 1
+                        if retry_count == max_retries:
+                            logger.warning(f"Vector store connection failed after {max_retries} retries: {str(e)}")
+                            # Continue without vector store - don't block startup
+                        else:
+                            logger.warning(f"Vector store connection attempt {retry_count} failed: {str(e)}")
+                            await asyncio.sleep(1)
                     
                 self._initialized = True
                 logger.info("Memory system initialization complete")
@@ -574,11 +619,11 @@ class TwoLayerMemorySystem:
                         "name": f"concept_{datetime.now().isoformat()}",
                         "type": "concept",
                         "description": memory.content if isinstance(memory.content, str) else memory.content.get("text", ""),
-                        "validation": json.dumps(ValidationSchema(
+                        "validation": ValidationSchema(
                             domain=memory.context.get("domain", "general"),
                             source=memory.context.get("source", "system"),
                             confidence=memory.importance
-                        ).dict()) if memory.context else None
+                        ).dict() if memory.context else None
                     }
                 )
             return memory_id
@@ -649,15 +694,15 @@ class SemanticLayer(ConceptStore):
             description=content
         )
     
-    def __init__(self, store: Optional[Neo4jMemoryStore] = None, uri: str = "bolt://localhost:7687"):
+    def __init__(self, store: Optional[Neo4jMemoryStore] = None, uri: str = "bolt://localhost:7687", user: str = "neo4j", password: str = "password"):
         try:
             logger.debug(f"Initializing SemanticLayer with URI: {uri}")
             if store is None:
                 logger.debug("No store provided, creating new ConceptStore")
                 super().__init__(
                     uri=uri,
-                    user="neo4j",
-                    password="password",
+                    user=user,
+                    password=password,
                     max_retry_time=30,
                     retry_interval=1
                 )

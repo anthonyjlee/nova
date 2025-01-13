@@ -3,6 +3,7 @@
 import json
 import logging
 import re
+import asyncio
 from typing import Dict, List, Any, Optional, TYPE_CHECKING
 from datetime import datetime
 from ..types.memory_types import AgentResponse
@@ -26,6 +27,7 @@ class LLMInterface:
         self.parser = None  # Will be set after initialization
         self.use_mock = use_mock
         self.base_url = "http://localhost:1234/v1"
+        self._initialized = False
         
         # Configure logging
         self.logger = logging.getLogger(__name__)
@@ -36,7 +38,42 @@ class LLMInterface:
         self.logger.addHandler(handler)
         self.logger.setLevel(logging.DEBUG)
         
-    async def check_lmstudio(self) -> bool:
+    async def initialize(self) -> None:
+        """Initialize LLM interface with retries."""
+        if self._initialized:
+            return
+            
+        retry_count = 0
+        max_retries = 5
+        
+        while retry_count < max_retries:
+            try:
+                self.logger.debug(f"Attempting LLM initialization (attempt {retry_count + 1}/{max_retries})")
+                
+                # Check LMStudio connection with retries
+                if not self.use_mock:
+                    is_running = await self.check_lmstudio(retry=True)
+                    if not is_running:
+                        raise Exception("LMStudio is not running")
+                        
+                self._initialized = True
+                self.logger.debug("LLM interface initialization complete")
+                return
+                
+            except Exception as e:
+                retry_count += 1
+                if retry_count == max_retries:
+                    self.logger.warning(f"LLM initialization failed after {max_retries} retries: {str(e)}")
+                    # Continue without full initialization in non-mock mode
+                    if not self.use_mock:
+                        self.logger.warning("Continuing in mock mode due to initialization failure")
+                        self.use_mock = True
+                        self._initialized = True
+                    break
+                self.logger.warning(f"LLM initialization attempt {retry_count} failed: {str(e)}")
+                await asyncio.sleep(1)
+        
+    async def check_lmstudio(self, retry: bool = False) -> bool:
         """Check if LMStudio is running and get available models."""
         from openai import AsyncOpenAI
         try:
@@ -46,20 +83,35 @@ class LLMInterface:
                 api_key="lm-studio"  # LMStudio accepts any non-empty string
             )
             
-            # Check models endpoint
-            models = await client.models.list()
-            if not models.data:
-                return False
+            retry_count = 0
+            max_retries = 5 if retry else 1
             
-            # Test chat completions endpoint
-            test_completion = await client.chat.completions.create(
-                model=models.data[0].id,
-                messages=[{"role": "user", "content": "test"}],
-                max_tokens=1,
-                temperature=0.7
-            )
+            while retry_count < max_retries:
+                try:
+                    # Check models endpoint
+                    models = await client.models.list()
+                    if not models.data:
+                        raise Exception("No models available")
+                    
+                    # Test chat completions endpoint
+                    test_completion = await client.chat.completions.create(
+                        model=models.data[0].id,
+                        messages=[{"role": "user", "content": "test"}],
+                        max_tokens=1,
+                        temperature=0.7
+                    )
+                    
+                    return bool(test_completion.choices)
+                    
+                except Exception as e:
+                    retry_count += 1
+                    if retry_count == max_retries:
+                        self.logger.warning(f"LMStudio check failed after {max_retries} retries: {str(e)}")
+                        return False
+                    self.logger.warning(f"LMStudio check attempt {retry_count} failed: {str(e)}")
+                    await asyncio.sleep(1)
             
-            return bool(test_completion.choices)
+            return False
             
         except Exception as e:
             self.logger.error(f"Error checking LMStudio: {str(e)}")

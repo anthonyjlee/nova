@@ -16,8 +16,8 @@ logger.setLevel(logging.DEBUG)
 # Initialize Celery app
 celery_app = Celery(
     'nova',
-    broker='redis://localhost:6379/0',
-    backend='redis://localhost:6379/1'
+    broker='redis://redis:6379/0',  # Use Docker service name
+    backend='redis://redis:6379/1'  # Use Docker service name
 )
 
 # Configure Celery

@@ -564,7 +564,7 @@ async def add_message(
                 "type": "message",
                 "domain": request.metadata.get("domain", "general") if request.metadata else "general",
                 "importance": request.metadata.get("importance", 0.5) if request.metadata else 0.5,
-                **request.metadata if request.metadata else {}
+                **(request.metadata if request.metadata else {})
             }
         )
         

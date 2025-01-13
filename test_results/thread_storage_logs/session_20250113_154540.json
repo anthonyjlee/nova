@@ -1,0 +1,109 @@
+{
+  "session_id": "20250113_154540",
+  "logs": [
+    {
+      "timestamp": "2025-01-13T15:45:40.513521",
+      "level": "INFO",
+      "message": "Initializing components...",
+      "function": "run_tests",
+      "line": 202,
+      "thread_id": 8162636352,
+      "process_id": 61354,
+      "test_phase": null,
+      "test_result": null
+    },
+    {
+      "timestamp": "2025-01-13T15:45:54.458972",
+      "level": "INFO",
+      "message": "All tests completed successfully",
+      "function": "run_tests",
+      "line": 220,
+      "thread_id": 8162636352,
+      "process_id": 61354,
+      "test_phase": null,
+      "test_result": null
+    },
+    {
+      "timestamp": "2025-01-13T15:45:54.460754",
+      "level": "INFO",
+      "message": "Test vector_store_connect: PASSED",
+      "function": "save_results",
+      "line": 110,
+      "thread_id": 8162636352,
+      "process_id": 61354,
+      "test_phase": "vector_store_connect",
+      "test_result": true
+    },
+    {
+      "timestamp": "2025-01-13T15:45:54.460922",
+      "level": "INFO",
+      "message": "Test vector_store_add: PASSED",
+      "function": "save_results",
+      "line": 110,
+      "thread_id": 8162636352,
+      "process_id": 61354,
+      "test_phase": "vector_store_add",
+      "test_result": true
+    },
+    {
+      "timestamp": "2025-01-13T15:45:54.461058",
+      "level": "INFO",
+      "message": "Test vector_store_search: PASSED",
+      "function": "save_results",
+      "line": 110,
+      "thread_id": 8162636352,
+      "process_id": 61354,
+      "test_phase": "vector_store_search",
+      "test_result": true
+    },
+    {
+      "timestamp": "2025-01-13T15:45:54.461354",
+      "level": "INFO",
+      "message": "Test memory_system_init: PASSED",
+      "function": "save_results",
+      "line": 110,
+      "thread_id": 8162636352,
+      "process_id": 61354,
+      "test_phase": "memory_system_init",
+      "test_result": true
+    },
+    {
+      "timestamp": "2025-01-13T15:45:54.461665",
+      "level": "INFO",
+      "message": "Test store_experience: PASSED",
+      "function": "save_results",
+      "line": 110,
+      "thread_id": 8162636352,
+      "process_id": 61354,
+      "test_phase": "store_experience",
+      "test_result": true
+    },
+    {
+      "timestamp": "2025-01-13T15:45:54.462113",
+      "level": "INFO",
+      "message": "Test query_episodic: PASSED",
+      "function": "save_results",
+      "line": 110,
+      "thread_id": 8162636352,
+      "process_id": 61354,
+      "test_phase": "query_episodic",
+      "test_result": true
+    },
+    {
+      "timestamp": "2025-01-13T15:45:54.462400",
+      "level": "INFO",
+      "message": "Test results saved to: test_results/thread_storage_logs/test_results_20250113_154554.json",
+      "function": "run_tests",
+      "line": 231,
+      "thread_id": 8162636352,
+      "process_id": 61354,
+      "test_phase": null,
+      "test_result": null
+    }
+  ],
+  "summary": {
+    "total_tests": 6,
+    "passed": 6,
+    "failed": 0
+  }
+}

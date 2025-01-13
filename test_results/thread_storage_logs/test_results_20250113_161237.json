@@ -1,0 +1,157 @@
+{
+  "session_id": "20250113_161144",
+  "summary": {
+    "total_tests": 22,
+    "passed": 21,
+    "failed": 1
+  },
+  "results": [
+    {
+      "test_name": "neo4j_check",
+      "success": true,
+      "timestamp": "2025-01-13T16:11:51.743596",
+      "details": {}
+    },
+    {
+      "test_name": "qdrant_check",
+      "success": true,
+      "timestamp": "2025-01-13T16:11:58.487460",
+      "details": {}
+    },
+    {
+      "test_name": "vector_store",
+      "success": true,
+      "timestamp": "2025-01-13T16:12:05.224265",
+      "details": {
+        "point_id": "ed351bbf-58ab-4374-a87c-538275a69f54"
+      }
+    },
+    {
+      "test_name": "vector_inspect",
+      "success": true,
+      "timestamp": "2025-01-13T16:12:05.234514",
+      "details": {
+        "points_count": 56
+      }
+    },
+    {
+      "test_name": "vector_delete",
+      "success": true,
+      "timestamp": "2025-01-13T16:12:05.236901",
+      "details": {}
+    },
+    {
+      "test_name": "neo4j_node_create",
+      "success": true,
+      "timestamp": "2025-01-13T16:12:11.952361",
+      "details": {}
+    },
+    {
+      "test_name": "neo4j_node_delete",
+      "success": true,
+      "timestamp": "2025-01-13T16:12:11.955526",
+      "details": {}
+    },
+    {
+      "test_name": "vector_store_connect",
+      "success": true,
+      "timestamp": "2025-01-13T16:12:18.614668",
+      "details": {}
+    },
+    {
+      "test_name": "vector_store_add",
+      "success": true,
+      "timestamp": "2025-01-13T16:12:18.633359",
+      "details": {
+        "point_id": "9ad78d28-cf52-4d2e-9869-b14d0a92c9c0"
+      }
+    },
+    {
+      "test_name": "vector_store_search",
+      "success": true,
+      "timestamp": "2025-01-13T16:12:18.647007",
+      "details": {
+        "results_found": 0
+      }
+    },
+    {
+      "test_name": "memory_system_init",
+      "success": true,
+      "timestamp": "2025-01-13T16:12:25.356183",
+      "details": {}
+    },
+    {
+      "test_name": "store_experience",
+      "success": true,
+      "timestamp": "2025-01-13T16:12:25.391950",
+      "details": {
+        "memory_id": "3ee47ca2-4589-4a84-b42b-c429a5610def"
+      }
+    },
+    {
+      "test_name": "query_episodic",
+      "success": true,
+      "timestamp": "2025-01-13T16:12:25.405300",
+      "details": {
+        "results_found": 0
+      }
+    },
+    {
+      "test_name": "system_thread_create",
+      "success": true,
+      "timestamp": "2025-01-13T16:12:32.300799",
+      "details": {}
+    },
+    {
+      "test_name": "agent_thread_create",
+      "success": true,
+      "timestamp": "2025-01-13T16:12:32.325555",
+      "details": {}
+    },
+    {
+      "test_name": "invalid_thread",
+      "success": true,
+      "timestamp": "2025-01-13T16:12:32.340993",
+      "details": {}
+    },
+    {
+      "test_name": "consolidation_create",
+      "success": true,
+      "timestamp": "2025-01-13T16:12:32.364008",
+      "details": {}
+    },
+    {
+      "test_name": "cross_domain_create",
+      "success": true,
+      "timestamp": "2025-01-13T16:12:32.387913",
+      "details": {}
+    },
+    {
+      "test_name": "thread_relationships",
+      "success": true,
+      "timestamp": "2025-01-13T16:12:32.431521",
+      "details": {}
+    },
+    {
+      "test_name": "thread_create",
+      "success": true,
+      "timestamp": "2025-01-13T16:12:32.454449",
+      "details": {}
+    },
+    {
+      "test_name": "thread_update",
+      "success": true,
+      "timestamp": "2025-01-13T16:12:32.478345",
+      "details": {}
+    },
+    {
+      "test_name": "thread_operations_test",
+      "success": false,
+      "timestamp": "2025-01-13T16:12:37.575034",
+      "details": {
+        "error": "Failed to verify thread update: No results found",
+        "traceback": "Traceback (most recent call last):\n  File \"/Users/alee5331/Documents/Projects/NIA/scripts/test_thread_storage.py\", line 614, in test_thread_operations\n    raise Exception(\nException: Failed to verify thread update: No results found\n"
+      }
+    }
+  ]
+}

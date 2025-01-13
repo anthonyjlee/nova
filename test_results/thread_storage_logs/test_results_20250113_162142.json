@@ -1,0 +1,53 @@
+{
+  "session_id": "20250113_162115",
+  "summary": {
+    "total_tests": 6,
+    "passed": 5,
+    "failed": 1
+  },
+  "results": [
+    {
+      "test_name": "neo4j_check",
+      "success": true,
+      "timestamp": "2025-01-13T16:21:22.380660",
+      "details": {}
+    },
+    {
+      "test_name": "qdrant_check",
+      "success": true,
+      "timestamp": "2025-01-13T16:21:29.102784",
+      "details": {}
+    },
+    {
+      "test_name": "vector_store",
+      "success": true,
+      "timestamp": "2025-01-13T16:21:35.877813",
+      "details": {
+        "point_id": "a4964cb4-ec91-4e65-8d0d-e080ecd33ad0"
+      }
+    },
+    {
+      "test_name": "vector_inspect",
+      "success": true,
+      "timestamp": "2025-01-13T16:21:35.889889",
+      "details": {
+        "points_count": 89
+      }
+    },
+    {
+      "test_name": "vector_delete",
+      "success": true,
+      "timestamp": "2025-01-13T16:21:35.892690",
+      "details": {}
+    },
+    {
+      "test_name": "direct_api_test",
+      "success": false,
+      "timestamp": "2025-01-13T16:21:42.704392",
+      "details": {
+        "error": "{code: Neo.ClientError.Statement.TypeError} {message: Property values can only be of primitive types or arrays thereof. Encountered: Map{description -> String(\"Test node\"), pinned -> Boolean('false')}.}",
+        "traceback": "Traceback (most recent call last):\n  File \"/Users/alee5331/Documents/Projects/NIA/scripts/test_thread_storage.py\", line 172, in test_direct_api\n    create_result = await memory_system.semantic.run_query(\n                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/alee5331/Documents/Projects/NIA/src/nia/core/neo4j/base_store.py\", line 100, in run_query\n    records = await result.data()\n              ^^^^^^^^^^^^^^^^^^^\n  File \"/Users/alee5331/Documents/Projects/NIA/.venv/lib/python3.12/site-packages/neo4j/_async/work/result.py\", line 777, in data\n    return [record.data(*keys) async for record in self]\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/alee5331/Documents/Projects/NIA/.venv/lib/python3.12/site-packages/neo4j/_async/work/result.py\", line 393, in __aiter__\n    await self._connection.fetch_message()\n  File \"/Users/alee5331/Documents/Projects/NIA/.venv/lib/python3.12/site-packages/neo4j/_async/io/_common.py\", line 195, in inner\n    await coroutine_func(*args, **kwargs)\n  File \"/Users/alee5331/Documents/Projects/NIA/.venv/lib/python3.12/site-packages/neo4j/_async/io/_bolt.py\", line 994, in fetch_message\n    res = await self._process_message(tag, fields)\n          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/Users/alee5331/Documents/Projects/NIA/.venv/lib/python3.12/site-packages/neo4j/_async/io/_bolt4.py\", line 494, in _process_message\n    await response.on_failure(summary_metadata or {})\n  File \"/Users/alee5331/Documents/Projects/NIA/.venv/lib/python3.12/site-packages/neo4j/_async/io/_common.py\", line 254, in on_failure\n    raise self._hydrate_error(metadata)\nneo4j.exceptions.CypherTypeError: {code: Neo.ClientError.Statement.TypeError} {message: Property values can only be of primitive types or arrays thereof. Encountered: Map{description -> String(\"Test node\"), pinned -> Boolean('false')}.}\n"
+      }
+    }
+  ]
+}

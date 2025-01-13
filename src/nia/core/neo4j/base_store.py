@@ -149,6 +149,24 @@ class Neo4jMemoryStore(Neo4jBaseStore):
             # Generate memory ID if not provided
             memory_id = memory_data.get("id", str(datetime.now().timestamp()))
             
+            # Log incoming memory data
+            logger.info("Storing memory with data:")
+            logger.info(f"Memory ID: {memory_id}")
+            logger.info(f"Raw memory data: {json.dumps(memory_data, indent=2)}")
+            
+            # Prepare parameters
+            params = {
+                "id": memory_id,
+                "type": memory_data.get("type", "episodic"),
+                "content": json.dumps(memory_data.get("content", {})),  # Serialize content for Neo4j
+                "timestamp": memory_data.get("timestamp", datetime.now().isoformat()),
+                "importance": memory_data.get("importance", 0.5)
+            }
+            
+            # Log prepared parameters
+            logger.info("Prepared Neo4j parameters:")
+            logger.info(json.dumps(params, indent=2))
+            
             # Create memory node
             query = """
             CREATE (m:Memory {
@@ -161,16 +179,14 @@ class Neo4jMemoryStore(Neo4jBaseStore):
             RETURN m
             """
             
-            result = await self.run_query(
-                query,
-                {
-                    "id": memory_id,
-                    "type": memory_data.get("type", "episodic"),
-                    "content": json.dumps(memory_data.get("content", {})),
-                    "timestamp": memory_data.get("timestamp", datetime.now().isoformat()),
-                    "importance": memory_data.get("importance", 0.5)
-                }
-            )
+            logger.info("Executing Neo4j query:")
+            logger.info(query)
+            
+            result = await self.run_query(query, params)
+            
+            # Log result
+            logger.info("Neo4j store result:")
+            logger.info(json.dumps(result, indent=2))
             
             return memory_id
         except Exception as e:
