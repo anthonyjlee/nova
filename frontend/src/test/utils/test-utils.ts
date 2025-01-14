@@ -43,6 +43,7 @@ export class TestContext {
 }
 
 export class TaskTestContext extends TestContext {
+    public generateId = () => Math.random().toString(36).substr(2, 9);
     public websocket = {
         isConnected: false,
         handlers: new Map<string, ((event: WebSocketMessage) => void)[]>(),

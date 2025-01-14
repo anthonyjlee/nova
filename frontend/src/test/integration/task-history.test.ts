@@ -10,8 +10,11 @@ import {
     createUpdateEvent,
     createCommentEvent,
     createAssignmentEvent,
-    initializeTaskHistory
+    createAgentInteraction,
+    initializeTaskHistory,
+    type AgentInteraction
 } from '$lib/types/history';
+
 // Mock the websocket store
 vi.mock('$lib/stores/websocket', () => ({
     tasksSocket: {
@@ -28,6 +31,8 @@ describe('Task History Integration', () => {
 
     beforeEach(() => {
         context = new TaskTestContext();
+        // Add generateId method to context
+        context.generateId = () => Math.random().toString(36).substr(2, 9);
         // Replace the mock implementation with our test context
         tasksSocket.connect = () => context.websocket.connect();
         tasksSocket.disconnect = () => context.websocket.disconnect();
@@ -51,7 +56,7 @@ describe('Task History Integration', () => {
             const task = context.addTask({
                 status: TaskState.PENDING,
                 metadata: {
-                    ...initializeTaskHistory()
+                    ...initializeTaskHistory(context.generateId())
                 }
             });
 
@@ -61,7 +66,7 @@ describe('Task History Integration', () => {
             context.updateTask(task.id, {
                 status: TaskState.IN_PROGRESS,
                 metadata: {
-                    ...initializeTaskHistory(),
+                    ...initializeTaskHistory(task.id),
                     state_history: [
                         createStateChangeEvent(TaskState.PENDING, TaskState.IN_PROGRESS)
                     ]
@@ -74,7 +79,7 @@ describe('Task History Integration', () => {
             context.updateTask(task.id, {
                 status: TaskState.COMPLETED,
                 metadata: {
-                    ...initializeTaskHistory(),
+                    ...initializeTaskHistory(task.id),
                     state_history: [
                         createStateChangeEvent(TaskState.PENDING, TaskState.IN_PROGRESS),
                         createStateChangeEvent(TaskState.IN_PROGRESS, TaskState.COMPLETED)
@@ -102,7 +107,7 @@ describe('Task History Integration', () => {
             const task = context.addTask({
                 label: 'Initial Label',
                 metadata: {
-                    ...initializeTaskHistory()
+                    ...initializeTaskHistory(context.generateId())
                 }
             });
 
@@ -112,7 +117,7 @@ describe('Task History Integration', () => {
             context.updateTask(task.id, {
                 label: 'Updated Label',
                 metadata: {
-                    ...initializeTaskHistory(),
+                    ...initializeTaskHistory(task.id),
                     update_history: [
                         createUpdateEvent('label', 'Initial Label', 'Updated Label')
                     ]
@@ -139,7 +144,7 @@ describe('Task History Integration', () => {
             // Create task
             const task = context.addTask({
                 metadata: {
-                    ...initializeTaskHistory()
+                    ...initializeTaskHistory(context.generateId())
                 }
             });
 
@@ -148,7 +153,7 @@ describe('Task History Integration', () => {
             // Add comment
             context.updateTask(task.id, {
                 metadata: {
-                    ...initializeTaskHistory(),
+                    ...initializeTaskHistory(task.id),
                     comments: [
                         createCommentEvent('First comment', 'user1')
                     ]
@@ -160,7 +165,7 @@ describe('Task History Integration', () => {
             // Add another comment
             context.updateTask(task.id, {
                 metadata: {
-                    ...initializeTaskHistory(),
+                    ...initializeTaskHistory(task.id),
                     comments: [
                         createCommentEvent('First comment', 'user1'),
                         createCommentEvent('Second comment', 'user2')
@@ -188,7 +193,7 @@ describe('Task History Integration', () => {
             const task = context.addTask({
                 assignee: 'user1',
                 metadata: {
-                    ...initializeTaskHistory()
+                    ...initializeTaskHistory(context.generateId())
                 }
             });
 
@@ -198,7 +203,7 @@ describe('Task History Integration', () => {
             context.updateTask(task.id, {
                 assignee: 'user2',
                 metadata: {
-                    ...initializeTaskHistory(),
+                    ...initializeTaskHistory(task.id),
                     assignment_history: [
                         createAssignmentEvent('user1', 'user2')
                     ]
@@ -223,7 +228,7 @@ describe('Task History Integration', () => {
             const task = context.addTask({
                 assignee: 'user1',
                 metadata: {
-                    assignment_history: []
+                    ...initializeTaskHistory(context.generateId())
                 }
             });
 
@@ -233,7 +238,7 @@ describe('Task History Integration', () => {
             context.updateTask(task.id, {
                 assignee: undefined,
                 metadata: {
-                    ...initializeTaskHistory(),
+                    ...initializeTaskHistory(task.id),
                     assignment_history: [
                         createAssignmentEvent('user1', null)
                     ]
@@ -247,6 +252,55 @@ describe('Task History Integration', () => {
             expect(updatedTask.assignee).toBeUndefined();
             const history = updatedTask.metadata.assignment_history as Array<{from: string, to: string | null}>;
             expect(history[0].to).toBeNull();
+        });
+    });
+
+    describe('Agent Interactions', () => {
+        it('should track agent interactions', async () => {
+            const { component } = render(TaskBoard);
+            const board = component as unknown as { tasks: Task[] };
+
+            // Create task
+            const task = context.addTask({
+                metadata: {
+                    ...initializeTaskHistory(context.generateId())
+                }
+            });
+
+            await wait.forWebSocket();
+
+            // Add agent interaction
+            context.updateTask(task.id, {
+                metadata: {
+                    ...initializeTaskHistory(task.id),
+                    agent_interactions: [
+                        createAgentInteraction('message', 'Agent response', { context: 'test' })
+                    ]
+                }
+            });
+
+            await wait.forWebSocket();
+
+            // Add another interaction
+            context.updateTask(task.id, {
+                metadata: {
+                    ...initializeTaskHistory(task.id),
+                    agent_interactions: [
+                        createAgentInteraction('message', 'Agent response', { context: 'test' }),
+                        createAgentInteraction('task', 'Task update')
+                    ]
+                }
+            });
+
+            await wait.forWebSocket();
+
+            // Verify interactions
+            const updatedTask = assertions.taskExists(board.tasks, task.id);
+            const interactions = updatedTask.metadata.agent_interactions as AgentInteraction[];
+            expect(interactions).toHaveLength(2);
+            expect(interactions[0].type).toBe('message');
+            expect(interactions[1].type).toBe('task');
+            expect(interactions[0].context).toEqual({ context: 'test' });
         });
     });
 });
