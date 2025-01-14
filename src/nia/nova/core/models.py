@@ -1,7 +1,7 @@
 """Models for Nova endpoints."""
 
 from pydantic import BaseModel, Field, validator
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List, Union, Literal
 from datetime import datetime
 from enum import Enum
 
@@ -11,6 +11,8 @@ class TaskState(str, Enum):
     IN_PROGRESS = "in_progress"
     BLOCKED = "blocked"
     COMPLETED = "completed"
+
+TaskPriority = Literal["high", "medium", "low"]
 
 class TaskStateTransition(BaseModel):
     """Valid task state transitions."""
@@ -34,8 +36,15 @@ class MessageResponse(BaseModel):
     content: str
     timestamp: str
 
+class SubTask(BaseModel):
+    """SubTask model."""
+    id: str
+    description: str
+    completed: bool = False
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+
 class TaskNode(BaseModel):
-    """Task node model."""
+    """Task node model matching frontend Task interface."""
     id: str
     label: str
     type: str = "task"
@@ -43,14 +52,31 @@ class TaskNode(BaseModel):
     description: Optional[str] = None
     team_id: Optional[str] = None
     domain: Optional[str] = None
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    updated_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
     metadata: Dict[str, Any] = Field(default_factory=dict)
+    # Backward compatibility fields
+    title: Optional[str] = None
+    priority: Optional[TaskPriority] = None
+    assignee: Optional[str] = None
+    dueDate: Optional[str] = None
+    tags: Optional[List[str]] = None
+    time_active: Optional[int] = None
+    dependencies: Optional[List[str]] = None
+    blocked_by: Optional[List[str]] = None
+    sub_tasks: Optional[List[SubTask]] = None
+    completed: Optional[bool] = None
 
     @validator('status')
     def validate_status(cls, v):
         if isinstance(v, str):
             return TaskState(v)
+        return v
+
+    @validator('created_at', 'updated_at')
+    def validate_dates(cls, v):
+        if isinstance(v, datetime):
+            return v.isoformat()
         return v
 
 class TaskEdge(BaseModel):
@@ -60,13 +86,21 @@ class TaskEdge(BaseModel):
     type: str
     label: Optional[str] = None
 
+class Comment(BaseModel):
+    """Comment model."""
+    id: str
+    content: str
+    author: str
+    timestamp: str
+    edited: Optional[bool] = None
+
 class TaskDetails(BaseModel):
     """Extended task details model."""
     task: TaskNode
     dependencies: List[str] = Field(default_factory=list)
     blocked_by: List[str] = Field(default_factory=list)
-    sub_tasks: List[Dict[str, Any]] = Field(default_factory=list)
-    comments: List[Dict[str, Any]] = Field(default_factory=list)
+    sub_tasks: List[SubTask] = Field(default_factory=list)
+    comments: List[Comment] = Field(default_factory=list)
     time_active: Optional[str] = None
     domain_access: List[str] = Field(default_factory=list)
 
@@ -78,6 +112,13 @@ class TaskUpdate(BaseModel):
     team_id: Optional[str] = None
     domain: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
+    # Backward compatibility fields
+    title: Optional[str] = None
+    priority: Optional[TaskPriority] = None
+    assignee: Optional[str] = None
+    dueDate: Optional[str] = None
+    tags: Optional[List[str]] = None
+    completed: Optional[bool] = None
 
     @validator('status')
     def validate_status(cls, v):
@@ -161,6 +202,7 @@ class AgentTeam(BaseModel):
     status: str
     channel_id: str
     metadata: Dict[str, Any] = Field(default_factory=dict)
+
 class Concept(BaseModel):
     """Concept model for analysis."""
     name: str
@@ -406,8 +448,6 @@ class LLMAnalyticsResult(BaseModel):
     """Analytics result from LLM using outlines.generate.json."""
     response: str = Field(..., description="The analysis response")
     confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score between 0 and 1")
-
-from typing import Literal
 
 class LLMErrorResponse(BaseModel):
     """Error response from LLM using outlines.generate.json."""

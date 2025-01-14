@@ -11,6 +11,8 @@ import sys
 import traceback
 import asyncio
 
+from .api_docs import API_DESCRIPTION
+
 # Configure minimal logging
 import logging
 from datetime import datetime, time
@@ -88,70 +90,7 @@ from .dependencies import get_memory_system, get_thread_manager
 # Create FastAPI app
 app = FastAPI(
     title="Nova API",
-    description="""
-Nova's analytics and orchestration API
-
-## Chat & Thread Endpoints
-
-### Thread Management (/api/chat/threads)
-- POST /threads/create - Create new thread
-- GET /threads/{thread_id} - Get thread details
-- POST /threads/{thread_id}/messages - Add message
-- GET /threads - List all threads
-
-## WebSocket Endpoints (/api/ws)
-
-### Chat WebSocket (/api/ws/chat/{client_id})
-Real-time chat updates including:
-- New messages
-- Thread updates
-- Message reactions
-- Typing indicators
-
-### Tasks WebSocket (/api/ws/tasks/{client_id})
-Real-time task board updates including:
-- Task state changes
-- Assignment updates
-- Comment notifications
-- Progress tracking
-
-### Agents WebSocket (/api/ws/agents/{client_id})
-Real-time agent status updates including:
-- Agent state changes
-- Team updates
-- Performance metrics
-- Capability changes
-
-### Graph WebSocket (/api/ws/graph/{client_id})
-Real-time knowledge graph updates including:
-- Node updates
-- Edge modifications
-- Domain changes
-- Relationship tracking
-
-Example connection:
-```javascript
-const ws = new WebSocket('ws://localhost:8000/api/ws/chat/client123');
-ws.onmessage = (event) => {
-    const data = JSON.parse(event.data);
-    console.log('Received:', data);
-};
-```
-
-Message Format:
-```typescript
-interface WebSocketMessage {
-    type: string;          // Message type (e.g. 'message', 'status', 'update')
-    data: any;            // Message payload
-    timestamp: string;    // ISO timestamp
-    metadata?: {          // Optional metadata
-        source?: string;
-        domain?: string;
-        importance?: number;
-    }
-}
-```
-""",
+    description=API_DESCRIPTION,
     version="0.1.0"
 )
 
