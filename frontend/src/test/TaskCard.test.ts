@@ -1,8 +1,8 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render } from '@testing-library/svelte';
 import TaskCard from '$lib/components/TaskCard.svelte';
-import { TaskState } from '$lib/types/task';
 import type { Task } from '$lib/types/task';
+import { TaskState } from '$lib/types/task';
 import { ValidationError } from '$lib/utils/validation';
 
 describe('TaskCard', () => {

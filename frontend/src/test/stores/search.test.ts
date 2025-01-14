@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { get } from 'svelte/store';
 import { searchStore, searchText, searchFilter, searchSort, searchPagination } from '$lib/stores/search';
+import type { TaskFilter, SearchQuery, SortConfig } from '$lib/validation/schemas';
 import { TaskState } from '$lib/types/task';
-import type { TaskFilter, SearchQuery, SortConfig } from '$lib/types/search';
+import { schemas } from '$lib/utils/validation';
 
 describe('Search Store', () => {
     beforeEach(() => {
@@ -126,7 +127,7 @@ describe('Search Store', () => {
             const query = get(searchStore);
             const response = {
                 tasks: [
-                    {
+                    schemas.TaskSchema.parse({
                         id: '1',
                         label: 'Test Task',
                         type: 'task',
@@ -134,7 +135,7 @@ describe('Search Store', () => {
                         created_at: '2025-01-15T00:00:00Z',
                         updated_at: '2025-01-15T00:00:00Z',
                         metadata: {}
-                    }
+                    })
                 ],
                 totalItems: 1,
                 totalPages: 1

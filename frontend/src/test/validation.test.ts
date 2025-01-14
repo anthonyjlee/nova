@@ -12,7 +12,8 @@ import {
     ValidationError,
     validateTaskUpdate,
     validateTaskSearch,
-    validateTaskSearchResult
+    validateTaskSearchResult,
+    schemas
 } from '$lib/utils/validation';
 import { TaskState } from '$lib/types/task';
 import type { Task, TaskDetails, Comment } from '$lib/types/task';
@@ -392,19 +393,19 @@ describe('Validation', () => {
 
     describe('Assert Valid', () => {
         it('should not throw for valid data', () => {
-            expect(() => assertValid(validTask, validateTask, 'Invalid task')).not.toThrow();
+            expect(() => assertValid(validTask, schemas.TaskSchema, 'Invalid task')).not.toThrow();
         });
 
         it('should throw ValidationError for invalid data', () => {
             const invalidTask = { ...validTask, id: '' };
-            expect(() => assertValid(invalidTask, validateTask, 'Invalid task'))
+            expect(() => assertValid(invalidTask, schemas.TaskSchema, 'Invalid task'))
                 .toThrow(ValidationError);
         });
 
         it('should include details in error', () => {
             const invalidTask = { ...validTask, id: '' };
             try {
-                assertValid(invalidTask, validateTask, 'Invalid task');
+                assertValid(invalidTask, schemas.TaskSchema, 'Invalid task');
             } catch (error) {
                 expect(error).toBeInstanceOf(ValidationError);
                 expect((error as ValidationError).details).toBeDefined();

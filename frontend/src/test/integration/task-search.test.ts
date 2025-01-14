@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render } from '@testing-library/svelte';
 import TaskBoard from '$lib/components/TaskBoard.svelte';
-import { TaskState } from '$lib/types/task';
 import type { Task } from '$lib/types/task';
-import { TaskTestContext, assertions, wait } from '../utils/test-utils';
+import { TaskState } from '$lib/types/task';
+import { TaskTestContext, wait } from '../utils/test-utils';
 import { tasksSocket } from '$lib/stores/websocket';
 import type { TaskSearchMessage } from '$lib/types/websocket';
 import {

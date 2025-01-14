@@ -1,8 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, fireEvent } from '@testing-library/svelte';
 import TaskColumn from '$lib/components/TaskColumn.svelte';
-import { TaskState } from '$lib/types/task';
 import type { Task } from '$lib/types/task';
+import { TaskState } from '$lib/types/task';
 import { ValidationError } from '$lib/utils/validation';
 
 describe('TaskColumn', () => {
@@ -71,7 +71,13 @@ describe('TaskColumn', () => {
                 });
 
                 // Test invalid transitions
-                Object.values(TaskState)
+                const allStates: TaskState[] = [
+                    TaskState.PENDING,
+                    TaskState.IN_PROGRESS,
+                    TaskState.BLOCKED,
+                    TaskState.COMPLETED
+                ];
+                allStates
                     .filter(state => !toStates.includes(state) && state !== fromState)
                     .forEach(invalidState => {
                         it(`should not allow transition to ${invalidState}`, () => {

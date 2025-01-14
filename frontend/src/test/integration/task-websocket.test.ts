@@ -4,8 +4,8 @@ import TaskBoard from '$lib/components/TaskBoard.svelte';
 import { tasksSocket } from '$lib/stores/websocket';
 import { ValidationError } from '$lib/utils/validation';
 import type { TaskUpdate, TaskSearchMessage, TaskSearchResultMessage, WebSocketState } from '$lib/types/websocket';
-import { TaskState } from '$lib/types/task';
 import type { TaskFilter } from '$lib/types/search';
+import { TaskState } from '$lib/types/task';
 import { wait } from '../utils/test-utils';
 import { createDefaultPagination, createDefaultSort } from '$lib/types/search';
 

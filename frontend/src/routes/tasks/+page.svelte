@@ -1,63 +1,35 @@
 <script lang="ts">
-import { onMount } from 'svelte';
-import { addMetric } from '$lib/utils/performance';
-import LoadingSpinner from '$lib/components/LoadingSpinner.svelte';
-import ErrorBoundary from '$lib/components/ErrorBoundary.svelte';
-import type { PerformanceMetric } from '$lib/types/performance';
+import Layout from '$lib/components/layout/Layout.svelte';
+import TaskBoard from '$lib/components/TaskBoard.svelte';
+import TaskDetailsPanel from '$lib/components/TaskDetails.svelte';
+import { appStore } from '$lib/stores/app';
+import type { Task, TaskDetails } from '$lib/types/task';
 
-let TaskBoard: typeof import('$lib/components/TaskBoard.svelte').default;
-let loading = true;
-let error: string | null = null;
-
-async function loadTaskBoard() {
-    const startTime = performance.now();
-    loading = true;
-    error = null;
-
-    try {
-        const module = await import('$lib/components/TaskBoard.svelte');
-        TaskBoard = module.default;
-
-        const metric: PerformanceMetric = {
-            component: 'TaskBoardRoute',
-            operation: 'import',
-            timestamp: performance.now(),
-            totalTime: performance.now() - startTime
-        };
-        addMetric(metric);
-    } catch (e) {
-        error = e instanceof Error ? e.message : 'Failed to load task board';
-        const metric: PerformanceMetric = {
-            component: 'TaskBoardRoute',
-            operation: 'import_error',
-            timestamp: performance.now(),
-            errorMessage: error
-        };
-        addMetric(metric);
-    } finally {
-        loading = false;
-    }
+// Convert Task to TaskDetails
+function convertToTaskDetails(task: Task | undefined): TaskDetails | null {
+    if (!task) return null;
+    return {
+        task,
+        dependencies: task.dependencies || [],
+        blocked_by: task.blocked_by || [],
+        sub_tasks: task.sub_tasks || [],
+        comments: [],
+        time_active: task.time_active?.toString(),
+        domain_access: [task.domain || 'general']
+    };
 }
 
-onMount(loadTaskBoard);
+// Subscribe to selected task
+$: selectedTask = $appStore.selectedTaskId ? 
+    convertToTaskDetails($appStore.tasks.find(t => t.id === $appStore.selectedTaskId)) : null;
 </script>
 
-<div class="h-full">
-    {#if loading}
-        <div class="flex items-center justify-center h-full">
-            <LoadingSpinner 
-                size={8} 
-                label="Loading task board"
-            />
-        </div>
-    {:else if error}
-        <ErrorBoundary
-            {error}
-            retry={loadTaskBoard}
-            title="Failed to Load Task Board"
-            retryText="Try Again"
-        />
-    {:else if TaskBoard}
-        <svelte:component this={TaskBoard} />
-    {/if}
-</div>
+<Layout>
+    <TaskBoard />
+    
+    <svelte:fragment slot="details">
+        {#if selectedTask}
+            <TaskDetailsPanel task={selectedTask} />
+        {/if}
+    </svelte:fragment>
+</Layout>
