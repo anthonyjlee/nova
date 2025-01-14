@@ -12,7 +12,9 @@ import {
     createAssignmentEvent,
     createAgentInteraction,
     initializeTaskHistory,
-    type AgentInteraction
+    validateTaskHistory,
+    type AgentInteraction,
+    type CommentEvent
 } from '$lib/types/history';
 
 // Mock the websocket store
@@ -301,6 +303,140 @@ describe('Task History Integration', () => {
             expect(interactions[0].type).toBe('message');
             expect(interactions[1].type).toBe('task');
             expect(interactions[0].context).toEqual({ context: 'test' });
+        });
+    });
+
+    describe('Error Handling', () => {
+        it('should handle WebSocket connection failures', async () => {
+            const { component } = render(TaskBoard);
+            const board = component as unknown as { tasks: Task[] };
+
+            // Simulate connection failure
+            context.websocket.isConnected = false;
+            
+            // Create task should still work with local state
+            const task = context.addTask({
+                metadata: {
+                    ...initializeTaskHistory(context.generateId())
+                }
+            });
+
+            await wait.forWebSocket();
+
+            // Verify task was created locally
+            const localTask = assertions.taskExists(board.tasks, task.id);
+            expect(localTask).toBeDefined();
+            expect(validateTaskHistory(localTask.metadata)).toBe(true);
+        });
+
+        it('should handle invalid history data', async () => {
+            const { component } = render(TaskBoard);
+            const board = component as unknown as { tasks: Task[] };
+
+            // Create task with invalid history
+            const task = context.addTask({
+                metadata: {
+                    task_id: 'invalid-task',
+                    state_history: [{ invalid: true }],
+                    update_history: [],
+                    comments: [],
+                    assignment_history: [],
+                    agent_interactions: [],
+                    metadata: {}
+                }
+            });
+
+            await wait.forWebSocket();
+
+            // Verify task was created with fresh history
+            const updatedTask = assertions.taskExists(board.tasks, task.id);
+            expect(validateTaskHistory(updatedTask.metadata)).toBe(true);
+            expect(updatedTask.metadata.state_history).toHaveLength(0);
+        });
+    });
+
+    describe('History Persistence', () => {
+        it('should preserve history across updates', async () => {
+            const { component } = render(TaskBoard);
+            const board = component as unknown as { tasks: Task[] };
+
+            // Create task with initial history
+            const task = context.addTask({
+                metadata: {
+                    ...initializeTaskHistory(context.generateId()),
+                    comments: [
+                        createCommentEvent('Initial comment', 'user1')
+                    ]
+                }
+            });
+
+            await wait.forWebSocket();
+
+            // Update task multiple times
+            for (let i = 0; i < 3; i++) {
+                context.updateTask(task.id, {
+                    metadata: {
+                        ...initializeTaskHistory(task.id),
+                        comments: [
+                            createCommentEvent('Initial comment', 'user1'),
+                            createCommentEvent(`Comment ${i + 1}`, 'user2')
+                        ]
+                    }
+                });
+
+                await wait.forWebSocket();
+            }
+
+            // Verify history was preserved
+            const updatedTask = assertions.taskExists(board.tasks, task.id);
+            const comments = updatedTask.metadata.comments as CommentEvent[];
+            expect(comments).toHaveLength(4);
+            expect(comments[0].content).toBe('Initial comment');
+        });
+    });
+
+    describe('Concurrent Updates', () => {
+        it('should handle multiple rapid updates', async () => {
+            const { component } = render(TaskBoard);
+            const board = component as unknown as { tasks: Task[] };
+
+            // Create task
+            const task = context.addTask({
+                metadata: {
+                    ...initializeTaskHistory(context.generateId())
+                }
+            });
+
+            await wait.forWebSocket();
+
+            // Send multiple updates rapidly
+            await Promise.all([
+                context.updateTask(task.id, {
+                    metadata: {
+                        ...initializeTaskHistory(task.id),
+                        comments: [createCommentEvent('Comment 1', 'user1')]
+                    }
+                }),
+                context.updateTask(task.id, {
+                    metadata: {
+                        ...initializeTaskHistory(task.id),
+                        comments: [createCommentEvent('Comment 2', 'user2')]
+                    }
+                }),
+                context.updateTask(task.id, {
+                    metadata: {
+                        ...initializeTaskHistory(task.id),
+                        comments: [createCommentEvent('Comment 3', 'user3')]
+                    }
+                })
+            ]);
+
+            await wait.forWebSocket();
+
+            // Verify all updates were processed
+            const updatedTask = assertions.taskExists(board.tasks, task.id);
+            expect(updatedTask.metadata.comments).toBeDefined();
+            expect(validateTaskHistory(updatedTask.metadata)).toBe(true);
         });
     });
 });
