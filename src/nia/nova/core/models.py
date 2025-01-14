@@ -183,16 +183,64 @@ class AgentInteraction(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
+class AgentType(str, Enum):
+    """Agent types matching frontend."""
+    AGENT = "agent"
+    TEAM = "team"
+    SYSTEM = "system"
+
+class AgentStatus(str, Enum):
+    """Agent statuses matching frontend."""
+    ACTIVE = "active"
+    INACTIVE = "inactive"
+    ERROR = "error"
+
+class AgentWorkspace(str, Enum):
+    """Agent workspaces matching frontend."""
+    PERSONAL = "personal"
+    SHARED = "shared"
+    SYSTEM = "system"
+
+class AgentDomain(str, Enum):
+    """Agent domains matching frontend."""
+    GENERAL = "general"
+    TASKS = "tasks"
+    CHAT = "chat"
+    ANALYSIS = "analysis"
+
+class AgentRelationType(str, Enum):
+    """Agent relationship types matching frontend."""
+    COORDINATES = "COORDINATES"
+    MANAGES = "MANAGES"
+    ASSISTS = "ASSISTS"
+    COLLABORATES_WITH = "COLLABORATES_WITH"
+    REPORTS_TO = "REPORTS_TO"
+    DELEGATES_TO = "DELEGATES_TO"
+    DEPENDS_ON = "DEPENDS_ON"
+
+class AgentMetadata(BaseModel):
+    """Agent metadata matching frontend."""
+    type: str
+    capabilities: List[str] = Field(default_factory=list)
+    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    thread_id: Optional[str] = None
+
+class AgentRelationship(BaseModel):
+    """Agent relationship matching frontend."""
+    target_id: str
+    type: AgentRelationType
+    properties: Dict[str, Any] = Field(default_factory=dict)
+
 class AgentInfo(BaseModel):
-    """Agent information model."""
+    """Agent information model matching frontend interface."""
     id: str
     name: str
-    type: str
-    status: str
-    role: str
-    team_id: Optional[str] = None
-    channel_id: Optional[str] = None
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    type: AgentType
+    workspace: AgentWorkspace = AgentWorkspace.PERSONAL
+    domain: AgentDomain = AgentDomain.GENERAL
+    status: AgentStatus = AgentStatus.ACTIVE
+    metadata: AgentMetadata
+    relationships: Optional[List[AgentRelationship]] = None
 
 class AgentTeam(BaseModel):
     """Agent team model."""

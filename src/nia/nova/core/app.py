@@ -75,7 +75,6 @@ sys.excepthook = log_exception
 from .endpoints import (
     root_router,
     agent_router,
-    user_router,
     analytics_router,
     orchestration_router,
     chat_router
@@ -85,6 +84,7 @@ from .knowledge_endpoints import kg_router
 from .nova_endpoints import nova_router
 from .tasks_endpoints import tasks_router
 from .websocket_endpoints import ws_router
+from .user_endpoints import user_router
 from .dependencies import get_memory_system, get_thread_manager
 
 # Create FastAPI app

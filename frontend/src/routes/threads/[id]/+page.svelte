@@ -6,6 +6,7 @@
   import { WORKSPACE_DOMAINS } from '$lib/types/chat';
   import AgentTeamView from '$lib/components/AgentTeamView.svelte';
   import AgentDetailsPanel from '$lib/components/AgentDetailsPanel.svelte';
+  import { appStore } from '$lib/stores/app';
 
   const threadId = $page.params.id;
   let thread: Thread | null = null;
@@ -301,6 +302,7 @@
           onAgentClick={(agent: ThreadParticipant) => {
             selectedAgent = agent;
             filteredAgentId = agent.id;
+            appStore.setRightPanelOpen(true);
           }}
         />
 
@@ -455,6 +457,7 @@
     onClose={() => {
       selectedAgent = null;
       filteredAgentId = null;
+      appStore.setRightPanelOpen(false);
     }}
     onFocusMessages={(agentId: string) => {
       filteredAgentId = agentId;

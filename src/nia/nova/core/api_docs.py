@@ -252,6 +252,123 @@ All task endpoints validate domain access:
 ## Agent Management Endpoints (/api/agents)
 
 ### Agent Operations
+
+## User Profile Endpoints (/api/users)
+
+### Psychometric Questionnaire
+- POST /questionnaire - Submit psychometric questionnaire
+  - Body: {
+      "big_five": {
+          "openness": float (0-1),
+          "conscientiousness": float (0-1),
+          "extraversion": float (0-1),
+          "agreeableness": float (0-1),
+          "neuroticism": float (0-1)
+      },
+      "learning_style": {
+          "visual": float (0-1),
+          "auditory": float (0-1),
+          "kinesthetic": float (0-1)
+      },
+      "communication": {
+          "direct": float (0-1),
+          "detailed": float (0-1),
+          "formal": float (0-1)
+      }
+    }
+  - Response: {
+      "success": boolean,
+      "profile_id": string,
+      "insights": {
+          "personality": object,
+          "learning": object,
+          "communication": object
+      }
+    }
+
+### Profile Management
+- GET /profile/{profile_id} - Get user profile
+  - Response: {
+      "id": string,
+      "psychometrics": PsychometricQuestionnaire,
+      "auto_approval": AutoApprovalSettings,
+      "created_at": string (ISO date),
+      "updated_at": string (ISO date),
+      "metadata": object
+    }
+
+### Auto-Approval Settings
+- POST /profile/{profile_id}/auto-approval - Update auto-approval settings
+  - Body: {
+      "auto_approve_domains": string[],
+      "approval_thresholds": {
+          "task_creation": float (0-1),
+          "resource_access": float (0-1),
+          "domain_crossing": float (0-1)
+      },
+      "restricted_operations": string[]
+    }
+  - Response: {
+      "success": boolean,
+      "settings": AutoApprovalSettings
+    }
+
+### Profile Adaptations
+- GET /profile/{profile_id}/adaptations - Get profile-based adaptations
+  - Query params:
+    - task_type: string (optional)
+  - Response: {
+      "adaptations": {
+          "granularity": string,
+          "communication_style": string,
+          "visualization_preference": string
+      },
+      "profile_applied": boolean
+    }
+
+### Models
+- PsychometricQuestionnaire: Questionnaire submission model
+  - big_five: BigFiveTraits
+  - learning_style: LearningStyle
+  - communication: CommunicationStyle
+
+- BigFiveTraits: Personality traits model
+  - openness: float (0-1)
+  - conscientiousness: float (0-1)
+  - extraversion: float (0-1)
+  - agreeableness: float (0-1)
+  - neuroticism: float (0-1)
+
+- LearningStyle: Learning preferences model
+  - visual: float (0-1)
+  - auditory: float (0-1)
+  - kinesthetic: float (0-1)
+
+- CommunicationStyle: Communication preferences model
+  - direct: float (0-1)
+  - detailed: float (0-1)
+  - formal: float (0-1)
+
+- AutoApprovalSettings: Auto-approval configuration
+  - auto_approve_domains: string[]
+  - approval_thresholds: Dict[string, float]
+  - restricted_operations: string[]
+
+### Authentication & Authorization
+- All endpoints require a valid API key in the X-API-Key header
+- Write operations require write permission
+- Read operations require read permission
+- Invalid or missing API keys return 401 Unauthorized
+- Permission errors return 403 Forbidden
+
+### Error Responses
+- 400 Bad Request: Invalid input data
+- 401 Unauthorized: Missing or invalid API key
+- 403 Forbidden: Insufficient permissions
+- 404 Not Found: Profile not found
+- 500 Internal Server Error: Unexpected server errors
+
+### Agent Operations
 - GET "" - List all available agents
   - Response: Array<{
       id: string,

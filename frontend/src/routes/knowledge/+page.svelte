@@ -17,19 +17,21 @@ const domain = lifecycle.trackSubscription(currentDomain.subscribe, {
 });
 </script>
 
-<div class="flex h-full">
-    <!-- Main Content -->
-    <div class="flex-1 overflow-hidden">
-        <div class="h-full">
-            <GraphPanel />
+<div class="border-b border-gray-700 p-4 bg-[#0D1117]">
+    <div class="flex items-center justify-between">
+        <div class="flex items-center">
+            <h1 class="text-lg font-medium text-gray-200">Knowledge</h1>
+        </div>
+        <div class="flex items-center space-x-4">
+            <button 
+                class="inline-flex items-center justify-center h-9 px-3 text-sm font-medium rounded bg-white text-[#1D1C1D] hover:bg-[#F8F8F8] disabled:opacity-75 disabled:hover:bg-white transition-colors"
+            >
+                Add Document
+            </button>
         </div>
     </div>
 </div>
 
-<style>
-    /* Ensure full height layout */
-    :global(body) {
-        height: 100vh;
-        overflow: hidden;
-    }
-</style>
+<div class="h-full">
+    <GraphPanel />
+</div>
