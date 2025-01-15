@@ -7,7 +7,17 @@ import sys
 import time
 import requests
 import os
+import socket
+import redis
 from pathlib import Path
+from celery.app.control import Control
+
+# Add project root to Python path
+project_root = Path(__file__).parent.parent
+sys.path.append(str(project_root))
+os.environ["PYTHONPATH"] = str(project_root)
+
+from src.nia.nova.core.celery_app import celery_app
 
 class ServiceManager:
     """Manages NIA services."""
@@ -29,7 +39,7 @@ class ServiceManager:
             },
             "redis": {
                 "port": 6379,
-                "health_url": "http://localhost:6379",
+                "health_url": None,  # Redis doesn't use HTTP
                 "startup_time": 2
             },
             "lmstudio": {
@@ -54,29 +64,72 @@ class ServiceManager:
             }
         }
     
-    def check_service(self, name: str, url: str) -> bool:
+    def check_service(self, name: str, url: str = None) -> bool:
         """Check if a service is responding."""
-        if name == "neo4j":
-            try:
+        try:
+            if name == "neo4j":
                 # First check HTTP endpoint
                 http_response = requests.get(url)
                 if http_response.status_code != 200:
                     return False
                     
                 # Then check if Bolt port is open
-                import socket
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 result = sock.connect_ex(('localhost', 7687))
                 sock.close()
                 return result == 0
-            except Exception:
-                return False
-        else:
-            try:
+                
+            elif name == "redis":
+                # Check Redis using socket connection
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                result = sock.connect_ex(('localhost', 6379))
+                sock.close()
+                if result != 0:
+                    return False
+                    
+                # Try to ping Redis
+                try:
+                    r = redis.Redis(host='localhost', port=6379, db=0)
+                    return r.ping()
+                except:
+                    return False
+                    
+            elif name == "frontend":
+                try:
+                    # Check if port is open first
+                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    result = sock.connect_ex(('localhost', 5173))
+                    sock.close()
+                    if result != 0:
+                        return False
+                        
+                    # Then try HTTP request - accept any response as Vite may return non-200
+                    response = requests.get(url)
+                    return True
+                except:
+                    return False
+                    
+            elif name == "celery":
+                try:
+                    # First check if process exists
+                    subprocess.check_output(["pgrep", "-f", "celery worker"])
+                    
+                    # Then check if worker is responding
+                    control = Control(celery_app)
+                    active = control.ping(timeout=1.0)
+                    return bool(active)
+                except:
+                    return False
+                    
+            else:
+                # Default HTTP check for other services
                 response = requests.get(url)
                 return response.status_code == 200
-            except requests.RequestException:
-                return False
+                
+        except Exception as e:
+            if self.debug:
+                print(f"Error checking {name}: {str(e)}")
+            return False
     
     def check_docker(self):
         """Check if Docker is running."""
@@ -256,7 +309,7 @@ finance_memory_threshold = 0.7
             
             # Start Celery worker
             process = subprocess.Popen(
-                ["pdm", "run", "celery", "-A", "src.nia.nova.core.celery_app", "worker", "--loglevel=info"],
+                ["pdm", "run", "celery"],
                 env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
@@ -270,7 +323,16 @@ finance_memory_threshold = 0.7
                 print(f"❌ Celery worker failed to start:\n{stderr}")
                 sys.exit(1)
                 
-            print("✅ Celery worker started")
+            # Wait for worker to be responsive
+            start_time = time.time()
+            while time.time() - start_time < 30:  # 30 second timeout
+                if self.check_service("celery"):
+                    print("✅ Celery worker started and responding")
+                    return
+                time.sleep(1)
+                
+            print("❌ Celery worker started but not responding")
+            sys.exit(1)
                 
         except Exception as e:
             print(f"❌ Error starting Celery worker: {e}")
@@ -349,11 +411,17 @@ finance_memory_threshold = 0.7
                 print(f"❌ Frontend server failed to start:\n{stderr}")
                 sys.exit(1)
                 
-            # Wait for server to be ready
-            if not self.wait_for_service("frontend"):
-                print("❌ Frontend server failed to respond")
-                self.stop_frontend()
-                sys.exit(1)
+            # Wait for server to be ready with more lenient check
+            start_time = time.time()
+            while time.time() - start_time < 30:  # 30 second timeout
+                if self.check_service("frontend", self.services["frontend"]["health_url"]):
+                    print("✅ Frontend server started")
+                    return
+                time.sleep(1)
+                
+            print("❌ Frontend server failed to respond")
+            self.stop_frontend()
+            sys.exit(1)
                 
         except Exception as e:
             print(f"❌ Error starting frontend server: {e}")
@@ -476,12 +544,11 @@ finance_memory_threshold = 0.7
         
         # Check Docker services
         for service in ["neo4j", "qdrant", "redis"]:
-            if self.services[service]["health_url"]:
-                status = "✅ Running" if self.check_service(
-                    service, 
-                    self.services[service]["health_url"]
-                ) else "❌ Not running"
-                print(f"{service.title()}: {status}")
+            status = "✅ Running" if self.check_service(
+                service, 
+                self.services[service]["health_url"]
+            ) else "❌ Not running"
+            print(f"{service.title()}: {status}")
         
         # Check LMStudio
         status = "✅ Running" if self.check_service(
@@ -505,14 +572,8 @@ finance_memory_threshold = 0.7
         print(f"Frontend: {status}")
 
         # Check Celery
-        try:
-            celery_output = subprocess.check_output(
-                ["pgrep", "-f", "celery worker"],
-                stderr=subprocess.DEVNULL
-            )
-            print("Celery Worker: ✅ Running")
-        except subprocess.CalledProcessError:
-            print("Celery Worker: ❌ Not running")
+        status = "✅ Running" if self.check_service("celery") else "❌ Not running"
+        print(f"Celery Worker: {status}")
         
         # Check workspace configuration
         print("\n📊 Workspace Status:")

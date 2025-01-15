@@ -1,10 +1,12 @@
-"""Neo4j concept store implementation."""
+"""Neo4j concept store implementation with enhanced memory management."""
 
 import json
 import logging
 import asyncio
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Any
+import uuid
+from collections import deque
 
 from .base_store import Neo4jBaseStore
 from .validation_handler import ValidationHandler
@@ -14,7 +16,7 @@ from ..types.concept_utils.validation import validate_concept_structure
 logger = logging.getLogger(__name__)
 
 class ConceptStore(Neo4jBaseStore):
-    """Handles concept storage and retrieval in Neo4j."""
+    """Handles concept storage and retrieval in Neo4j with memory optimization."""
 
     def __init__(self, uri: str, user: str = None, password: str = None, max_retry_time: int = 30, retry_interval: int = 1):
         """Initialize the concept store and create indexes."""
@@ -29,6 +31,26 @@ class ConceptStore(Neo4jBaseStore):
         self._init_task = None
         self.max_retry_time = max_retry_time
         self.retry_interval = retry_interval
+        
+        # Initialize memory pools
+        self._concept_pool = {}  # Cache for frequently accessed concepts
+        self._relationship_pool = {}  # Cache for frequently accessed relationships
+        self._memory_pool = {}  # Cache for frequently accessed memories
+        self._pool_lock = asyncio.Lock()
+        self._max_pool_size = 1000  # Maximum number of items in each pool
+        self._access_queue = deque()  # Queue for tracking access order
+        
+    async def _manage_pool(self, pool: Dict, key: str, value: Any):
+        """Manage pool size and contents."""
+        async with self._pool_lock:
+            # Add new item
+            pool[key] = value
+            self._access_queue.append((pool, key))
+            
+            # Remove oldest items if pool is too large
+            while len(self._access_queue) > self._max_pool_size:
+                old_pool, old_key = self._access_queue.popleft()
+                old_pool.pop(old_key, None)
 
     async def _execute_with_retry(self, operation):
         """Execute an operation with retry logic."""
@@ -94,11 +116,11 @@ class ConceptStore(Neo4jBaseStore):
         description: str,
         related: Optional[List[str]] = None,
         validation: Optional[Dict] = None,
-        is_consolidation: bool = False
+        is_consolidation: bool = False,
+        _depth: int = 0
     ) -> None:
         """Store a concept with validation."""
         logger.info(f"Storing concept - Name: {name}, Type: {type}")
-        logger.info(f"Validation data: {validation}")
         
         # Ensure indexes are created
         await self._ensure_indexes()
@@ -117,15 +139,32 @@ class ConceptStore(Neo4jBaseStore):
             logger.error(f"Concept validation failed: {str(e)}")
             raise
 
+        # Circuit breaker
+        if _depth > 2:  # Maximum recursion depth
+            logger.error("Maximum recursion depth exceeded in store_concept")
+            raise RuntimeError("Maximum recursion depth exceeded")
+
+        # Check if concept already exists in pool
+        if name in self._concept_pool:
+            logger.info(f"Concept {name} already in pool")
+            return
+
         async def store_operation():
-            # Process validation data
+            # Process validation data with minimal fields
             validation_dict = ValidationHandler.process_validation(validation, is_consolidation)
-            access_domain = validation_dict.get("access_domain", "general")
-            logger.info(f"Processed validation data: {validation_dict}")
+            essential_validation = {
+                "access_domain": validation_dict.get("access_domain", "general"),
+                "domain": validation_dict.get("domain", "general"),
+                "confidence": validation_dict.get("confidence", 0.5)
+            }
             
-            # Include cross-domain information if present in validation
+            # Include minimal cross-domain information if present
             if validation and "cross_domain" in validation:
-                validation_dict["cross_domain"] = validation["cross_domain"]
+                essential_validation["cross_domain"] = {
+                    "approved": validation["cross_domain"].get("approved", False),
+                    "source_domain": validation["cross_domain"].get("source_domain", "general"),
+                    "target_domain": validation["cross_domain"].get("target_domain", "general")
+                }
             
             # Build base query with only essential properties
             base_query = """
@@ -141,13 +180,11 @@ class ConceptStore(Neo4jBaseStore):
                 "type": type,
                 "description": description,
                 "is_consolidation": is_consolidation,
-                "validation_json": json.dumps(validation_dict)  # Store complete validation as JSON
+                "validation_json": json.dumps(essential_validation)
             }
-            logger.info(f"Executing Neo4j query with params: {params}")
 
             query = base_query
             result = await self.run_query(query, params)
-            logger.info(f"Query result: {result}")
 
             # Process the result to get the stored concept
             stored_concept = None
@@ -156,14 +193,70 @@ class ConceptStore(Neo4jBaseStore):
                     "c": result[0]["c"],
                     "relationships": []
                 })
-            logger.info(f"Processed stored concept: {stored_concept}")
+                
+                # Add to concept pool
+                await self._manage_pool(self._concept_pool, name, stored_concept)
 
-            # Handle related concepts
+            # Handle related concepts in transaction
             if related:
                 logger.info(f"Creating related concepts: {related}")
-                await self._create_related_concepts(related)
-                await self._create_relationships(name, related)
-                logger.info("Related concepts and relationships created")
+                async with self.transaction() as tx:
+                    # Create related concepts
+                    for rel in related:
+                        # Create default validation with minimal data
+                        default_validation = {
+                            "confidence": 0.5,
+                            "access_domain": "general",
+                            "domain": "general"
+                        }
+                        
+                        await tx.run(
+                            """
+                            MERGE (c:Concept {name: $name})
+                            ON CREATE SET c.type = 'pending',
+                                        c.description = 'Pending concept',
+                                        c.is_consolidation = false,
+                                        c.validation = $validation_json,
+                                        c.validation_json = $validation_json
+                            """,
+                            {
+                                "name": rel,
+                                "validation_json": json.dumps(default_validation)
+                            }
+                        )
+                    
+                    # Create relationships
+                    attributes = {
+                        'bidirectional': True,
+                        'type': 'RELATED_TO',
+                        'validation': json.dumps({
+                            "confidence": 0.9,
+                            "access_domain": "general",
+                            "domain": "general"
+                        })
+                    }
+                    
+                    await tx.run(
+                        """
+                        MATCH (c:Concept {name: $name})
+                        UNWIND $related as rel_name
+                        MATCH (r:Concept {name: rel_name})
+                        MERGE (c)-[rel1:RELATED_TO]->(r)
+                        SET rel1 += $attributes,
+                            rel1.direction = 'forward',
+                            rel1.bidirectional = true
+                        WITH c, r
+                        MERGE (r)-[rel2:RELATED_TO]->(c)
+                        SET rel2 += $attributes,
+                            rel2.direction = 'reverse',
+                            rel2.bidirectional = true
+                        """,
+                        {
+                            "name": name,
+                            "related": related,
+                            "attributes": attributes
+                        }
+                    )
 
             return stored_concept
 
@@ -173,87 +266,8 @@ class ConceptStore(Neo4jBaseStore):
             logger.error(f"Error storing concept {name}: {str(e)}")
             raise
 
-    async def _create_related_concepts(self, related: List[str]) -> None:
-        """Create related concepts that don't exist."""
-        for rel in related:
-            # Create default validation for pending concepts
-            default_validation = {
-                "confidence": 0.5,
-                "source": "system",
-                "access_domain": "general",
-                "domain": "general",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "supported_by": [],
-                "contradicted_by": [],
-                "needs_verification": [],
-                "cross_domain": {
-                    "approved": True,
-                    "requested": True,
-                    "source_domain": "general",
-                    "target_domain": "general",
-                    "justification": "Test justification"
-                }
-            }
-            
-            await self.run_query(
-                """
-                MERGE (c:Concept {name: $name})
-                ON CREATE SET c.type = 'pending',
-                            c.description = 'Pending concept',
-                            c.is_consolidation = false,
-                            c.validation = $validation_json,
-                            c.validation_json = $validation_json
-                """,
-                {
-                    "name": rel,
-                    "validation_json": json.dumps(default_validation)
-                }
-            )
 
-    async def _create_relationships(self, name: str, related: List[str], rel_type: str = "RELATED_TO") -> None:
-        """Create relationships between concepts."""
-        # Create default attributes for bidirectional relationships
-        attributes = {
-            'bidirectional': True,  # All relationships created here are bidirectional
-            'type': rel_type,
-            'validation': json.dumps({
-                "confidence": 0.9,
-                "source": "test",
-                "access_domain": "professional",
-                "domain": "professional",
-                "cross_domain": {
-                    "approved": True,
-                    "requested": True,
-                    "source_domain": "professional",
-                    "target_domain": "general",
-                    "justification": "Test justification"
-                }
-            })
-        }
-        
-        await self.run_query(
-            """
-            MATCH (c:Concept {name: $name})
-            UNWIND $related as rel_name
-            MATCH (r:Concept {name: rel_name})
-            MERGE (c)-[rel1:RELATED_TO]->(r)
-            SET rel1 += $attributes,
-                rel1.direction = 'forward',
-                rel1.bidirectional = true
-            WITH c, r
-            MERGE (r)-[rel2:RELATED_TO]->(c)
-            SET rel2 += $attributes,
-                rel2.direction = 'reverse',
-                rel2.bidirectional = true
-            """,
-            {
-                "name": name,
-                "related": related,
-                "attributes": attributes
-            }
-        )
-
-    async def store_relationship(self, source: str, target: str, rel_type: str, attributes: Dict = None) -> None:
+    async def store_relationship(self, source: str, target: str, rel_type: str, attributes: Dict = None, _depth: int = 0) -> None:
         """Store a relationship between concepts with optional attributes."""
         # Ensure indexes are created
         await self._ensure_indexes()
@@ -271,23 +285,21 @@ class ConceptStore(Neo4jBaseStore):
             attributes = {}
         attributes['bidirectional'] = is_bidirectional
         
-        # Add validation data to attributes
+        # Add validation data with minimal fields
         attributes['validation'] = json.dumps({
             "confidence": 0.9,
-            "source": "test",
-            "access_domain": "professional",
-            "domain": "professional",
-            "cross_domain": {
-                "approved": True,
-                "requested": True,
-                "source_domain": "professional",
-                "target_domain": "general",
-                "justification": "Test justification"
-            }
+            "access_domain": "general",
+            "domain": "general"
         })
         
+        # Circuit breaker
+        if _depth > 2:  # Maximum recursion depth
+            logger.error("Maximum recursion depth exceeded in store_relationship")
+            raise RuntimeError("Maximum recursion depth exceeded")
+
         # Create both relationships in a single transaction
-        await self.run_query(
+        async with self.transaction() as tx:
+            await tx.run(
             """
             MATCH (s:Concept {name: $source})
             MATCH (t:Concept {name: $target})
@@ -306,16 +318,34 @@ class ConceptStore(Neo4jBaseStore):
                 "source": source,
                 "target": target,
                 "rel_type": rel_type,
-                "attributes": attributes or {},
+                "attributes": attributes,
                 "is_bidirectional": is_bidirectional
             }
         )
+        
+        # Add to relationship pool
+        rel_key = f"{source}-{target}"
+        await self._manage_pool(self._relationship_pool, rel_key, {
+            "source": source,
+            "target": target,
+            "type": rel_type,
+            "attributes": attributes
+        })
 
-    async def get_concept(self, name: str) -> Optional[Dict]:
+    async def get_concept(self, name: str, _depth: int = 0) -> Optional[Dict]:
         """Get concept by name with retry logic."""
+        # Check concept pool first
+        if name in self._concept_pool:
+            return self._concept_pool[name]
+            
         # Ensure indexes are created
         await self._ensure_indexes()
         
+        # Circuit breaker
+        if _depth > 2:  # Maximum recursion depth
+            logger.error("Maximum recursion depth exceeded in get_concept")
+            raise RuntimeError("Maximum recursion depth exceeded")
+
         async def get_operation():
             result = await self.run_query(
                 """
@@ -345,7 +375,10 @@ class ConceptStore(Neo4jBaseStore):
             )
             
             if result and len(result) > 0:
-                return self._process_concept_record(result[0])
+                concept = self._process_concept_record(result[0])
+                # Add to concept pool
+                await self._manage_pool(self._concept_pool, name, concept)
+                return concept
             return None
 
         try:
@@ -355,47 +388,46 @@ class ConceptStore(Neo4jBaseStore):
             return None
 
     def _process_concept_record(self, record) -> Dict:
-        """Process a Neo4j record into a concept dictionary."""
+        """Process a Neo4j record into a concept dictionary with minimal data."""
         logger.info(f"Processing concept record: {record}")
         concept = record["c"]
         relationships = record.get("relationships", [])
         if relationships is None:
             relationships = []
         
-        # Get validation from stored JSON or build from fields
-        # Try validation_json first, then validation, then fallback
+        # Get validation from stored JSON with minimal fields
         validation = None
         for field in ["validation_json", "validation"]:
             try:
                 if concept.get(field):
-                    validation = json.loads(concept[field])
+                    full_validation = json.loads(concept[field])
+                    validation = {
+                        "confidence": full_validation.get("confidence", 0.5),
+                        "access_domain": full_validation.get("access_domain", "general"),
+                        "domain": full_validation.get("domain", "general")
+                    }
+                    # Include minimal cross-domain info if present
+                    if "cross_domain" in full_validation:
+                        validation["cross_domain"] = {
+                            "approved": full_validation["cross_domain"].get("approved", False),
+                            "source_domain": full_validation["cross_domain"].get("source_domain", "general"),
+                            "target_domain": full_validation["cross_domain"].get("target_domain", "general")
+                        }
                     break
             except (json.JSONDecodeError, TypeError, KeyError):
                 continue
 
         if validation is None:
-            # Fallback to building from individual fields
+            # Fallback to minimal validation
             validation = {
-                "confidence": concept.get("confidence", 0.0),
-                "source": concept.get("validation_source", "system"),
-                "access_domain": concept.get("access_domain", "general"),
-                "domain": concept.get("domain", "general"),
-                "timestamp": concept.get("validation_timestamp", ""),
-                "supported_by": concept.get("supported_by", []),
-                "contradicted_by": concept.get("contradicted_by", []),
-                "needs_verification": concept.get("needs_verification", []),
-                "cross_domain": {
-                    "approved": True,
-                    "requested": True,
-                    "source_domain": "professional",
-                    "target_domain": "general",
-                    "justification": "Test justification"
-                }
+                "confidence": 0.5,
+                "access_domain": "general",
+                "domain": "general"
             }
         
         # Process relationships with proper null checking
         processed_relationships = []
-        for rel in relationships:
+        for rel in relationships[:100]:  # Limit relationships
             if rel and rel.get("name") is not None:
                 processed_rel = self._process_relationship_record(rel)
                 if processed_rel:
@@ -414,18 +446,25 @@ class ConceptStore(Neo4jBaseStore):
         return result
 
     def _process_relationship_record(self, record) -> Dict:
-        """Process a Neo4j relationship record."""
+        """Process a Neo4j relationship record with minimal data."""
         if not record:
             return None
             
-        # Extract attributes from the relationship record
+        # Extract minimal attributes
         attributes = {}
         if isinstance(record.get('attributes'), dict):
-            attributes = record['attributes']
+            attributes = {
+                k: v for k, v in record['attributes'].items()
+                if k in ['bidirectional', 'type', 'direction']
+            }
         elif isinstance(record.get('attributes'), tuple):
-            # Handle tuple case by extracting the second element which contains attributes
+            # Handle tuple case
             _, attrs = record['attributes']
-            attributes = attrs if isinstance(attrs, dict) else {}
+            if isinstance(attrs, dict):
+                attributes = {
+                    k: v for k, v in attrs.items()
+                    if k in ['bidirectional', 'type', 'direction']
+                }
             
         result = {
             'name': record.get('name'),
@@ -434,7 +473,7 @@ class ConceptStore(Neo4jBaseStore):
             'direction': record.get('direction', 'forward')
         }
         
-        # Include bidirectional flag if present in attributes
+        # Include bidirectional flag if present
         if attributes.get('bidirectional'):
             result['bidirectional'] = True
             
@@ -469,11 +508,18 @@ class ConceptStore(Neo4jBaseStore):
                         bidirectional: r2.bidirectional
                     }) as incoming
                 RETURN c, outgoing + incoming as relationships
+                LIMIT 1000
                 """,
                 {"type": type}
             )
             
-            return [self._process_concept_record(record) for record in result]
+            concepts = [self._process_concept_record(record) for record in result]
+            
+            # Add to concept pool
+            for concept in concepts:
+                await self._manage_pool(self._concept_pool, concept["name"], concept)
+                
+            return concepts
 
         try:
             return await self._execute_with_retry(get_operation)
@@ -511,11 +557,18 @@ class ConceptStore(Neo4jBaseStore):
                            direction: 'forward',
                            bidirectional: r3.bidirectional
                        }) as relationships
+                LIMIT 1000
                 """,
                 {"name": name}
             )
             
-            return [self._process_concept_record(record) for record in result]
+            concepts = [self._process_concept_record(record) for record in result]
+            
+            # Add to concept pool
+            for concept in concepts:
+                await self._manage_pool(self._concept_pool, concept["name"], concept)
+                
+            return concepts
 
         try:
             return await self._execute_with_retry(get_operation)
@@ -555,11 +608,18 @@ class ConceptStore(Neo4jBaseStore):
                         bidirectional: r2.bidirectional
                     }) as incoming
                 RETURN c, outgoing + incoming as relationships
+                LIMIT 1000
                 """,
                 {"query": query}
             )
             
-            return [self._process_concept_record(record) for record in result]
+            concepts = [self._process_concept_record(record) for record in result]
+            
+            # Add to concept pool
+            for concept in concepts:
+                await self._manage_pool(self._concept_pool, concept["name"], concept)
+                
+            return concepts
 
         try:
             return await self._execute_with_retry(search_operation)
@@ -654,6 +714,7 @@ class ConceptStore(Neo4jBaseStore):
                 bidirectional: r.bidirectional
             }}) as relationships
             RETURN n, relationships
+            LIMIT 1000
             """
             
             logger.info(f"Executing semantic query: {cypher}")
@@ -673,6 +734,10 @@ class ConceptStore(Neo4jBaseStore):
                             "relationships": record["relationships"]
                         })
                         results.append(concept)
+                        
+                        # Add to concept pool
+                        await self._manage_pool(self._concept_pool, concept["name"], concept)
+                        
                         logger.info(f"Processed concept: {concept}")
                     except Exception as e:
                         logger.error(f"Failed to process concept record: {str(e)}")
@@ -693,23 +758,27 @@ class ConceptStore(Neo4jBaseStore):
                 validated = validated["concepts"]
             
             if isinstance(validated, list):
-                # Store multiple concepts
+                # Store multiple concepts in batches
+                batch_size = 100
                 stored = 0
                 errors = 0
-                for concept in validated:
-                    try:
-                        await self.store_concept(
-                            name=concept["name"],
-                            type=concept["type"],
-                            description=concept["description"],
-                            related=concept.get("related"),
-                            validation=concept.get("validation"),
-                            is_consolidation=concept.get("is_consolidation", False)
-                        )
-                        stored += 1
-                    except Exception as e:
-                        logger.error(f"Error storing concept {concept.get('name', 'unknown')}: {str(e)}")
-                        errors += 1
+                
+                for i in range(0, len(validated), batch_size):
+                    batch = validated[i:i + batch_size]
+                    for concept in batch:
+                        try:
+                            await self.store_concept(
+                                name=concept["name"],
+                                type=concept["type"],
+                                description=concept["description"],
+                                related=concept.get("related"),
+                                validation=concept.get("validation"),
+                                is_consolidation=concept.get("is_consolidation", False)
+                            )
+                            stored += 1
+                        except Exception as e:
+                            logger.error(f"Error storing concept {concept.get('name', 'unknown')}: {str(e)}")
+                            errors += 1
                 
                 if errors > 0:
                     logger.warning(f"Stored {stored} concepts with {errors} errors")
@@ -775,6 +844,9 @@ class ConceptStore(Neo4jBaseStore):
         """Clear all relationships from the database."""
         async def clear_operation():
             await self.run_query("MATCH ()-[r:RELATED_TO]->() DELETE r")
+            # Clear relationship pool
+            async with self._pool_lock:
+                self._relationship_pool.clear()
 
         try:
             await self._execute_with_retry(clear_operation)
@@ -782,24 +854,37 @@ class ConceptStore(Neo4jBaseStore):
             logger.error(f"Error clearing relationships: {str(e)}")
             raise
 
-    async def clear_memories(self) -> None:
-        """Clear all memories from the database."""
-        async def clear_operation():
-            await self.run_query("MATCH (n:Memory) DETACH DELETE n")
-
-        try:
-            await self._execute_with_retry(clear_operation)
-        except Exception as e:
-            logger.error(f"Error clearing memories: {str(e)}")
-            raise
-
     async def clear_concepts(self) -> None:
         """Clear all concepts from the database."""
         async def clear_operation():
             await self.run_query("MATCH (n:Concept) DETACH DELETE n")
+            # Clear concept pool
+            async with self._pool_lock:
+                self._concept_pool.clear()
 
         try:
             await self._execute_with_retry(clear_operation)
         except Exception as e:
             logger.error(f"Error clearing concepts: {str(e)}")
+            raise
+
+    async def cleanup(self):
+        """Clean up resources."""
+        try:
+            # Clear all pools
+            async with self._pool_lock:
+                self._concept_pool.clear()
+                self._relationship_pool.clear()
+                self._memory_pool.clear()
+                self._access_queue.clear()
+                
+            # Clear database
+            await self.clear_concepts()
+            await self.clear_relationships()
+            
+            # Close Neo4j connection
+            await super().close()
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up concept store: {str(e)}")
             raise

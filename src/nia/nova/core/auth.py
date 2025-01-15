@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 from fastapi import Request, WebSocket, HTTPException
 
 # Default development API key
-API_KEYS = {'development'}
+API_KEYS = {'development', 'test-key'}
 
 # Rate limiting configuration
 RATE_LIMIT_WINDOW = timedelta(minutes=1)

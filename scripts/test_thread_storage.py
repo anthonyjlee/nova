@@ -149,7 +149,7 @@ async def check_server_status(results: TestResults):
         embedding_service = EmbeddingService()
         vector_store = VectorStore(embedding_service)
         try:
-            await vector_store.connect()
+            # VectorStore initializes connection in __init__
             logger.info("Qdrant is running", extra={"test_phase": "qdrant_check", "test_result": True})
             results.add_result("qdrant_check", True)
         except Exception as e:
@@ -178,18 +178,13 @@ async def test_vector_store(results: TestResults):
         embedding_service = EmbeddingService()
         vector_store = VectorStore(embedding_service)
         
-        # Test connection
-        logger.info("Testing vector store connection...", extra={"test_phase": "vector_store_connect"})
-        await vector_store.connect()
-        logger.info("Vector store connection successful", extra={"test_phase": "vector_store_connect", "test_result": True})
-        results.add_result("vector_store_connect", True)
-        
         # Test vector storage
         logger.info("Testing vector storage...", extra={"test_phase": "vector_store_add"})
         test_content = {"text": "Test content", "metadata": {"test": True}}
         point_id = await vector_store.store_vector(
-            collection_name="memories",
-            payload={"content": test_content}  # Store content directly without JSON serialization
+            content=test_content,  # Store content directly
+            metadata={"test": True},
+            layer="test"
         )
         logger.info(f"Vector stored with ID: {point_id}", extra={"test_phase": "vector_store_add", "test_result": True})
         results.add_result("vector_store_add", True, {"point_id": point_id})

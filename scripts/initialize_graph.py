@@ -48,19 +48,18 @@ class InitializeStore(Neo4jBaseStore):
             
             # Check existing nodes
             logger.info("Checking existing nodes...")
-            async with self.transaction() as tx:
-                result = await tx.run("""
-                MATCH (n) 
-                RETURN labels(n) as labels, n.name as name
-                """)
-                data = await result.data()
-                
-                existing_nodes = {
-                    f"{r['labels'][0]}:{r['name']}" 
-                    for r in data 
-                    if r['labels'] and r['name']
-                }
-                logger.info(f"Found existing nodes: {existing_nodes}")
+            # Check existing nodes
+            result = await self.run_query("""
+            MATCH (n) 
+            RETURN labels(n) as labels, n.name as name
+            """)
+            
+            existing_nodes = {
+                f"{r['labels'][0]}:{r['name']}" 
+                for r in result 
+                if r['labels'] and r['name']
+            }
+            logger.info(f"Found existing nodes: {existing_nodes}")
             
             # Create nodes if they don't exist
             logger.info("Creating missing nodes...")
@@ -71,47 +70,41 @@ class InitializeStore(Neo4jBaseStore):
                 ("Concept", "Emotion", "concept")
             ]
             
-            async with self.transaction() as tx:
-                for node in nodes_to_create:
-                    node_key = f"{node[0]}:{node[1]}"
-                    if node_key not in existing_nodes:
-                        await tx.run(f"""
-                        CREATE (n:{node[0]} {{
-                            name: '{node[1]}',
-                            type: '{node[2]}'
-                        }})
-                        """)
-                        logger.info(f"Created {node_key}")
-                    else:
-                        logger.info(f"Node {node_key} already exists")
+            for node in nodes_to_create:
+                node_key = f"{node[0]}:{node[1]}"
+                if node_key not in existing_nodes:
+                    await self.run_query(f"""
+                    CREATE (n:{node[0]} {{
+                        name: '{node[1]}',
+                        type: '{node[2]}'
+                    }})
+                    """)
+                    logger.info(f"Created {node_key}")
+                else:
+                    logger.info(f"Node {node_key} already exists")
             
             # Create relationships
             logger.info("Creating relationships...")
             
-            async with self.transaction() as tx:
-                # Create all relationships in a single query
-                await tx.run("""
-                // Concept relationships
-                MATCH (belief:Concept {name: 'Belief'})
-                MATCH (desire:Concept {name: 'Desire'})
-                MATCH (emotion:Concept {name: 'Emotion'})
-                MERGE (belief)-[:INFLUENCES]->(desire)
-                MERGE (desire)-[:AFFECTS]->(emotion)
-                MERGE (emotion)-[:IMPACTS]->(belief)
-
-                """)
+            await self.run_query("""
+            // Concept relationships
+            MATCH (belief:Concept {name: 'Belief'})
+            MATCH (desire:Concept {name: 'Desire'})
+            MATCH (emotion:Concept {name: 'Emotion'})
+            MERGE (belief)-[:INFLUENCES]->(desire)
+            MERGE (desire)-[:AFFECTS]->(emotion)
+            MERGE (emotion)-[:IMPACTS]->(belief)
+            """)
             
             logger.info("Test data created successfully")
             
             # Verify data was created
-            async with self.transaction() as tx:
-                result = await tx.run("""
-                MATCH (n)
-                OPTIONAL MATCH (n)-[r]->()
-                RETURN count(DISTINCT n) as nodes, count(r) as edges
-                """)
-                data = await result.data()
-                logger.info(f"Graph contains {data[0]['nodes']} nodes and {data[0]['edges']} edges")
+            result = await self.run_query("""
+            MATCH (n)
+            OPTIONAL MATCH (n)-[r]->()
+            RETURN count(DISTINCT n) as nodes, count(r) as edges
+            """)
+            logger.info(f"Graph contains {result[0]['nodes']} nodes and {result[0]['edges']} edges")
             
         except Exception as e:
             logger.error(f"Error initializing graph: {str(e)}")

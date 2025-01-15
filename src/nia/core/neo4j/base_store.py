@@ -10,23 +10,13 @@ from datetime import datetime
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-# Global driver instance
-_neo4j_driver: Optional[AsyncDriver] = None
-
-def get_neo4j_driver() -> Optional[AsyncDriver]:
-    """Get the global Neo4j driver instance."""
-    global _neo4j_driver
-    return _neo4j_driver
-
-async def reset_neo4j_driver():
-    """Reset the global Neo4j driver instance."""
-    global _neo4j_driver
-    if _neo4j_driver:
-        await _neo4j_driver.close()
-        _neo4j_driver = None
+from contextlib import asynccontextmanager
 
 class Neo4jBaseStore:
     """Base store for Neo4j operations."""
+    
+    _driver_instance: Optional[AsyncDriver] = None
+    _driver_lock = None
     
     def __init__(self, uri: str = "bolt://localhost:7687", user: str = "neo4j", password: str = "password", max_retry_time: int = 30, retry_interval: int = 1):
         """Initialize Neo4j store."""
@@ -35,67 +25,90 @@ class Neo4jBaseStore:
         self.password = password
         self.max_retry_time = max_retry_time
         self.retry_interval = retry_interval
-        self.driver: Optional[AsyncDriver] = None
         
-    async def connect(self):
-        """Connect to Neo4j with retry logic."""
-        global _neo4j_driver
-        retry_count = 0
-        start_time = asyncio.get_event_loop().time()
+        # Initialize lock if needed
+        if Neo4jBaseStore._driver_lock is None:
+            Neo4jBaseStore._driver_lock = asyncio.Lock()
         
-        while True:
-            try:
-                logger.info(f"Attempting to connect to Neo4j at {self.uri}")
-                
-                # Use global driver if available
-                if _neo4j_driver:
-                    self.driver = _neo4j_driver
-                    await self.driver.verify_connectivity()
-                    logger.info("Using existing Neo4j connection")
-                    return
-                
-                # Create new driver
-                self.driver = AsyncGraphDatabase.driver(
-                    self.uri,
-                    auth=(self.user, self.password)
-                )
-                
-                # Verify connection
-                await self.driver.verify_connectivity()
-                logger.info("Successfully connected to Neo4j")
-                
-                # Store as global driver
-                _neo4j_driver = self.driver
-                return
-                
-            except Exception as e:
-                retry_count += 1
-                elapsed_time = asyncio.get_event_loop().time() - start_time
-                
-                if elapsed_time >= self.max_retry_time:
-                    logger.error(f"Failed to connect to Neo4j after {retry_count} attempts over {elapsed_time:.1f}s: {str(e)}")
-                    raise
+    @property
+    async def driver(self) -> AsyncDriver:
+        """Get or create singleton driver instance with connection pooling."""
+        if Neo4jBaseStore._driver_instance is None:
+            async with Neo4jBaseStore._driver_lock:
+                if Neo4jBaseStore._driver_instance is None:
+                    retry_count = 0
+                    start_time = asyncio.get_event_loop().time()
                     
-                logger.warning(f"Connection attempt {retry_count} failed: {str(e)}. Retrying in {self.retry_interval}s...")
-                await asyncio.sleep(self.retry_interval)
+                    while True:
+                        try:
+                            logger.info(f"Creating new Neo4j driver for {self.uri}")
+                            driver = AsyncGraphDatabase.driver(
+                                self.uri,
+                                auth=(self.user, self.password),
+                                max_connection_lifetime=300  # 5 minutes max connection lifetime
+                            )
+                            
+                            # Verify connection
+                            await driver.verify_connectivity()
+                            Neo4jBaseStore._driver_instance = driver
+                            logger.info("Successfully created Neo4j driver")
+                            break
+                            
+                        except Exception as e:
+                            retry_count += 1
+                            elapsed_time = asyncio.get_event_loop().time() - start_time
+                            
+                            if elapsed_time >= self.max_retry_time:
+                                logger.error(f"Failed to create Neo4j driver after {retry_count} attempts: {str(e)}")
+                                raise
+                                
+                            logger.warning(f"Driver creation attempt {retry_count} failed: {str(e)}. Retrying...")
+                            await asyncio.sleep(self.retry_interval)
+                            
+        return Neo4jBaseStore._driver_instance
+
+    async def connect(self):
+        """Initialize Neo4j connection."""
+        try:
+            # Get/create driver instance
+            await self.driver
+            logger.info("Neo4j connection initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize Neo4j connection: {str(e)}")
+            raise
                 
     async def close(self):
         """Close Neo4j connection."""
-        if self.driver:
-            await self.driver.close()
-            self.driver = None
+        if Neo4jBaseStore._driver_instance:
+            await Neo4jBaseStore._driver_instance.close()
+            Neo4jBaseStore._driver_instance = None
             
-    async def run_query(self, query: str, parameters: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
-        """Run a Cypher query with parameters."""
-        if not self.driver:
-            logger.error("No Neo4j connection. Call connect() first.")
-            raise RuntimeError("No Neo4j connection")
+    @asynccontextmanager
+    async def transaction(self):
+        """Context manager for Neo4j transactions."""
+        driver = await self.driver
+        async with driver.session() as session:
+            async with session.begin_transaction() as tx:
+                try:
+                    yield tx
+                    await tx.commit()
+                except Exception as e:
+                    await tx.rollback()
+                    raise
+
+    async def run_query(self, query: str, parameters: Optional[Dict[str, Any]] = None, _depth: int = 0) -> List[Dict[str, Any]]:
+        """Run a Cypher query with parameters and circuit breaker."""
+        # Circuit breaker
+        if _depth > 2:  # Maximum recursion depth
+            logger.error("Maximum recursion depth exceeded in Neo4j query")
+            raise RuntimeError("Maximum recursion depth exceeded")
             
         try:
+            driver = await self.driver
             logger.debug(f"Executing query: {query}")
             logger.debug(f"With parameters: {parameters}")
             
-            async with self.driver.session() as session:
+            async with driver.session() as session:
                 result = await session.run(query, parameters or {})
                 records = await result.data()
                 
@@ -108,32 +121,31 @@ class Neo4jBaseStore:
             logger.error(f"Parameters: {parameters}")
             raise
             
-    async def run_transaction(self, queries: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
-        """Run multiple queries in a transaction."""
-        if not self.driver:
-            logger.error("No Neo4j connection. Call connect() first.")
-            raise RuntimeError("No Neo4j connection")
+    async def run_transaction(self, queries: List[Dict[str, Any]], _depth: int = 0) -> List[List[Dict[str, Any]]]:
+        """Run multiple queries in a transaction with circuit breaker."""
+        # Circuit breaker
+        if _depth > 2:  # Maximum recursion depth
+            logger.error("Maximum recursion depth exceeded in Neo4j transaction")
+            raise RuntimeError("Maximum recursion depth exceeded")
             
         try:
             logger.debug(f"Starting transaction with {len(queries)} queries")
             
-            async with self.driver.session() as session:
-                async with session.begin_transaction() as tx:
-                    results = []
-                    for query_dict in queries:
-                        query = query_dict["query"]
-                        parameters = query_dict.get("parameters", {})
-                        
-                        logger.debug(f"Executing query in transaction: {query}")
-                        logger.debug(f"With parameters: {parameters}")
-                        
-                        result = await tx.run(query, parameters)
-                        records = await result.data()
-                        results.append(records)
-                        
-                    await tx.commit()
-                    logger.debug("Transaction committed successfully")
-                    return results
+            async with self.transaction() as tx:
+                results = []
+                for query_dict in queries:
+                    query = query_dict["query"]
+                    parameters = query_dict.get("parameters", {})
+                    
+                    logger.debug(f"Executing query in transaction: {query}")
+                    logger.debug(f"With parameters: {parameters}")
+                    
+                    result = await tx.run(query, parameters)
+                    records = await result.data()
+                    results.append(records)
+                
+                logger.debug("Transaction completed successfully")
+                return results
                     
         except Exception as e:
             logger.error(f"Transaction failed: {str(e)}")
@@ -143,52 +155,71 @@ class Neo4jBaseStore:
 class Neo4jMemoryStore(Neo4jBaseStore):
     """Neo4j store for memory operations."""
     
-    async def store_memory(self, memory_data: Dict[str, Any]) -> str:
-        """Store memory data in Neo4j."""
+    async def store_memory(self, memory_data: Dict[str, Any], is_sync: bool = False) -> str:
+        """Store memory data in Neo4j with minimal data."""
         try:
-            # Generate memory ID if not provided
+            # Extract essential fields
             memory_id = memory_data.get("id", str(datetime.now().timestamp()))
             
-            # Log incoming memory data
-            logger.info("Storing memory with data:")
-            logger.info(f"Memory ID: {memory_id}")
-            logger.info(f"Raw memory data: {json.dumps(memory_data, indent=2)}")
+            # Create minimal content
+            content = memory_data.get("content", {})
+            if isinstance(content, dict):
+                minimal_content = {
+                    k: v for k, v in content.items()
+                    if k in ["thread_id", "task_id", "message_id", "status"]
+                }
+            else:
+                minimal_content = str(content)
             
-            # Prepare parameters
+            # Prepare minimal parameters
             params = {
                 "id": memory_id,
                 "type": memory_data.get("type", "episodic"),
-                "content": json.dumps(memory_data.get("content", {})),  # Serialize content for Neo4j
-                "timestamp": memory_data.get("timestamp", datetime.now().isoformat()),
-                "importance": memory_data.get("importance", 0.5)
+                "content": json.dumps(minimal_content),  # Serialize minimal content
+                "timestamp": memory_data.get("timestamp", datetime.now().isoformat())
             }
             
-            # Log prepared parameters
-            logger.info("Prepared Neo4j parameters:")
-            logger.info(json.dumps(params, indent=2))
+            # Log operation
+            if not is_sync:
+                logger.info(f"Storing memory {memory_id} with minimal data")
             
-            # Create memory node
+            # Create or update memory node
             query = """
-            CREATE (m:Memory {
-                id: $id,
-                type: $type,
-                content: $content,
-                timestamp: $timestamp,
-                importance: $importance
-            })
+            MERGE (m:Memory {id: $id})
+            SET m.type = $type,
+                m.content = $content,
+                m.timestamp = $timestamp
             RETURN m
             """
             
-            logger.info("Executing Neo4j query:")
-            logger.info(query)
-            
-            result = await self.run_query(query, params)
-            
-            # Log result
-            logger.info("Neo4j store result:")
-            logger.info(json.dumps(result, indent=2))
-            
+            await self.run_query(query, params)
             return memory_id
+            
         except Exception as e:
             logger.error(f"Failed to store memory: {str(e)}")
             raise
+            
+    async def get_memory(self, memory_id: str) -> Optional[Dict[str, Any]]:
+        """Get memory data from Neo4j."""
+        try:
+            result = await self.run_query(
+                """
+                MATCH (m:Memory {id: $id})
+                RETURN m
+                """,
+                {"id": memory_id}
+            )
+            
+            if result and result[0]:
+                memory_data = result[0]["m"]
+                return {
+                    "id": memory_id,
+                    "type": memory_data.get("type", "episodic"),
+                    "content": json.loads(memory_data.get("content", "{}")),
+                    "timestamp": memory_data.get("timestamp")
+                }
+            return None
+            
+        except Exception as e:
+            logger.error(f"Failed to get memory: {str(e)}")
+            return None

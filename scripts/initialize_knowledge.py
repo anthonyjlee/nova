@@ -4,6 +4,7 @@
 import asyncio
 import sys
 import os
+import json
 from pathlib import Path
 import logging
 from datetime import datetime, timezone
@@ -38,11 +39,11 @@ async def initialize_task_structures(store: ConceptStore):
     for state in states:
         await store.store_concept(
             name=f"TaskState_{state['name']}",
-            type="task_state",
+            type="entity",
             description=state["description"],
             validation=ValidationSchema(
-                domain=BaseDomain.SYSTEM,
-                access_domain=BaseDomain.SYSTEM,
+                domain=BaseDomain.GENERAL,
+                access_domain=BaseDomain.GENERAL,
                 confidence=1.0,
                 source="system"
             ).dict()
@@ -64,7 +65,7 @@ async def initialize_task_structures(store: ConceptStore):
     templates = [
         {
             "name": "development_task",
-            "type": "task_template",
+            "type": "entity",
             "description": "Software development task template",
             "domain": BaseDomain.PROFESSIONAL,
             "metadata": {
@@ -75,7 +76,7 @@ async def initialize_task_structures(store: ConceptStore):
         },
         {
             "name": "organization_task",
-            "type": "task_template",
+            "type": "entity",
             "description": "Personal organization task template",
             "domain": BaseDomain.PERSONAL,
             "metadata": {
@@ -97,7 +98,6 @@ async def initialize_task_structures(store: ConceptStore):
                 confidence=1.0,
                 source="system"
             ).dict(),
-            metadata=template["metadata"]
         )
     
     logger.info("Task structures initialized successfully")
@@ -126,7 +126,7 @@ async def initialize_knowledge():
             # Technology Domain
             {
                 "name": "Software Development",
-                "type": "domain",
+                "type": "entity",
                 "description": "The process of creating and maintaining software",
                 "validation": ValidationSchema(
                     domain=BaseDomain.PROFESSIONAL,
@@ -142,7 +142,7 @@ async def initialize_knowledge():
             },
             {
                 "name": "Python",
-                "type": "technology",
+                "type": "entity",
                 "description": "A high-level programming language",
                 "validation": ValidationSchema(
                     domain=BaseDomain.PROFESSIONAL,
@@ -153,7 +153,7 @@ async def initialize_knowledge():
             },
             {
                 "name": "Neo4j",
-                "type": "technology",
+                "type": "entity",
                 "description": "A graph database management system",
                 "validation": ValidationSchema(
                     domain=BaseDomain.PROFESSIONAL,
@@ -166,7 +166,7 @@ async def initialize_knowledge():
             # Personal Domain
             {
                 "name": "Task Management",
-                "type": "skill",
+                "type": "action",
                 "description": "Organizing and prioritizing work",
                 "validation": ValidationSchema(
                     domain=BaseDomain.PERSONAL,
@@ -182,7 +182,7 @@ async def initialize_knowledge():
             },
             {
                 "name": "Time Management",
-                "type": "skill",
+                "type": "action",
                 "description": "Effective use of time for productivity",
                 "validation": ValidationSchema(
                     domain=BaseDomain.PERSONAL,
@@ -195,7 +195,7 @@ async def initialize_knowledge():
             # Cross-Domain Concepts
             {
                 "name": "Problem Solving",
-                "type": "skill",
+                "type": "action",
                 "description": "Ability to analyze and solve complex problems",
                 "validation": ValidationSchema(
                     domain=BaseDomain.GENERAL,
@@ -241,7 +241,7 @@ async def initialize_knowledge():
         # Store relationships
         for source, target, rel_type in relationships:
             logger.info(f"Creating relationship: {source} -{rel_type}-> {target}")
-            await store.store_concept_relationship(
+            await store.store_relationship(
                 source,
                 target,
                 rel_type
@@ -249,6 +249,26 @@ async def initialize_knowledge():
             
         logger.info("Successfully initialized knowledge graph")
         
+        # Create domain nodes
+        domains = ["tasks", "professional", "personal"]
+        for domain in domains:
+            await store.run_query(
+                """
+                MERGE (d:Domain {name: $name})
+                SET d.created = datetime()
+                """,
+                {"name": domain}
+            )
+            # Create access rule for domain
+            await store.run_query(
+                """
+                MATCH (d:Domain {name: $name})
+                MERGE (d)-[:HAS_RULE]->(r:AccessRule {type: 'domain_access'})
+                SET r.created = datetime()
+                """,
+                {"name": domain}
+            )
+            
         # Initialize task structures
         await initialize_task_structures(store)
         
@@ -270,10 +290,10 @@ async def create_test_data(store: ConceptStore):
                 "status": "pending",
                 "domain": "professional",
                 "description": "A test task for development",
-                "metadata": {
+                "metadata": json.dumps({
                     "priority": "high",
                     "estimated_hours": 4
-                }
+                })
             },
             {
                 "id": "TEST-002",
@@ -282,10 +302,10 @@ async def create_test_data(store: ConceptStore):
                 "status": "in_progress",
                 "domain": "personal",
                 "description": "A test task for organization",
-                "metadata": {
+                "metadata": json.dumps({
                     "priority": "medium",
                     "category": "organization"
-                }
+                })
             }
         ]
 
@@ -322,7 +342,7 @@ async def verify_initialization():
         async with store.driver.session() as session:
             # Check task states
             result = await session.run(
-                "MATCH (s:TaskState) RETURN count(s) as count"
+                "MATCH (s:Concept) WHERE s.name IN ['TaskState_pending', 'TaskState_in_progress', 'TaskState_blocked', 'TaskState_completed'] RETURN count(s) as count"
             )
             record = await result.single()
             if record["count"] != 4:
@@ -331,7 +351,7 @@ async def verify_initialization():
                 
             # Check task templates
             result = await session.run(
-                "MATCH (t:Concept) WHERE t.type = 'task_template' RETURN count(t) as count"
+                "MATCH (t:Concept) WHERE t.name IN ['development_task', 'organization_task'] RETURN count(t) as count"
             )
             record = await result.single()
             if record["count"] < 2:

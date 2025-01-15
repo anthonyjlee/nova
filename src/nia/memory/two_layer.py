@@ -47,15 +47,36 @@ class EpisodicLayer:
             logger.error(traceback.format_exc())
             raise
 
-    async def store_memory(self, memory: EpisodicMemory) -> bool:
-        """Store a memory in the vector store."""
+    async def get_consolidation_candidates(self) -> List[Dict]:
+        """Get memories that are candidates for consolidation."""
         try:
-            # Convert memory to dict for storage
-            memory_dict = memory.dict()
+            result = await self.store.search_vectors(
+                filter={"metadata.consolidated": False}
+            )
+            return result
+        except Exception as e:
+            logger.error(f"Failed to get consolidation candidates: {str(e)}")
+            logger.error(traceback.format_exc())
+            return []
+
+    async def store_memory(self, memory: EpisodicMemory) -> bool:
+        """Store a memory directly in the vector store."""
+        try:
+            # Generate ID if not present
+            memory_id = getattr(memory, "id", str(uuid.uuid4()))
+            
+            # Create minimal metadata
+            metadata = {
+                "id": memory_id,
+                "type": memory.type.value if isinstance(memory.type, MemoryType) else memory.type,
+                "timestamp": getattr(memory, "timestamp", datetime.now().isoformat())
+            }
+            
+            # Store directly in vector store
             return await self.store.store_vector(
-                content=memory_dict["content"],
-                metadata=memory_dict.get("metadata", {}),
-                layer=memory_dict["type"].value if isinstance(memory_dict["type"], MemoryType) else memory_dict["type"]
+                content=memory.content,
+                metadata=metadata,
+                layer="episodic"
             )
         except Exception as e:
             logger.error(f"Failed to store memory: {str(e)}")
@@ -96,6 +117,12 @@ class TwoLayerMemorySystem:
         # Get Qdrant config
         self.qdrant_host = config.get("QDRANT", "host", fallback="127.0.0.1")
         self.qdrant_port = config.getint("QDRANT", "port", fallback=6333)
+        
+        # Initialize memory pools
+        self._memory_pools = {
+            "episodic": {},
+            "semantic": {}
+        }
         
     async def initialize(self):
         """Initialize connections to Neo4j and vector store."""
@@ -151,6 +178,10 @@ class TwoLayerMemorySystem:
         try:
             logger.debug(f"Deleting memory {memory_id}")
             
+            # Remove from memory pools
+            self._memory_pools["episodic"].pop(memory_id, None)
+            self._memory_pools["semantic"].pop(memory_id, None)
+            
             # Delete from vector store
             if self.vector_store:
                 await self.vector_store.delete_vector(memory_id)
@@ -173,65 +204,309 @@ class TwoLayerMemorySystem:
             logger.error(traceback.format_exc())
             return False
 
-    async def store_experience(self, memory: Memory) -> bool:
+    async def store_experience(self, memory: Memory, is_sync: bool = False, _depth: int = 0) -> bool:
         """Store an experience in the episodic layer."""
         try:
+            # Circuit breaker to prevent infinite recursion
+            if _depth > 2:  # Allow max 2 levels of recursion
+                logger.error("Maximum recursion depth exceeded in store_experience")
+                return False
+                
             if not self._initialized:
                 raise Exception("Memory system not initialized")
-            # Convert memory to dict for storage
-            memory_dict = memory.dict()
-            # Use metadata type if provided, otherwise use memory type
-            layer = memory_dict["metadata"].get("type", memory_dict["type"])
+                
+            # Convert memory to dict with minimal data
+            memory_dict = memory.dict(minimal=True)
+            
+            # Generate ID if not present
+            memory_id = memory_dict.get("id", str(uuid.uuid4()))
+            
+            # Check if already stored to prevent duplicates
+            if memory_id in self._memory_pools["episodic"] or memory_id in self._memory_pools["semantic"]:
+                logger.debug(f"Memory {memory_id} already stored")
+                return True
+            
+            # Extract essential metadata
+            essential_metadata = {
+                "type": memory_dict["type"],
+                "id": memory_id,
+                "timestamp": memory_dict.get("timestamp", datetime.now().isoformat())
+            }
+            
+            # Add only necessary additional metadata
+            if memory_dict.get("metadata"):
+                essential_metadata.update({
+                    k: v for k, v in memory_dict["metadata"].items()
+                    if k in ["domain", "thread_id", "task_id", "message_id"]
+                })
+            
+            # Determine layer
+            layer = essential_metadata.get("type")
             if isinstance(layer, MemoryType):
                 layer = layer.value
-            return await self.vector_store.store_vector(
-                content=memory_dict["content"],
-                metadata=memory_dict["metadata"],
-                layer=layer  # Use type from metadata or memory type
+                
+            # Use direct storage pattern
+            if hasattr(memory, 'knowledge'):
+                content = {
+                    "text": memory_dict["content"],
+                    "knowledge": memory.knowledge
+                }
+                metadata = {
+                    **essential_metadata,
+                    "concepts": memory.knowledge.get("concepts", []),
+                    "relationships": memory.knowledge.get("relationships", []),
+                    "importance": getattr(memory, "importance", 0.8),
+                    "context": getattr(memory, "context", {}),
+                    "consolidated": False
+                }
+            else:
+                content = memory_dict["content"]
+                metadata = essential_metadata
+
+            # Store directly in episodic layer
+            success = await self.episodic.store_memory(
+                EpisodicMemory(
+                    content=content,
+                    metadata=metadata,
+                    type=memory_dict["type"]
+                )
             )
+            
+            if not success:
+                return False
+                
+            # Add to episodic pool
+            self._memory_pools["episodic"][memory_id] = {
+                "content": memory_dict["content"],
+                "metadata": essential_metadata,
+                "timestamp": essential_metadata["timestamp"]
+            }
+            
+            return True
         except Exception as e:
             logger.error(f"Failed to store experience: {str(e)}")
             logger.error(traceback.format_exc())
             return False
 
-    async def get_experience(self, memory_id: str) -> Optional[Memory]:
-        """Get an experience from the episodic layer."""
+    async def get_experience(self, memory_id: str, sync_layers: bool = True) -> Optional[Memory]:
+        """Get an experience from either memory layer."""
         try:
             if not self._initialized:
                 raise Exception("Memory system not initialized")
-            # Get memory from vector store
-            memories = await self.vector_store.search_vectors(
-                content={"id": memory_id},
-                limit=1,
-                score_threshold=0.99
-            )
-            if not memories:
+            
+            memory_data = None
+            location = None
+            
+            # Check memory pools first
+            if memory_id in self._memory_pools["semantic"]:
+                memory_data = self._memory_pools["semantic"][memory_id]
+                location = "semantic"
+            elif memory_id in self._memory_pools["episodic"]:
+                memory_data = self._memory_pools["episodic"][memory_id]
+                location = "episodic"
+            
+            # If not in pools, check semantic layer
+            if not memory_data and self.semantic:
+                try:
+                    result = await self.semantic.run_query(
+                        """
+                        MATCH (m {id: $id})
+                        RETURN m
+                        """,
+                        {"id": memory_id}
+                    )
+                    if result and result[0]:
+                        memory_data = result[0]["m"]
+                        location = "semantic"
+                        # Add to semantic pool
+                        self._memory_pools["semantic"][memory_id] = memory_data
+                except Exception as e:
+                    logger.warning(f"Failed to query semantic layer: {str(e)}")
+            
+            # Check episodic layer if still not found
+            if not memory_data:
+                result = await self.vector_store.search_vectors(
+                    content={"id": memory_id},
+                    limit=1,
+                    score_threshold=0.99
+                )
+                memories = result if result else []
+                if memories:
+                    memory_data = memories[0]
+                    location = "episodic"
+                    # Add to episodic pool
+                    self._memory_pools["episodic"][memory_id] = memory_data
+            
+            if not memory_data:
                 return None
-            memory_data = memories[0]
-            
-            # Get metadata and preserve original type
-            metadata = memory_data["metadata"]
-            memory_type = metadata.get("type", "thread")  # Default to thread if not specified
-            
-            # Create Memory object
-            return Memory(
+                
+            # Create memory object with minimal data
+            memory = Memory(
                 id=memory_id,
                 content=memory_data["content"],
-                type=memory_type,  # Use original type from metadata
-                importance=memory_data.get("importance", 1.0),
-                timestamp=datetime.fromisoformat(memory_data["timestamp"]) if "timestamp" in memory_data else datetime.now(),
-                context=memory_data.get("context", {}),
-                metadata=metadata  # Use original metadata
+                type=memory_data.get("type", "thread"),
+                importance=0.8,  # Default importance
+                timestamp=datetime.fromisoformat(memory_data.get("timestamp", datetime.now().isoformat())),
+                context={},  # Empty context by default
+                metadata={
+                    "type": memory_data.get("type", "thread"),
+                    **(memory_data.get("metadata", {}))
+                }
             )
+            
+            # Sync to other layer if needed
+            if sync_layers and self.semantic and location in ["semantic", "episodic"]:
+                try:
+                    await self.store_experience(memory, is_sync=True)
+                except Exception as e:
+                    logger.warning(f"Failed to sync memory: {str(e)}")
+            
+            return memory
         except Exception as e:
             logger.error(f"Failed to get experience: {str(e)}")
             logger.error(traceback.format_exc())
             return None
 
+    async def query_episodic(self, query: Dict[str, Any]) -> List[Memory]:
+        """Query the episodic layer with complex filters."""
+        try:
+            if not self._initialized:
+                raise Exception("Memory system not initialized")
+                
+            content_filter = query.get("content", {})
+            metadata_filter = query.get("filter", {})
+            
+            # Combine filters
+            combined_filter = {**content_filter}
+            if metadata_filter:
+                combined_filter["metadata"] = metadata_filter
+                
+            result = await self.vector_store.search_vectors(
+                content=combined_filter,
+                limit=query.get("limit", 100),
+                score_threshold=query.get("score_threshold", 0.7)
+            )
+            memories = result if result else []
+            
+            # Create memories with minimal metadata to avoid recursion
+            result = []
+            for m in memories:
+                # All results from vector store should be dicts
+                memory_dict = m if isinstance(m, dict) else m.dict()
+                memory = Memory(
+                    id=memory_dict.get("id", str(uuid.uuid4())),
+                    content=memory_dict.get("content", ""),
+                    type=memory_dict.get("type", MemoryType.EPISODIC),
+                    importance=memory_dict.get("importance", 0.8),
+                    timestamp=datetime.fromisoformat(memory_dict.get("timestamp", datetime.now().isoformat())),
+                    context=memory_dict.get("context", {}),
+                    metadata=memory_dict.get("metadata", {})
+                )
+                result.append(memory)
+                
+                # Add to episodic pool
+                self._memory_pools["episodic"][memory.id] = {
+                    "content": memory_dict.get("content", ""),
+                    "metadata": memory_dict.get("metadata", {}),
+                    "timestamp": memory_dict.get("timestamp", datetime.now().isoformat())
+                }
+            
+            return result
+        except Exception as e:
+            logger.error(f"Failed to query episodic memory: {str(e)}")
+            logger.error(traceback.format_exc())
+            return []
+
+    async def consolidate_memories(self):
+        """Consolidate memories from episodic to semantic layer."""
+        if not self._initialized:
+            raise Exception("Memory system not initialized")
+        
+        # Get consolidation candidates
+        result = await self.episodic.store.search_vectors(
+            filter={"metadata.consolidated": False}
+        )
+        candidates = result if result else []
+        
+        # Process each candidate
+        for candidate in candidates:
+            # Extract concepts and relationships
+            if isinstance(candidate, dict):
+                concepts = candidate.get("concepts", [])
+                relationships = candidate.get("relationships", [])
+            else:
+                concepts = getattr(candidate, "concepts", [])
+                relationships = getattr(candidate, "relationships", [])
+            
+            # Store concepts in semantic layer
+            for concept in concepts:
+                await self.semantic.store_concept(
+                    name=concept["name"],
+                    type=concept["type"],
+                    description=concept.get("description", ""),
+                    validation=concept.get("validation", {})
+                )
+            
+            # Store relationships in semantic layer
+            for rel in relationships:
+                await self.semantic.store_relationship(
+                    source=rel["source"],
+                    target=rel["target"],
+                    rel_type=rel["type"],
+                    attributes={
+                        "bidirectional": rel.get("bidirectional", False),
+                        "confidence": rel.get("confidence", 1.0)
+                    }
+                )
+            
+            # Mark as consolidated
+            await self.episodic.store.update_metadata(
+                candidate["id"],
+                {"consolidated": True}
+            )
+
+    async def query_semantic(self, query: Dict[str, Any]) -> List[Dict]:
+        """Query the semantic layer."""
+        try:
+            if not self._initialized:
+                raise Exception("Memory system not initialized")
+            
+            if not self.semantic:
+                return []
+            
+            # Extract query parameters
+            query_type = query.get("type")
+            pattern = query.get("pattern")
+            
+            # Build Neo4j query
+            cypher_query = """
+            MATCH (n:Concept)
+            WHERE n.type = $type
+            """
+            if pattern:
+                cypher_query += " AND n.name =~ $pattern"
+            
+            cypher_query += " RETURN n"
+            
+            # Execute query
+            params = {"type": query_type}
+            if pattern:
+                params["pattern"] = pattern
+            
+            results = await self.semantic.run_query(cypher_query, params)
+            return results
+        except Exception as e:
+            logger.error(f"Failed to query semantic layer: {str(e)}")
+            logger.error(traceback.format_exc())
+            return []
+
     async def cleanup(self):
         """Clean up resources."""
         try:
             logger.info("Cleaning up memory system...")
+            # Clear memory pools
+            self._memory_pools["episodic"].clear()
+            self._memory_pools["semantic"].clear()
             # Clean up vector store
             if self.vector_store:
                 await self.vector_store.cleanup()

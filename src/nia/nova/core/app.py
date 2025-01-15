@@ -217,19 +217,84 @@ async def initialize_system_threads():
         
         # Just log status and continue - don't block startup
         try:
-            # Try to get nova-team thread
-            nova_team = await thread_manager.get_thread(thread_manager.NOVA_TEAM_UUID)
-            if nova_team:
-                logger.info("Nova team thread exists")
-            else:
-                logger.warning("Nova team thread not found")
+            # Check if threads exist in Neo4j first
+            try:
+                # Check nova team thread
+                nova_team_exists = await thread_manager.memory_system.semantic.run_query(
+                    """
+                    MATCH (t:Thread {id: $id}) RETURN COUNT(t) > 0 as exists
+                    """,
+                    {"id": thread_manager.NOVA_TEAM_UUID}
+                )
                 
-            # Try to get nova thread
-            nova = await thread_manager.get_thread(thread_manager.NOVA_UUID)
-            if nova:
-                logger.info("Nova thread exists")
-            else:
-                logger.warning("Nova thread not found")
+                if not nova_team_exists or not nova_team_exists[0]["exists"]:
+                    # Create nova team thread directly in Neo4j
+                    await thread_manager.memory_system.semantic.run_query(
+                        """
+                        CREATE (t:Thread {
+                            id: $id,
+                            title: $title,
+                            domain: $domain,
+                            type: $type,
+                            system: true,
+                            pinned: true,
+                            description: $description,
+                            workspace: $workspace,
+                            created_at: datetime()
+                        })
+                        """,
+                        {
+                            "id": thread_manager.NOVA_TEAM_UUID,
+                            "title": "Nova Team",
+                            "domain": "system",
+                            "type": "agent-team",
+                            "description": "Nova AI Team",
+                            "workspace": "system"
+                        }
+                    )
+                    logger.info("Created nova team thread")
+                else:
+                    logger.info("Nova team thread exists")
+                    
+                # Check nova thread
+                nova_exists = await thread_manager.memory_system.semantic.run_query(
+                    """
+                    MATCH (t:Thread {id: $id}) RETURN COUNT(t) > 0 as exists
+                    """,
+                    {"id": thread_manager.NOVA_UUID}
+                )
+                
+                if not nova_exists or not nova_exists[0]["exists"]:
+                    # Create nova thread directly in Neo4j
+                    await thread_manager.memory_system.semantic.run_query(
+                        """
+                        CREATE (t:Thread {
+                            id: $id,
+                            title: $title,
+                            domain: $domain,
+                            type: $type,
+                            system: true,
+                            pinned: true,
+                            description: $description,
+                            workspace: $workspace,
+                            created_at: datetime()
+                        })
+                        """,
+                        {
+                            "id": thread_manager.NOVA_UUID,
+                            "title": "Nova",
+                            "domain": "system",
+                            "type": "agent",
+                            "description": "Nova AI Assistant",
+                            "workspace": "system"
+                        }
+                    )
+                    logger.info("Created nova thread")
+                else:
+                    logger.info("Nova thread exists")
+                    
+            except Exception as e:
+                logger.warning(f"Error managing system threads: {str(e)}")
                 
         except Exception as e:
             logger.warning(f"Non-critical error checking threads: {str(e)}")
@@ -253,59 +318,23 @@ async def startup_event():
         # Initialize services with non-blocking retries
         logger.warning("Initializing services...")
         
-        async def initialize_services():
-            """Initialize all required services."""
+        # Initialize services with proper task handling
+        init_task = asyncio.create_task(get_memory_system())
+        try:
+            memory_system = await init_task
+            logger.info("Memory system initialized with Neo4j connection")
+            
+            # Initialize system threads with timeout
+            thread_task = asyncio.create_task(initialize_system_threads())
             try:
-                # Check Neo4j connection first
-                retry_count = 0
-                max_retries = 10
-                while retry_count < max_retries:
-                    try:
-                        uri = "bolt://localhost:7687"
-                        driver = GraphDatabase.driver(uri, auth=("neo4j", "password"))
-                        driver.verify_connectivity()
-                        logger.info("Neo4j connection verified")
-                        driver.close()
-                        break
-                    except Exception as e:
-                        retry_count += 1
-                        if retry_count == max_retries:
-                            logger.error(f"Neo4j connection failed after {max_retries} retries")
-                            break
-                        if retry_count == 1:  # Only log on first attempt
-                            logger.warning("Waiting for Neo4j...")
-                        await asyncio.sleep(2)
-                
-                # Initialize memory system with retries
-                retry_count = 0
-                max_retries = 5
-                while retry_count < max_retries:
-                    try:
-                        memory_system = await get_memory_system()
-                        logger.info("Memory system initialized")
-                        break
-                    except Exception as e:
-                        retry_count += 1
-                        if retry_count == max_retries:
-                            logger.error("Memory system initialization failed")
-                            break
-                        if retry_count == 1:  # Only log on first attempt
-                            logger.warning("Waiting for memory system...")
-                        await asyncio.sleep(2)
-                
-                # Initialize system threads
-                try:
-                    await initialize_system_threads()
-                    logger.info("System threads initialized")
-                except Exception as e:
-                    logger.error("System threads initialization failed")
-                    
+                await asyncio.wait_for(thread_task, timeout=10.0)
+                logger.info("System threads initialized")
+            except asyncio.TimeoutError:
+                logger.error("System threads initialization timed out")
             except Exception as e:
-                logger.error("Service initialization error")
-                
-        # Start initialization in background
-        asyncio.create_task(initialize_services())
-        logger.info("Service initialization started in background")
+                logger.error(f"System threads initialization failed: {str(e)}")
+        except Exception as e:
+            logger.error(f"Service initialization error: {str(e)}")
         
         logger.info("Startup complete!")
     except Exception as e:

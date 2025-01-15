@@ -10,7 +10,60 @@ from typing import runtime_checkable
 @runtime_checkable
 class JSONSerializable(Protocol):
     """Protocol for JSON-serializable objects."""
-    def dict(self) -> Dict[str, Any]: ...
+    def dict(self, minimal: bool = False) -> Dict[str, Any]: ...
+
+class OutputType(str, Enum):
+    """Types of outputs in the system."""
+    TEXT = "text"
+    JSON = "json"
+    BINARY = "binary"
+    ERROR = "error"
+
+class Domain(str, Enum):
+    """Domain types in the system."""
+    SYSTEM = "system"
+    USER = "user"
+    AGENT = "agent"
+    TASK = "task"
+
+class TaskStatus(str, Enum):
+    """Task status types."""
+    SUCCESS = "success"
+    FAILURE = "failure"
+    IN_PROGRESS = "in_progress"
+    PENDING = "pending"
+
+class GraphNode(BaseModel):
+    """A node in the knowledge graph."""
+    id: Optional[str] = None
+    label: str
+    properties: Dict[str, Any] = Field(default_factory=dict)
+
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        if minimal:
+            return {
+                "id": self.id,
+                "label": self.label
+            }
+        return super().dict()
+
+class GraphEdge(BaseModel):
+    """An edge in the knowledge graph."""
+    source: str
+    target: str
+    type: str
+    properties: Dict[str, Any] = Field(default_factory=dict)
+
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        if minimal:
+            return {
+                "source": self.source,
+                "target": self.target,
+                "type": self.type
+            }
+        return super().dict()
 
 class BaseDomain(str, Enum):
     """Base domains for memory organization."""
@@ -44,8 +97,14 @@ class CrossDomainSchema(BaseModel):
     approval_timestamp: Optional[datetime] = Field(default_factory=lambda: datetime.now(timezone.utc))
     approval_source: Optional[str] = Field(default="system")
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
+        if minimal:
+            return {
+                "approved": self.approved,
+                "source_domain": str(self.source_domain) if self.source_domain else "general",
+                "target_domain": str(self.target_domain) if self.target_domain else "general"
+            }
         d = super().dict()
         if self.source_domain:
             d["source_domain"] = str(self.source_domain)
@@ -77,11 +136,17 @@ class ValidationSchema(BaseModel):
     contradicted_by: List[str] = Field(default_factory=list)
     needs_verification: List[str] = Field(default_factory=list)
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
+        if minimal:
+            return {
+                "domain": str(self.domain),
+                "access_domain": str(self.access_domain),
+                "confidence": self.confidence
+            }
         d = super().dict()
         if self.cross_domain:
-            d["cross_domain"] = self.cross_domain.dict()
+            d["cross_domain"] = self.cross_domain.dict(minimal=minimal)
         return d
 
     @validator("domain", "access_domain", pre=True)
@@ -106,8 +171,14 @@ class DomainTransfer(BaseModel):
     approval_timestamp: Optional[datetime] = None
     approval_source: Optional[str] = None
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
+        if minimal:
+            return {
+                "approved": self.approved,
+                "source_domain": str(self.source_domain) if self.source_domain else None,
+                "target_domain": str(self.target_domain) if self.target_domain else None
+            }
         d = super().dict()
         if self.source_domain:
             d["source_domain"] = str(self.source_domain)
@@ -147,8 +218,14 @@ class TaskValidation(BaseModel):
     last_transition: Optional[datetime] = None
     transition_history: List[Dict[str, Any]] = Field(default_factory=list)
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
+        if minimal:
+            return {
+                "state": str(self.state),
+                "domain": str(self.domain),
+                "team_id": self.team_id
+            }
         d = super().dict()
         d["state"] = str(self.state)
         if self.last_transition:
@@ -184,24 +261,28 @@ class DomainContext(BaseModel):
         }
     )
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
+        if minimal:
+            return {
+                "primary_domain": str(self.primary_domain),
+                "knowledge_vertical": str(self.knowledge_vertical) if self.knowledge_vertical else None,
+                "confidence": self.confidence
+            }
         d = super().dict()
-        # Convert enums and complex types to strings
         d["primary_domain"] = str(self.primary_domain)
         if self.knowledge_vertical:
             d["knowledge_vertical"] = str(self.knowledge_vertical)
         if self.cross_domain:
-            d["cross_domain"] = self.cross_domain.dict()
+            d["cross_domain"] = self.cross_domain.dict(minimal=minimal)
         if self.validation:
-            d["validation"] = self.validation.dict()
+            d["validation"] = self.validation.dict(minimal=minimal)
         return d
 
     @validator("validation", pre=True)
     def validate_validation_data(cls, v):
         """Ensure validation data is properly structured."""
         if isinstance(v, dict):
-            # Convert dict to ValidationSchema
             return ValidationSchema(**v)
         elif isinstance(v, ValidationSchema):
             return v
@@ -214,22 +295,16 @@ class DomainContext(BaseModel):
         target_vertical: Optional[str] = None
     ) -> bool:
         """Validate if transfer to target domain/vertical is allowed."""
-        # Always allow transfers within same domain
         if target_domain == self.primary_domain:
             return True
-
-        # Check if cross-domain operation is approved
         if self.cross_domain and self.cross_domain.approved:
             if target_domain and self.cross_domain.target_domain == target_domain:
                 return True
             if target_vertical and self.cross_domain.target_vertical == target_vertical:
                 return True
-
-        # Check knowledge vertical compatibility
         if (self.knowledge_vertical and target_vertical and 
             self.knowledge_vertical == target_vertical):
             return True
-
         return False
 
     def request_transfer(
@@ -257,20 +332,25 @@ class Concept(BaseModel):
     domain_context: DomainContext
     validation: ValidationSchema = Field(default_factory=ValidationSchema)
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
+        if minimal:
+            return {
+                "name": self.name,
+                "type": self.type,
+                "domain_context": self.domain_context.dict(minimal=True)
+            }
         d = super().dict()
         if self.domain_context:
-            d["domain_context"] = self.domain_context.dict()
+            d["domain_context"] = self.domain_context.dict(minimal=minimal)
         if self.validation:
-            d["validation"] = self.validation.dict()
+            d["validation"] = self.validation.dict(minimal=minimal)
         return d
 
     @validator("validation", pre=True)
     def validate_validation_data(cls, v):
         """Ensure validation data is properly structured."""
         if isinstance(v, dict):
-            # Convert dict to ValidationSchema
             return ValidationSchema(**v)
         elif isinstance(v, ValidationSchema):
             return v
@@ -288,20 +368,26 @@ class Relationship(BaseModel):
     bidirectional: bool = False
     validation: ValidationSchema = Field(default_factory=ValidationSchema)
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
+        if minimal:
+            return {
+                "source": self.source,
+                "target": self.target,
+                "type": self.type,
+                "bidirectional": self.bidirectional
+            }
         d = super().dict()
         if self.domain_context:
-            d["domain_context"] = self.domain_context.dict()
+            d["domain_context"] = self.domain_context.dict(minimal=minimal)
         if self.validation:
-            d["validation"] = self.validation.dict()
+            d["validation"] = self.validation.dict(minimal=minimal)
         return d
 
     @validator("validation", pre=True)
     def validate_validation_data(cls, v):
         """Ensure validation data is properly structured."""
         if isinstance(v, dict):
-            # Convert dict to ValidationSchema
             return ValidationSchema(**v)
         elif isinstance(v, ValidationSchema):
             return v
@@ -319,17 +405,24 @@ class Memory(BaseModel):
     consolidated: bool = False
     domain_context: Optional[DomainContext] = None
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
+        if minimal:
+            return {
+                "id": self.id,
+                "type": self.type.value if isinstance(self.type, MemoryType) else str(self.type),
+                "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+                "content": self.content if isinstance(self.content, str) else {
+                    k: v for k, v in self.content.items()
+                    if k in ["thread_id", "task_id", "message_id", "status"]
+                }
+            }
         d = super().dict()
-        # Convert datetime to ISO format
         if self.timestamp:
             d["timestamp"] = self.timestamp.isoformat()
-        # Convert type enum to string
         d["type"] = self.type.value if isinstance(self.type, MemoryType) else str(self.type)
-        # Convert domain context if present
         if self.domain_context:
-            d["domain_context"] = self.domain_context.dict()
+            d["domain_context"] = self.domain_context.dict(minimal=minimal)
         return d
 
 class EpisodicMemory(Memory):
@@ -342,14 +435,21 @@ class EpisodicMemory(Memory):
     concepts: List[Concept] = Field(default_factory=list)
     relationships: List[Relationship] = Field(default_factory=list)
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
+        if minimal:
+            base = super().dict(minimal=True)
+            return {
+                **base,
+                "location": self.location,
+                "participants": self.participants[:5] if self.participants else [],  # Limit participants
+                "related_memories": self.related_memories[:5] if self.related_memories else []  # Limit related
+            }
         d = super().dict()
-        # Convert concepts and relationships
         if self.concepts:
-            d["concepts"] = [c.dict() for c in self.concepts]
+            d["concepts"] = [c.dict(minimal=minimal) for c in self.concepts]
         if self.relationships:
-            d["relationships"] = [r.dict() for r in self.relationships]
+            d["relationships"] = [r.dict(minimal=minimal) for r in self.relationships]
         return d
 
 class SemanticMemory(Memory):
@@ -360,22 +460,27 @@ class SemanticMemory(Memory):
     confidence: float = 1.0
     validation: ValidationSchema = Field(default_factory=ValidationSchema)
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
+        if minimal:
+            base = super().dict(minimal=True)
+            return {
+                **base,
+                "confidence": self.confidence
+            }
         d = super().dict()
         if self.concepts:
-            d["concepts"] = [c.dict() for c in self.concepts]
+            d["concepts"] = [c.dict(minimal=minimal) for c in self.concepts]
         if self.relationships:
-            d["relationships"] = [r.dict() for r in self.relationships]
+            d["relationships"] = [r.dict(minimal=minimal) for r in self.relationships]
         if self.validation:
-            d["validation"] = self.validation.dict()
+            d["validation"] = self.validation.dict(minimal=minimal)
         return d
 
     @validator("validation", pre=True)
     def validate_validation_data(cls, v):
         """Ensure validation data is properly structured."""
         if isinstance(v, dict):
-            # Convert dict to ValidationSchema
             return ValidationSchema(**v)
         elif isinstance(v, ValidationSchema):
             return v
@@ -390,23 +495,57 @@ class ProceduralMemory(Memory):
     success_criteria: List[str] = Field(default_factory=list)
     validation: ValidationSchema = Field(default_factory=ValidationSchema)
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
+        if minimal:
+            base = super().dict(minimal=True)
+            return {
+                **base,
+                "steps": self.steps[:3] if self.steps else []  # Limit steps
+            }
         d = super().dict()
         if self.validation:
-            d["validation"] = self.validation.dict()
+            d["validation"] = self.validation.dict(minimal=minimal)
         return d
 
     @validator("validation", pre=True)
     def validate_validation_data(cls, v):
         """Ensure validation data is properly structured."""
         if isinstance(v, dict):
-            # Convert dict to ValidationSchema
             return ValidationSchema(**v)
         elif isinstance(v, ValidationSchema):
             return v
         else:
             return ValidationSchema()
+
+class TaskOutput(BaseModel):
+    """Output from a task execution."""
+    task_id: str
+    status: TaskState
+    content: Union[str, Dict[str, Any]]
+    timestamp: datetime = Field(default_factory=datetime.now)
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
+        """Convert to dictionary with proper serialization."""
+        if minimal:
+            return {
+                "task_id": self.task_id,
+                "status": str(self.status),
+                "timestamp": self.timestamp.isoformat() if self.timestamp else None
+            }
+        d = super().dict()
+        d["status"] = str(self.status)
+        if self.timestamp:
+            d["timestamp"] = self.timestamp.isoformat()
+        return d
+
+    @validator("status", pre=True)
+    def validate_status(cls, v):
+        """Validate task status."""
+        if isinstance(v, str):
+            return TaskState(v)
+        return v
 
 class TaskMemory(Memory):
     """Task-specific memory model."""
@@ -417,14 +556,21 @@ class TaskMemory(Memory):
     validation: TaskValidation
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
+        if minimal:
+            base = super().dict(minimal=True)
+            return {
+                **base,
+                "task_id": self.task_id,
+                "new_state": str(self.new_state)
+            }
         d = super().dict()
         if self.previous_state:
             d["previous_state"] = str(self.previous_state)
         d["new_state"] = str(self.new_state)
         if self.validation:
-            d["validation"] = self.validation.dict()
+            d["validation"] = self.validation.dict(minimal=minimal)
         return d
 
     @validator("previous_state", "new_state", pre=True)
@@ -447,8 +593,14 @@ class DialogueMessage(BaseModel):
     timestamp: datetime = Field(default_factory=datetime.now)
     metadata: Dict[str, Any] = {}
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
+        if minimal:
+            return {
+                "content": self.content,
+                "sender": self.sender,
+                "timestamp": self.timestamp.isoformat() if self.timestamp else None
+            }
         d = super().dict()
         if self.timestamp:
             d["timestamp"] = self.timestamp.isoformat()
@@ -460,11 +612,16 @@ class DialogueContext(BaseModel):
     participants: List[str] = []
     metadata: Dict[str, Any] = {}
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
+        if minimal:
+            return {
+                "participants": self.participants[:5] if self.participants else [],  # Limit participants
+                "messages": [m.dict(minimal=True) for m in self.messages[-5:]] if self.messages else []  # Last 5 messages
+            }
         d = super().dict()
         if self.messages:
-            d["messages"] = [m.dict() for m in self.messages]
+            d["messages"] = [m.dict(minimal=minimal) for m in self.messages]
         return d
 
 class Belief(BaseModel):
@@ -479,11 +636,18 @@ class Belief(BaseModel):
     created_at: datetime = Field(default_factory=datetime.now)
     last_updated: datetime = Field(default_factory=datetime.now)
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
+        if minimal:
+            return {
+                "subject": self.subject,
+                "predicate": self.predicate,
+                "object": self.object,
+                "confidence": self.confidence
+            }
         d = super().dict()
         if self.domain_context:
-            d["domain_context"] = self.domain_context.dict()
+            d["domain_context"] = self.domain_context.dict(minimal=minimal)
         if self.created_at:
             d["created_at"] = self.created_at.isoformat()
         if self.last_updated:
@@ -498,8 +662,13 @@ class MemoryQuery(BaseModel):
     filter: Dict[str, Any] = {}
     limit: int = 10
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
+        if minimal:
+            return {
+                "type": str(self.type) if self.type else None,
+                "limit": self.limit
+            }
         d = super().dict()
         if self.type:
             d["type"] = str(self.type)
@@ -520,18 +689,22 @@ class ConsolidationRule(BaseModel):
     def validate_cross_domain_rules(cls, v):
         """Ensure cross domain rules are properly structured."""
         if isinstance(v, dict):
-            # Convert dict to ValidationSchema
             return ValidationSchema(**v)
         elif isinstance(v, ValidationSchema):
             return v
         else:
             return ValidationSchema()
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
+        if minimal:
+            return {
+                "pattern": self.pattern,
+                "priority": self.priority
+            }
         d = super().dict()
         if self.domain_context:
-            d["domain_context"] = self.domain_context.dict()
+            d["domain_context"] = self.domain_context.dict(minimal=minimal)
         return d
 
 class MemoryBatch(BaseModel):
@@ -540,11 +713,16 @@ class MemoryBatch(BaseModel):
     metadata: Dict[str, Any] = {}
     batch_id: Optional[str] = None
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
+        if minimal:
+            return {
+                "batch_id": self.batch_id,
+                "memories": [m.dict(minimal=True) for m in self.memories] if self.memories else []
+            }
         d = super().dict()
         if self.memories:
-            d["memories"] = [m.dict() for m in self.memories]
+            d["memories"] = [m.dict(minimal=minimal) for m in self.memories]
         return d
 
 class MockMemory(EpisodicMemory):
@@ -583,18 +761,24 @@ class MockMemory(EpisodicMemory):
         }
     })
 
-    def dict(self) -> Dict[str, Any]:
+    def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
+        if minimal:
+            base = super().dict(minimal=True)
+            return {
+                **base,
+                "content": self.content,
+                "importance": self.importance
+            }
         d = super().dict()
         if self.validation:
-            d["validation"] = self.validation.dict()
+            d["validation"] = self.validation.dict(minimal=minimal)
         return d
 
     @validator("validation", pre=True)
     def validate_validation_data(cls, v):
         """Ensure validation data is properly structured."""
         if isinstance(v, dict):
-            # Convert dict to ValidationSchema
             return ValidationSchema(**v)
         elif isinstance(v, ValidationSchema):
             return v
@@ -626,7 +810,7 @@ class MockMemory(EpisodicMemory):
                     
                     # Validate concept structure
                     validated_concept = validate_concept_structure(concept)
-                    validated_concept["domain_context"] = domain_context.dict()
+                    validated_concept["domain_context"] = domain_context.dict(minimal=True)
                     validated_concepts.append(validated_concept)
                 except ValueError as e:
                     raise ValueError(str(e))
@@ -652,7 +836,7 @@ class MockMemory(EpisodicMemory):
                 )
                 
                 # Add domain context to relationship
-                rel["domain_context"] = domain_context.dict()
+                rel["domain_context"] = domain_context.dict(minimal=True)
                 validated_relationships.append(rel)
                 
             v["relationships"] = validated_relationships

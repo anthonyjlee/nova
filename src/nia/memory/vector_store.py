@@ -14,6 +14,9 @@ logger = logging.getLogger(__name__)
 class VectorStore:
     """Vector store for memory embeddings using Qdrant."""
     
+    _client_instance = None
+    _client_lock = None
+
     def __init__(self, embedding_service: EmbeddingService):
         """Initialize vector store.
         
@@ -22,25 +25,49 @@ class VectorStore:
         """
         # Read config
         import configparser
+        import asyncio
         config = configparser.ConfigParser()
         config.read("config.ini")
         
         self.embedding_service = embedding_service
-        host = config.get("QDRANT", "host", fallback="127.0.0.1")
-        port = config.getint("QDRANT", "port", fallback=6333)
-        self.client = QdrantClient(url=f"http://{host}:{port}")
+        self.host = config.get("QDRANT", "host", fallback="127.0.0.1")
+        self.port = config.getint("QDRANT", "port", fallback=6333)
         
+        # Initialize lock if needed
+        if VectorStore._client_lock is None:
+            VectorStore._client_lock = asyncio.Lock()
+        
+    @property
+    async def client(self):
+        """Get or create singleton client instance with connection pooling."""
+        if VectorStore._client_instance is None:
+            async with VectorStore._client_lock:
+                if VectorStore._client_instance is None:
+                    VectorStore._client_instance = QdrantClient(
+                        url=f"http://{self.host}:{self.port}",
+                        timeout=10.0,  # Add timeout
+                        prefer_grpc=False  # Force HTTP to avoid GRPC recursion
+                    )
+        return VectorStore._client_instance
+
     async def connect(self):
         """Initialize connection and collections."""
         try:
+            # Get direct client instance
+            client = QdrantClient(
+                url=f"http://{self.host}:{self.port}",
+                timeout=10.0,
+                prefer_grpc=False
+            )
+            
             # Check if collection exists
-            collections = self.client.get_collections()
+            collections = client.get_collections()
             collection_exists = "memories" in [c.name for c in collections.collections]
             
             if not collection_exists:
                 # Create collection with required indexes
                 logger.info("Creating memories collection with indexes")
-                self.client.create_collection(
+                client.create_collection(
                     collection_name="memories",
                     vectors_config=models.VectorParams(
                         size=384,  # Default embedding size
@@ -67,7 +94,7 @@ class VectorStore:
             for field_name, field_schema in required_indexes:
                 logger.info(f"Creating index for {field_name}")
                 try:
-                    self.client.create_payload_index(
+                    client.create_payload_index(
                         collection_name="memories",
                         field_name=field_name,
                         field_schema=field_schema,
@@ -78,7 +105,7 @@ class VectorStore:
                     time.sleep(0.5)  # Give time for index to be ready
                     
                     # Verify index exists
-                    collection_info = self.client.get_collection("memories")
+                    collection_info = client.get_collection("memories")
                     if field_name not in collection_info.payload_schema:
                         raise Exception(f"Index {field_name} not found after creation")
                         
@@ -101,53 +128,46 @@ class VectorStore:
         metadata: Optional[Dict[str, Any]] = None,
         layer: str = "episodic"
     ) -> bool:
-        """Store a vector in the specified collection with verification.
+        """Store a vector in the specified collection.
         
         Args:
-            collection_name: Name of collection to store in
-            payload: Dictionary containing the data and metadata
-            vector: Optional vector embedding. If not provided, will be generated from payload
-            point_id: Optional point ID. If not provided, a UUID will be generated
-            max_retries: Maximum number of storage attempts
+            content: Content to store
+            metadata: Optional metadata
+            layer: Memory layer
             
         Returns:
-            str: ID of stored vector
+            bool: True if stored successfully
         """
         try:
-            # Generate a unique ID for this vector
-            point_id = str(uuid.uuid4())
-            logger.info(f"Using point ID: {point_id}")
-            
             # Convert content to string for embedding
-            if isinstance(content, dict):
-                content_str = json.dumps(content)
-            else:
-                content_str = str(content)
+            content_str = json.dumps(content) if isinstance(content, dict) else str(content)
             
-            # Generate vector embedding
+            # Generate embedding
             vector = await self.embedding_service.create_embedding(content_str)
             
-            # Prepare payload
-            payload = {
-                "content": content,
-                "metadata": metadata or {},
-                "layer": layer,
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            # Store in Qdrant
-            self.client.upsert(
-                collection_name="memories",
-                points=[
-                    models.PointStruct(
-                        id=point_id,
-                        vector=vector,
-                        payload=payload
-                    )
-                ],
-                wait=True
+            # Create point
+            point = models.PointStruct(
+                id=str(uuid.uuid4()),
+                vector=vector,
+                payload={
+                    "content": content,
+                    "metadata": metadata or {},
+                    "layer": layer,
+                    "timestamp": datetime.now().isoformat()
+                }
             )
             
+            # Store point
+            client = QdrantClient(
+                url=f"http://{self.host}:{self.port}",
+                timeout=10.0,
+                prefer_grpc=False
+            )
+            client.upsert(
+                collection_name="memories",
+                points=[point],
+                wait=True
+            )
             return True
         except Exception as e:
             logger.error(f"Failed to store vector: {str(e)}")
@@ -235,20 +255,31 @@ class VectorStore:
             
             logger.info(f"Search parameters: {json.dumps(search_params, default=str, indent=2)}")
             
-            # Execute search
+            # Execute search with direct client
             logger.info("Executing search...")
-            results = self.client.search(**search_params)
+            client = QdrantClient(
+                url=f"http://{self.host}:{self.port}",
+                timeout=10.0,
+                prefer_grpc=False
+            )
             
-            # Log raw results
-            logger.info(f"Raw search results: {json.dumps(results, default=str, indent=2)}")
-            
-            # Process results
-            processed = []
-            for hit in results:
-                # Return the complete payload
-                processed.append(hit.payload)
+            try:
+                results = client.search(**search_params)
                 
-            return processed
+                # Log raw results
+                logger.info(f"Raw search results: {json.dumps(results, default=str, indent=2)}")
+                
+                # Process results
+                processed = []
+                if results:
+                    for hit in results:
+                        if hasattr(hit, 'payload'):
+                            processed.append(hit.payload)
+                
+                return processed
+            except Exception as e:
+                logger.error(f"Search failed: {str(e)}")
+                return []
         except Exception as e:
             logger.error(f"Failed to search vectors: {str(e)}")
             return []
@@ -294,7 +325,14 @@ class VectorStore:
                     payload[key] = v
             
             logger.info(f"Updating metadata with payload: {json.dumps(payload, indent=2)}")
-            self.client.set_payload(
+            # Get direct client instance
+            client = QdrantClient(
+                url=f"http://{self.host}:{self.port}",
+                timeout=10.0,
+                prefer_grpc=False
+            )
+            
+            client.set_payload(
                 collection_name=collection_name,
                 points=[vector_id],
                 payload=payload,
@@ -319,12 +357,18 @@ class VectorStore:
         try:
             logger.info(f"Inspecting collection: {collection_name}")
             
-            # Get collection info
-            collection_info = self.client.get_collection(collection_name)
+            # Get direct client instance
+            client = QdrantClient(
+                url=f"http://{self.host}:{self.port}",
+                timeout=10.0,
+                prefer_grpc=False
+            )
+            
+            collection_info = client.get_collection(collection_name)
             logger.info(f"Collection info: {json.dumps(collection_info.dict(), indent=2)}")
             
             # Get points with a single request
-            batch = self.client.scroll(
+            batch = client.scroll(
                 collection_name=collection_name,
                 limit=1000,  # Increased limit to get more points at once
                 with_payload=True,
@@ -363,7 +407,14 @@ class VectorStore:
         """
         try:
             logger.info(f"Deleting vectors: {vector_ids}")
-            self.client.delete(
+            # Get direct client instance
+            client = QdrantClient(
+                url=f"http://{self.host}:{self.port}",
+                timeout=10.0,
+                prefer_grpc=False
+            )
+            
+            client.delete(
                 collection_name=collection_name,
                 points_selector=models.PointIdsList(
                     points=vector_ids

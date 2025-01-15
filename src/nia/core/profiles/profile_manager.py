@@ -73,13 +73,13 @@ class ProfileManager:
             updated_at=now
         )
 
-        # Store in Neo4j
+        # Store in Neo4j with minimal data
         await self.store.query(
             """
             CREATE (p:Profile)
             SET p = $profile
             """,
-            {"profile": profile.dict()}
+            {"profile": profile.dict(minimal=True)}
         )
 
         return profile
@@ -104,7 +104,20 @@ class ProfileManager:
             return None
 
         profile_data = result[0]["p"]
-        return UserProfile(**profile_data)
+        # Reconstruct full profile from minimal data
+        return UserProfile(
+            profile_id=profile_data["profile_id"],
+            personality=BigFiveTraits(**profile_data["personality"]),
+            learning_style=LearningStyle(**profile_data["learning_style"]),
+            communication=CommunicationPreferences(**profile_data["communication"]),
+            auto_approval=AutoApprovalSettings(**profile_data["auto_approval"]),
+            domains=profile_data.get("domains", {
+                "professional": {"confidence": 1.0},
+                "personal": {"confidence": 1.0}
+            }),
+            created_at=profile_data.get("created_at", datetime.now(timezone.utc).isoformat()),
+            updated_at=profile_data.get("updated_at", datetime.now(timezone.utc).isoformat())
+        )
 
     async def update_profile(
         self,
@@ -131,7 +144,10 @@ class ProfileManager:
         profile_dict.update(update_dict)
         profile_dict["updated_at"] = datetime.now(timezone.utc).isoformat()
 
-        # Update in Neo4j
+        # Create updated profile
+        updated_profile = UserProfile(**profile_dict)
+
+        # Update in Neo4j with minimal data
         await self.store.query(
             """
             MATCH (p:Profile {profile_id: $profile_id})
@@ -139,11 +155,11 @@ class ProfileManager:
             """,
             {
                 "profile_id": profile_id,
-                "profile": profile_dict
+                "profile": updated_profile.dict(minimal=True)
             }
         )
 
-        return UserProfile(**profile_dict)
+        return updated_profile
 
     async def delete_profile(self, profile_id: str) -> bool:
         """Delete user profile.
@@ -182,7 +198,7 @@ class ProfileManager:
         RETURN p
         """
         result = await self.store.query(query, {"domain": domain})
-        return [UserProfile(**r["p"]) for r in result]
+        return [await self.get_profile(r["p"]["profile_id"]) for r in result]
 
     async def get_domain_confidence(
         self,
@@ -233,7 +249,7 @@ class ProfileManager:
         profile.domains[domain]["confidence"] = confidence
         profile.updated_at = datetime.now(timezone.utc).isoformat()
 
-        # Update in Neo4j
+        # Update in Neo4j with minimal data
         await self.store.query(
             """
             MATCH (p:Profile {profile_id: $profile_id})
@@ -241,7 +257,7 @@ class ProfileManager:
             """,
             {
                 "profile_id": profile_id,
-                "profile": profile.dict()
+                "profile": profile.dict(minimal=True)
             }
         )
 

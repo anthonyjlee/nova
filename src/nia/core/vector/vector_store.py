@@ -6,8 +6,9 @@ from enum import Enum
 from datetime import datetime
 import json
 import uuid
-from qdrant_client import QdrantClient
-from qdrant_client.http import models
+import asyncio
+from qdrant_client import QdrantClient, models
+from qdrant_client.http.exceptions import UnexpectedResponse
 from .embeddings import EmbeddingService
 from ..types.memory_types import JSONSerializable
 
@@ -17,19 +18,47 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
-def serialize_for_vector_store(obj: Any) -> Any:
-    """Serialize objects for vector store."""
-    if isinstance(obj, JSONSerializable):
-        return obj.dict()
-    elif isinstance(obj, datetime):
-        return obj.isoformat()
-    elif isinstance(obj, Enum):  # Add Enum handling
-        return obj.value
-    elif isinstance(obj, dict):
-        return {k: serialize_for_vector_store(v) for k, v in obj.items()}
-    elif isinstance(obj, list):
-        return [serialize_for_vector_store(i) for i in obj]
-    return obj
+def serialize_for_vector_store(obj: Any, _seen: Optional[set] = None, _depth: int = 0) -> Any:
+    """Serialize objects for vector store with cycle detection and depth limiting."""
+    # Initialize seen set on first call
+    if _seen is None:
+        _seen = set()
+        
+    # Prevent infinite recursion
+    if _depth > 10:  # Limit recursion depth
+        return str(obj)
+        
+    # Handle basic types directly
+    if isinstance(obj, (str, int, float, bool, type(None))):
+        return obj
+        
+    # Get object id for cycle detection
+    obj_id = id(obj)
+    if obj_id in _seen:
+        return str(obj)  # Return string representation for cycles
+    
+    try:
+        # Add to seen set for complex types
+        if isinstance(obj, (dict, list, JSONSerializable)):
+            _seen.add(obj_id)
+            
+        if isinstance(obj, JSONSerializable):
+            return serialize_for_vector_store(obj.dict(minimal=True), _seen, _depth + 1)  # Use minimal serialization
+        elif isinstance(obj, datetime):
+            return obj.isoformat()
+        elif isinstance(obj, Enum):
+            return obj.value
+        elif isinstance(obj, dict):
+            return {k: serialize_for_vector_store(v, _seen, _depth + 1) 
+                   for k, v in list(obj.items())[:100]}  # Limit dictionary size
+        elif isinstance(obj, list):
+            return [serialize_for_vector_store(i, _seen, _depth + 1) 
+                   for i in obj[:100]]  # Limit array size
+        return str(obj)
+    finally:
+        # Remove from seen set when done processing
+        if isinstance(obj, (dict, list, JSONSerializable)):
+            _seen.discard(obj_id)
 
 class VectorStore:
     """Vector store for memory embeddings."""
@@ -38,20 +67,74 @@ class VectorStore:
         self,
         embedding_service: EmbeddingService,
         host: str = "localhost",
-        port: int = 6333
+        port: int = 6333,
+        pool_size: int = 10
     ):
         """Initialize vector store."""
         self.embedding_service = embedding_service
-        self.client = QdrantClient(host=host, port=port, prefer_grpc=True)  # Use gRPC to avoid HTTP middleware
+        self.host = host
+        self.port = port
+        self.pool_size = pool_size
         self.collection_name = "memories"
+        self._client_pool = []
+        self._pool_lock = asyncio.Lock()
+        self._initialize_pool()
         self._ensure_collection()
+        
+    def _initialize_pool(self):
+        """Initialize connection pool."""
+        for _ in range(self.pool_size):
+            client = QdrantClient(
+                host=self.host,
+                port=self.port,
+                prefer_grpc=True,  # Use gRPC to avoid HTTP middleware
+                timeout=30.0  # Add timeout
+            )
+            self._client_pool.append({
+                "client": client,
+                "in_use": False,
+                "last_used": datetime.now()
+            })
+    
+    async def _get_client(self):
+        """Get available client from pool."""
+        async with self._pool_lock:
+            # First try to find an available client
+            for client_info in self._client_pool:
+                if not client_info["in_use"]:
+                    client_info["in_use"] = True
+                    client_info["last_used"] = datetime.now()
+                    return client_info
+                    
+            # If no clients available, create a new one
+            client = QdrantClient(
+                host=self.host,
+                port=self.port,
+                prefer_grpc=True,
+                timeout=30.0
+            )
+            client_info = {
+                "client": client,
+                "in_use": True,
+                "last_used": datetime.now()
+            }
+            self._client_pool.append(client_info)
+            return client_info
+            
+    async def _release_client(self, client_info):
+        """Release client back to pool."""
+        async with self._pool_lock:
+            client_info["in_use"] = False
+            client_info["last_used"] = datetime.now()
     
     def _ensure_collection(self):
         """Ensure collection exists."""
         try:
-            collections = self.client.get_collections()
+            # Use first client to check collection
+            client = self._client_pool[0]["client"]
+            collections = client.get_collections()
             if self.collection_name not in [c.name for c in collections.collections]:
-                self.client.create_collection(
+                client.create_collection(
                     collection_name=self.collection_name,
                     vectors_config=models.VectorParams(
                         size=384,  # Default embedding size
@@ -68,7 +151,11 @@ class VectorStore:
         layer: str = "episodic"
     ) -> bool:
         """Store vector in collection."""
+        client_info = None
         try:
+            # Get client from pool
+            client_info = await self._get_client()
+            
             # Serialize content and metadata
             serialized_content = serialize_for_vector_store(content)
             serialized_metadata = serialize_for_vector_store(metadata) if metadata else {}
@@ -86,7 +173,7 @@ class VectorStore:
             point_id = str(uuid.uuid4())
             
             # Store in Qdrant
-            self.client.upsert(
+            client_info["client"].upsert(
                 collection_name=self.collection_name,
                 points=[
                     models.PointStruct(
@@ -108,6 +195,9 @@ class VectorStore:
         except Exception as e:
             logger.error(f"Error storing vector: {str(e)}")
             return False
+        finally:
+            if client_info:
+                await self._release_client(client_info)
     
     async def search_vectors(
         self,
@@ -119,7 +209,11 @@ class VectorStore:
         filter_conditions: Optional[List[models.FieldCondition]] = None
     ) -> List[Dict[str, Any]]:
         """Search for similar vectors."""
+        client_info = None
         try:
+            # Get client from pool
+            client_info = await self._get_client()
+            
             # Serialize content for consistent comparison
             serialized_content = serialize_for_vector_store(content)
             
@@ -154,10 +248,10 @@ class VectorStore:
                 search_filter = models.Filter(must=conditions)
             
             # Search in Qdrant
-            results = self.client.search(
+            results = client_info["client"].search(
                 collection_name=self.collection_name,
                 query_vector=embedding,
-                limit=limit,
+                limit=min(limit, 100),  # Limit maximum results
                 score_threshold=score_threshold,
                 query_filter=search_filter
             )
@@ -169,7 +263,7 @@ class VectorStore:
                 content = result.payload["content"]
                 metadata = result.payload.get("metadata", {})
                 
-                # Create memory with all fields
+                # Create memory with minimal data
                 memory = {
                     "content": content,
                     "score": result.score,
@@ -183,9 +277,12 @@ class VectorStore:
                     "timestamp": result.payload.get("timestamp")
                 }
                 
-                # Include full metadata if requested
+                # Include minimal metadata if requested
                 if include_metadata:
-                    memory["metadata"] = metadata
+                    memory["metadata"] = {
+                        k: v for k, v in metadata.items()
+                        if k in ["type", "id", "thread_id", "task_id", "message_id"]
+                    }
                 
                 memories.append(memory)
             
@@ -194,11 +291,18 @@ class VectorStore:
         except Exception as e:
             logger.error(f"Error searching vectors: {str(e)}")
             return []
+        finally:
+            if client_info:
+                await self._release_client(client_info)
     
     async def delete_vector(self, point_id: str) -> bool:
         """Delete a single vector from collection."""
+        client_info = None
         try:
-            self.client.delete(
+            # Get client from pool
+            client_info = await self._get_client()
+            
+            client_info["client"].delete(
                 collection_name=self.collection_name,
                 points_selector=models.PointIdsList(
                     points=[point_id]
@@ -208,6 +312,9 @@ class VectorStore:
         except Exception as e:
             logger.error(f"Error deleting vector {point_id}: {str(e)}")
             return False
+        finally:
+            if client_info:
+                await self._release_client(client_info)
 
     async def delete_vectors(
         self,
@@ -215,14 +322,22 @@ class VectorStore:
         filter_conditions: Optional[Dict[str, Any]] = None
     ) -> bool:
         """Delete vectors from collection."""
+        client_info = None
         try:
+            # Get client from pool
+            client_info = await self._get_client()
+            
             if ids:
-                self.client.delete(
-                    collection_name=self.collection_name,
-                    points_selector=models.PointIdsList(
-                        points=ids
+                # Delete in batches to avoid memory issues
+                batch_size = 1000
+                for i in range(0, len(ids), batch_size):
+                    batch = ids[i:i + batch_size]
+                    client_info["client"].delete(
+                        collection_name=self.collection_name,
+                        points_selector=models.PointIdsList(
+                            points=batch
+                        )
                     )
-                )
             elif filter_conditions:
                 filter_obj = models.Filter(
                     must=[
@@ -233,7 +348,7 @@ class VectorStore:
                         for k, v in filter_conditions.items()
                     ]
                 )
-                self.client.delete(
+                client_info["client"].delete(
                     collection_name=self.collection_name,
                     points_selector=models.FilterSelector(
                         filter=filter_obj
@@ -244,10 +359,17 @@ class VectorStore:
         except Exception as e:
             logger.error(f"Error deleting vectors: {str(e)}")
             return False
+        finally:
+            if client_info:
+                await self._release_client(client_info)
     
     async def count_vectors(self, layer: Optional[str] = None) -> int:
         """Count vectors in collection."""
+        client_info = None
         try:
+            # Get client from pool
+            client_info = await self._get_client()
+            
             # Build filter for layer if specified
             filter_obj = None
             if layer:
@@ -261,7 +383,7 @@ class VectorStore:
                 )
             
             # Get count from Qdrant
-            count = self.client.count(
+            count = client_info["client"].count(
                 collection_name=self.collection_name,
                 count_filter=filter_obj
             )
@@ -271,10 +393,17 @@ class VectorStore:
         except Exception as e:
             logger.error(f"Error counting vectors: {str(e)}")
             return 0
+        finally:
+            if client_info:
+                await self._release_client(client_info)
     
     async def clear_vectors(self, layer: Optional[str] = None) -> bool:
         """Clear vectors from collection."""
+        client_info = None
         try:
+            # Get client from pool
+            client_info = await self._get_client()
+            
             if layer:
                 # Delete vectors from specific layer
                 filter_obj = models.Filter(
@@ -285,7 +414,7 @@ class VectorStore:
                         )
                     ]
                 )
-                self.client.delete(
+                client_info["client"].delete(
                     collection_name=self.collection_name,
                     points_selector=models.FilterSelector(
                         filter=filter_obj
@@ -293,19 +422,26 @@ class VectorStore:
                 )
             else:
                 # Delete all vectors
-                self.client.delete_collection(self.collection_name)
+                client_info["client"].delete_collection(self.collection_name)
                 self._ensure_collection()
             return True
             
         except Exception as e:
             logger.error(f"Error clearing vectors: {str(e)}")
             return False
+        finally:
+            if client_info:
+                await self._release_client(client_info)
     
     async def update_metadata(self, point_id: str, metadata: Dict[str, Any]) -> bool:
         """Update metadata for a point."""
+        client_info = None
         try:
+            # Get client from pool
+            client_info = await self._get_client()
+            
             # Get current payload
-            points = self.client.retrieve(
+            points = client_info["client"].retrieve(
                 collection_name=self.collection_name,
                 ids=[point_id]
             )
@@ -315,12 +451,12 @@ class VectorStore:
                 
             current_payload = points[0].payload
             
-            # Update metadata
+            # Update metadata with minimal data
             serialized_metadata = serialize_for_vector_store(metadata)
             current_payload["metadata"].update(serialized_metadata)
             
             # Update point
-            self.client.update_vectors(
+            client_info["client"].update_vectors(
                 collection_name=self.collection_name,
                 points=[
                     models.PointStruct(
@@ -338,10 +474,24 @@ class VectorStore:
         except Exception as e:
             logger.error(f"Error updating metadata: {str(e)}")
             return False
+        finally:
+            if client_info:
+                await self._release_client(client_info)
             
     async def cleanup(self):
         """Clean up vector store."""
         try:
+            # Clear vectors
             await self.clear_vectors()
+            
+            # Close all clients in pool
+            async with self._pool_lock:
+                for client_info in self._client_pool:
+                    try:
+                        client_info["client"].close()
+                    except:
+                        pass
+                self._client_pool.clear()
+                
         except Exception as e:
             logger.error(f"Error cleaning up vector store: {str(e)}")
