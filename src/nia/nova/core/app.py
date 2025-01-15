@@ -2,7 +2,7 @@
 
 from neo4j import GraphDatabase
 from fastapi import FastAPI, APIRouter, Request, HTTPException
-from .auth import validate_api_key
+from .auth import validate_api_key, get_api_key
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from datetime import datetime
@@ -74,17 +74,18 @@ sys.excepthook = log_exception
 
 from .endpoints import (
     root_router,
-    agent_router,
     analytics_router,
     orchestration_router,
     chat_router
 )
+from .agent_endpoints import agent_router
 from .graph_endpoints import graph_router
 from .knowledge_endpoints import kg_router
 from .nova_endpoints import nova_router
 from .tasks_endpoints import tasks_router
 from .websocket_endpoints import ws_router
 from .user_endpoints import user_router
+from .channel_endpoints import channel_router
 from .dependencies import get_memory_system, get_thread_manager
 
 # Create FastAPI app
@@ -99,8 +100,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173"],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*", "X-API-Key"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=["*", "X-API-Key", "Content-Type", "Authorization"],
     expose_headers=["*", "Content-Type", "Authorization", "X-API-Key"],
     max_age=3600,
 )
@@ -117,6 +118,7 @@ app.include_router(analytics_router)      # Analytics and insights
 app.include_router(user_router)           # User management
 app.include_router(ws_router)             # Real-time updates
 app.include_router(tasks_router)          # Task management
+app.include_router(channel_router)        # Channel management
 
 # Add root routes directly to app
 @app.options("/api/status")
@@ -135,12 +137,7 @@ async def status_options():
 @app.get("/api/status")
 async def get_status(request: Request):
     """Get server status."""
-    api_key = request.headers.get("X-API-Key")
-    if not api_key or not validate_api_key(api_key):
-        raise HTTPException(
-            status_code=401,
-            detail="Invalid or missing API key"
-        )
+    api_key = get_api_key(request)  # Use helper from auth.py
     return JSONResponse(
         content={
             "status": "running",

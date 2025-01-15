@@ -9,7 +9,7 @@ import logging
 import traceback
 from qdrant_client.http import models
 from nia.core.types.memory_types import Memory, MemoryType, EpisodicMemory
-from .celery_app import celery_app
+from .celery_app import celery_app, store_chat_message, store_task_update, store_agent_status, store_graph_update
 from .dependencies import get_memory_system, get_agent_store
 
 logger = logging.getLogger(__name__)

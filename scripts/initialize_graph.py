@@ -65,9 +65,12 @@ class InitializeStore(Neo4jBaseStore):
             logger.info("Creating missing nodes...")
             
             nodes_to_create = [
-                ("Concept", "Belief", "concept"),
-                ("Concept", "Desire", "concept"),
-                ("Concept", "Emotion", "concept")
+                ("Concept", "Belief", "entity"),
+                ("Concept", "Desire", "entity"),
+                ("Concept", "Emotion", "entity"),
+                ("Concept", "General", "channel"),
+                ("Concept", "Tasks", "channel"),
+                ("Concept", "Analysis", "channel")
             ]
             
             for node in nodes_to_create:
@@ -75,8 +78,27 @@ class InitializeStore(Neo4jBaseStore):
                 if node_key not in existing_nodes:
                     await self.run_query(f"""
                     CREATE (n:{node[0]} {{
+                        id: randomUUID(),
                         name: '{node[1]}',
-                        type: '{node[2]}'
+                        type: '{node[2]}',
+                        description: CASE '{node[2]}'
+                            WHEN 'channel' THEN 'A {node[1].lower()} channel for team communication'
+                            ELSE NULL
+                        END,
+                        created_at: datetime(),
+                        updated_at: datetime(),
+                        is_public: true,
+                        workspace: 'personal',
+                        domain: CASE '{node[1]}'
+                            WHEN 'General' THEN 'general'
+                            WHEN 'Tasks' THEN 'tasks'
+                            WHEN 'Analysis' THEN 'analysis'
+                            ELSE NULL
+                        END,
+                        metadata: CASE '{node[2]}'
+                            WHEN 'channel' THEN '{{"status": "active", "notifications": true, "privacy": "public"}}'
+                            ELSE '{{}}'
+                        END
                     }})
                     """)
                     logger.info(f"Created {node_key}")
@@ -86,14 +108,28 @@ class InitializeStore(Neo4jBaseStore):
             # Create relationships
             logger.info("Creating relationships...")
             
+            # Create concept relationships
             await self.run_query("""
-            // Concept relationships
             MATCH (belief:Concept {name: 'Belief'})
             MATCH (desire:Concept {name: 'Desire'})
             MATCH (emotion:Concept {name: 'Emotion'})
             MERGE (belief)-[:INFLUENCES]->(desire)
             MERGE (desire)-[:AFFECTS]->(emotion)
             MERGE (emotion)-[:IMPACTS]->(belief)
+            """)
+            
+            # Create channel relationships
+            await self.run_query("""
+            MATCH (general:Concept)
+            WHERE general.name = 'General' AND general.type = 'channel'
+            MATCH (tasks:Concept)
+            WHERE tasks.name = 'Tasks' AND tasks.type = 'channel'
+            MATCH (analysis:Concept)
+            WHERE analysis.name = 'Analysis' AND analysis.type = 'channel'
+            WITH general, tasks, analysis
+            MERGE (general)-[:CONNECTS_TO]->(tasks)
+            MERGE (tasks)-[:CONNECTS_TO]->(analysis)
+            MERGE (analysis)-[:CONNECTS_TO]->(general)
             """)
             
             logger.info("Test data created successfully")

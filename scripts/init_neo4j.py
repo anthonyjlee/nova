@@ -23,22 +23,60 @@ async def init_neo4j():
         
         # Create constraints and indexes
         queries = [
-            # Unique constraint on Agent id
+            # Unique constraint on Agent id (works in Community Edition)
             """
             CREATE CONSTRAINT agent_id IF NOT EXISTS
             FOR (a:Agent) REQUIRE a.id IS UNIQUE
             """,
             
-            # Index on Agent type
+            # Indexes for required fields
+            """
+            CREATE INDEX agent_name IF NOT EXISTS
+            FOR (a:Agent) ON (a.name)
+            """,
             """
             CREATE INDEX agent_type IF NOT EXISTS
             FOR (a:Agent) ON (a.type)
             """,
-            
-            # Index on Agent workspace
             """
             CREATE INDEX agent_workspace IF NOT EXISTS
             FOR (a:Agent) ON (a.workspace)
+            """,
+            """
+            CREATE INDEX agent_status IF NOT EXISTS
+            FOR (a:Agent) ON (a.status)
+            """,
+            """
+            CREATE INDEX agent_timestamp IF NOT EXISTS
+            FOR (a:Agent) ON (a.timestamp)
+            """,
+
+            # Indexes for optional fields
+            """
+            CREATE INDEX agent_agent_type IF NOT EXISTS
+            FOR (a:Agent) ON (a.agentType)
+            """,
+            """
+            CREATE INDEX agent_role IF NOT EXISTS
+            FOR (a:Agent) ON (a.role)
+            """,
+            """
+            CREATE INDEX agent_domain IF NOT EXISTS
+            FOR (a:Agent) ON (a.domain)
+            """,
+            """
+            CREATE INDEX agent_thread_id IF NOT EXISTS
+            FOR (a:Agent) ON (a.threadId)
+            """,
+
+            # Indexes for metadata fields
+            """
+            CREATE INDEX agent_metadata IF NOT EXISTS
+            FOR (a:Agent) ON (a.metadata)
+            """,
+            """
+            CREATE INDEX agent_capabilities IF NOT EXISTS
+            FOR (a:Agent) ON (a.capabilities)
             """
         ]
         

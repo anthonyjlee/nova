@@ -88,13 +88,13 @@ class Neo4jBaseStore:
         """Context manager for Neo4j transactions."""
         driver = await self.driver
         async with driver.session() as session:
-            async with session.begin_transaction() as tx:
-                try:
-                    yield tx
-                    await tx.commit()
-                except Exception as e:
-                    await tx.rollback()
-                    raise
+            tx = await session.begin_transaction()
+            try:
+                yield tx
+                await tx.commit()
+            except Exception as e:
+                await tx.rollback()
+                raise
 
     async def run_query(self, query: str, parameters: Optional[Dict[str, Any]] = None, _depth: int = 0) -> List[Dict[str, Any]]:
         """Run a Cypher query with parameters and circuit breaker."""

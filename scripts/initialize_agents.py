@@ -15,7 +15,8 @@ sys.path.insert(0, project_root)
 
 from src.nia.memory.agent_store import AgentStore
 from src.nia.core.types.memory_types import (
-    BaseDomain, 
+    Domain,
+    BaseDomain,
     KnowledgeVertical, 
     Memory, 
     MemoryType,
@@ -73,8 +74,7 @@ async def verify_prerequisites(session_id: str):
         WHERE c.name IN ['Belief', 'Desire', 'Emotion']
         RETURN count(c) as count
         """)
-        concept_data = await concept_result.single()
-        if concept_data["count"] < 3:
+        if not concept_result or not concept_result[0] or concept_result[0]["count"] < 3:
             raise ValueError("Missing basic concepts")
             
         # Check task structures
@@ -82,16 +82,15 @@ async def verify_prerequisites(session_id: str):
         MATCH (s:TaskState)
         RETURN count(s) as count
         """)
-        task_data = await task_result.single()
-        if task_data["count"] < 4:
+        if not task_result or not task_result[0] or task_result[0]["count"] < 4:
             raise ValueError("Missing task states")
             
         # Log successful verification
         log_breakpoint("prerequisites_check", {
             "session_id": session_id,
             "constraints": [c["name"] for c in constraints],
-            "concepts": concept_data["count"],
-            "task_states": task_data["count"]
+            "concepts": concept_result[0]["count"] if concept_result and concept_result[0] else 0,
+            "task_states": task_result[0]["count"] if task_result and task_result[0] else 0
         })
         
         # Success logged to JSON, no need for console output
@@ -110,96 +109,6 @@ async def verify_prerequisites(session_id: str):
     finally:
         await store.close()
 
-async def create_system_thread(memory_system, session_id: str):
-    """Create system thread for Nova Team if it doesn't exist."""
-    thread_id = "00000000-0000-4000-a000-000000000001"  # Fixed ID for system thread
-    
-    # Check if thread exists in episodic memory
-    episodic_exists = await memory_system.get_experience_by_thread(thread_id)
-    
-    # Check if thread exists in semantic memory
-    semantic_exists = False
-    if memory_system.semantic:
-        semantic_exists = await memory_system.semantic.get_memory_by_thread(thread_id)
-    
-    if episodic_exists and (semantic_exists or not memory_system.semantic):
-        # Thread already exists in required layers
-        log_breakpoint("system_thread_exists", {
-            "session_id": session_id,
-            "thread_id": thread_id,
-            "episodic_exists": True,
-            "semantic_exists": semantic_exists,
-            "semantic_enabled": bool(memory_system.semantic)
-        })
-        return thread_id
-        
-    # Create memory content
-    memory_content = {
-        "thread_id": thread_id,
-        "name": "Nova Team Thread",
-        "type": "system",
-        "domain": BaseDomain.SYSTEM,
-        "messages": [],
-        "participants": []
-    }
-    
-    # Create thread memory
-    memory_id = str(uuid.uuid4())
-    domain_context = DomainContext(
-        primary_domain=BaseDomain.SYSTEM,
-        knowledge_vertical=KnowledgeVertical.TECHNOLOGY,
-        validation=ValidationSchema(
-            domain=BaseDomain.SYSTEM,
-            access_domain=BaseDomain.SYSTEM,
-            confidence=1.0,
-            source="system",
-            cross_domain=CrossDomainSchema(
-                approved=True,
-                source_domain=BaseDomain.SYSTEM,
-                target_domain=BaseDomain.PROFESSIONAL
-            )
-        )
-    )
-    
-    thread_memory = Memory(
-        id=memory_id,
-        content=memory_content,
-        type=MemoryType.EPISODIC,
-        importance=1.0,
-        timestamp=datetime.now(timezone.utc),
-        context={
-            "domain": BaseDomain.SYSTEM,
-            "source": "system",
-            "type": MemoryType.EPISODIC.value,
-            "workspace": "system"
-        },
-        consolidated=False,
-        domain_context=domain_context
-    )
-    
-    try:
-        # Store in episodic if needed
-        if not episodic_exists:
-            await memory_system.store_experience(thread_memory)
-            
-        # Store in semantic if enabled and needed
-        if memory_system.semantic and not semantic_exists:
-            await memory_system.semantic.store_memory(thread_memory)
-            
-        # Log thread creation/update
-        log_breakpoint("system_thread_creation", {
-            "session_id": session_id,
-            "thread_id": thread_id,
-            "memory_id": memory_id,
-            "episodic_stored": not episodic_exists,
-            "semantic_stored": bool(memory_system.semantic and not semantic_exists)
-        })
-        
-        return thread_id
-    except Exception as e:
-        logger.error(f"Failed to create/update system thread: {str(e)}")
-        raise
-
 async def initialize_agents(session_id: str = None):
     """Initialize default agents in the store."""
     if session_id is None:
@@ -213,13 +122,6 @@ async def initialize_agents(session_id: str = None):
             
         agent_store = AgentStore()
         await agent_store.connect()
-        
-        # Initialize memory system
-        memory_system = agent_store.memory_system
-        await memory_system.initialize()
-        
-        # Create system thread
-        system_thread_id = await create_system_thread(memory_system, session_id)
         # First clean up existing data
         cleanup_query = """
         MATCH (n:Agent)
@@ -230,36 +132,33 @@ async def initialize_agents(session_id: str = None):
         
         # Initialize all implemented agents
         default_agents = [
-            # Nova Team (Core)
+            # Nova Team (Core) - Matching AgentType.SYSTEM
             {
                 "id": "nova-team",
                 "name": "NovaTeam",
-                "type": "nova",
-                "workspace": "system",
-                "domain": BaseDomain.SYSTEM,
-                "knowledge_vertical": KnowledgeVertical.TECHNOLOGY,
-                "status": "active",
+                "type": "system",  # AgentType.SYSTEM
+                "workspace": "system",  # AgentWorkspace.SYSTEM
+                "domain": "general",  # AgentDomain.GENERAL
+                "status": "active",  # AgentStatus.ACTIVE
                 "metadata": {
-                    "type": "agent-team",
-                    "system": True,
-                    "pinned": True,
-                    "description": "Core Nova coordination team",
-                    "capabilities": {
-                        "task_detection": True,
-                        "thread_management": True,
-                        "agent_spawning": True,
-                        "memory_coordination": True,
-                        "swarm_orchestration": True,
-                        "emergent_task_detection": True,
-                        "llm_integration": True,
-                        "memory_operations": {
-                            "store": True,
-                            "recall": True,
-                            "reflect": True,
-                            "query": True,
-                            "consolidate": True
-                        }
-                    },
+                    "type": "system",
+                    "capabilities": [
+                        "task_detection",
+                        "thread_management",
+                        "agent_spawning",
+                        "memory_coordination",
+                        "swarm_orchestration",
+                        "emergent_task_detection",
+                        "llm_integration",
+                        "memory_store",
+                        "memory_recall",
+                        "memory_reflect",
+                        "memory_query",
+                        "memory_consolidate"
+                    ],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "confidence": 1.0,
+                    "specialization": "coordination",
                     "visualization": {
                         "position": "center",
                         "category": "orchestrator"
@@ -282,62 +181,58 @@ async def initialize_agents(session_id: str = None):
                         "status_management": True
                     },
                     "validation": ValidationSchema(
-                        domain=BaseDomain.SYSTEM,
-                        access_domain=BaseDomain.SYSTEM,
+                        domain=BaseDomain.GENERAL,
+                        access_domain=BaseDomain.GENERAL,
                         confidence=1.0,
                         source="system",
                         cross_domain=CrossDomainSchema(
                             approved=True,
-                            source_domain=BaseDomain.SYSTEM,
+                            source_domain=BaseDomain.GENERAL,
                             target_domain=BaseDomain.PROFESSIONAL
                         )
                     ).dict()
                 },
-                "skills": [
-                    "task_orchestration",
-                    "team_coordination",
-                    "emergent_task_detection",
-                    "memory_management",
-                    "agent_lifecycle_management",
-                    "thread_coordination",
-                    "memory_consolidation"
+                "relationships": [
+                    {
+                        "type": "COORDINATES",  # AgentRelationType.COORDINATES
+                        "target_id": "task-agent-1",
+                        "properties": {"type": "functional"}
+                    },
+                    {
+                        "type": "COORDINATES",
+                        "target_id": "thread-agent-1",
+                        "properties": {"type": "functional"}
+                    }
                 ]
             },
             
-            # Task Management Agents
+            # Task Management Agent - Matching AgentType.AGENT
             {
                 "id": "task-agent-1",
                 "name": "TaskAgent",
-                "type": "task",
-                "workspace": "system",
-                "domain": BaseDomain.PROFESSIONAL,
-                "knowledge_vertical": KnowledgeVertical.TECHNOLOGY,
-                "status": "active",
+                "type": "agent",  # AgentType.AGENT
+                "workspace": "personal",  # AgentWorkspace.PERSONAL
+                "domain": "tasks",  # AgentDomain.TASKS
+                "status": "active",  # AgentStatus.ACTIVE
                 "metadata": {
-                    "visualization": {
-                        "position": "inner",
-                        "category": "management"
-                    },
-                    "capabilities": {
-                        "task_coordination": True,
-                        "thread_management": True,
-                        "resource_management": True,
-                        "dependency_tracking": True,
-                        "memory_operations": {
-                            "store": True,
-                            "recall": True,
-                            "reflect": True,
-                            "query": True
-                        }
-                    },
+                    "type": "task",
+                    "capabilities": [
+                        "task_coordination",
+                        "thread_management",
+                        "resource_management",
+                        "dependency_tracking",
+                        "memory_store",
+                        "memory_recall",
+                        "memory_reflect",
+                        "memory_query"
+                    ],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "confidence": 0.9,
+                    "specialization": "task_management",
                     "memory_access": {
                         "episodic": True,
                         "semantic": True
                     },
-                    "swarm_patterns": [
-                        "hierarchical",
-                        "parallel"
-                    ],
                     "task_capabilities": {
                         "creation": True,
                         "assignment": True,
@@ -353,45 +248,42 @@ async def initialize_agents(session_id: str = None):
                         cross_domain=CrossDomainSchema(
                             approved=True,
                             source_domain=BaseDomain.PROFESSIONAL,
-                            target_domain=BaseDomain.SYSTEM
+                            target_domain=BaseDomain.GENERAL
                         )
                     ).dict()
                 },
-                "skills": [
-                    "task_tracking",
-                    "dependency_management",
-                    "resource_allocation",
-                    "thread_coordination",
-                    "memory_management"
+                "relationships": [
+                    {
+                        "type": "MANAGES",  # AgentRelationType.MANAGES
+                        "target_id": "thread-agent-1",
+                        "properties": {"type": "task_management"}
+                    }
                 ]
             },
             
-            # Thread Management Agents
+            # Thread Management Agent - Matching AgentType.AGENT
             {
                 "id": "thread-agent-1",
                 "name": "ThreadAgent",
-                "type": "thread",
-                "workspace": "system",
-                "domain": BaseDomain.PROFESSIONAL,
-                "knowledge_vertical": KnowledgeVertical.TECHNOLOGY,
-                "status": "active",
+                "type": "agent",  # AgentType.AGENT
+                "workspace": "personal",  # AgentWorkspace.PERSONAL
+                "domain": "chat",  # AgentDomain.CHAT
+                "status": "active",  # AgentStatus.ACTIVE
                 "metadata": {
-                    "visualization": {
-                        "position": "inner",
-                        "category": "management"
-                    },
-                    "capabilities": {
-                        "thread_coordination": True,
-                        "message_management": True,
-                        "summarization": True,
-                        "layer_sync": True,
-                        "memory_operations": {
-                            "store": True,
-                            "recall": True,
-                            "reflect": True,
-                            "query": True
-                        }
-                    },
+                    "type": "thread",
+                    "capabilities": [
+                        "thread_coordination",
+                        "message_management",
+                        "summarization",
+                        "layer_sync",
+                        "memory_store",
+                        "memory_recall",
+                        "memory_reflect",
+                        "memory_query"
+                    ],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "confidence": 0.9,
+                    "specialization": "thread_management",
                     "memory_access": {
                         "episodic": True,
                         "semantic": True
@@ -412,45 +304,42 @@ async def initialize_agents(session_id: str = None):
                         cross_domain=CrossDomainSchema(
                             approved=True,
                             source_domain=BaseDomain.PROFESSIONAL,
-                            target_domain=BaseDomain.SYSTEM
+                            target_domain=BaseDomain.GENERAL
                         )
                     ).dict()
                 },
-                "skills": [
-                    "thread_management",
-                    "message_coordination",
-                    "summarization",
-                    "memory_sync",
-                    "memory_management"
+                "relationships": [
+                    {
+                        "type": "MANAGES",  # AgentRelationType.MANAGES
+                        "target_id": "dialogue-agent-1",
+                        "properties": {"type": "thread_management"}
+                    }
                 ]
             },
             
-            # Communication Agents
+            # Communication Agent - Matching AgentType.AGENT
             {
                 "id": "dialogue-agent-1",
                 "name": "DialogueAgent",
-                "type": "dialogue",
-                "workspace": "system",
-                "domain": BaseDomain.PROFESSIONAL,
-                "knowledge_vertical": KnowledgeVertical.TECHNOLOGY,
-                "status": "active",
+                "type": "agent",  # AgentType.AGENT
+                "workspace": "personal",  # AgentWorkspace.PERSONAL
+                "domain": "chat",  # AgentDomain.CHAT
+                "status": "active",  # AgentStatus.ACTIVE
                 "metadata": {
-                    "visualization": {
-                        "position": "outer",
-                        "category": "communication"
-                    },
-                    "capabilities": {
-                        "thread_context": True,
-                        "message_routing": True,
-                        "conversation_tracking": True,
-                        "llm_integration": True,
-                        "memory_operations": {
-                            "store": True,
-                            "recall": True,
-                            "reflect": True,
-                            "query": True
-                        }
-                    },
+                    "type": "dialogue",
+                    "capabilities": [
+                        "thread_context",
+                        "message_routing",
+                        "conversation_tracking",
+                        "llm_integration",
+                        "memory_store",
+                        "memory_recall",
+                        "memory_reflect",
+                        "memory_query"
+                    ],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "confidence": 0.8,
+                    "specialization": "communication",
                     "memory_access": {
                         "episodic": True
                     },
@@ -466,39 +355,36 @@ async def initialize_agents(session_id: str = None):
                         source="system"
                     ).dict()
                 },
-                "skills": [
-                    "conversation_management",
-                    "context_tracking",
-                    "thread_management",
-                    "message_routing",
-                    "memory_management"
+                "relationships": [
+                    {
+                        "type": "COLLABORATES_WITH",  # AgentRelationType.COLLABORATES_WITH
+                        "target_id": "thread-agent-1",
+                        "properties": {"type": "communication"}
+                    }
                 ]
             },
             
-            # Base Agents
+            # Coordination Agent - Matching AgentType.AGENT
             {
                 "id": "coordination-agent-1",
                 "name": "CoordinationAgent",
-                "type": "coordination",
-                "workspace": "system",
-                "domain": BaseDomain.PROFESSIONAL,
-                "knowledge_vertical": KnowledgeVertical.TECHNOLOGY,
-                "status": "active",
+                "type": "agent",  # AgentType.AGENT
+                "workspace": "personal",  # AgentWorkspace.PERSONAL
+                "domain": "general",  # AgentDomain.GENERAL
+                "status": "active",  # AgentStatus.ACTIVE
                 "metadata": {
-                    "visualization": {
-                        "position": "inner",
-                        "category": "management"
-                    },
-                    "capabilities": {
-                        "agent_coordination": True,
-                        "message_handling": True,
-                        "memory_operations": {
-                            "store": True,
-                            "recall": True,
-                            "reflect": True,
-                            "query": True
-                        }
-                    },
+                    "type": "coordination",
+                    "capabilities": [
+                        "agent_coordination",
+                        "message_handling",
+                        "memory_store",
+                        "memory_recall",
+                        "memory_reflect",
+                        "memory_query"
+                    ],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "confidence": 0.9,
+                    "specialization": "coordination",
                     "memory_access": {
                         "episodic": True,
                         "semantic": True
@@ -511,39 +397,44 @@ async def initialize_agents(session_id: str = None):
                         cross_domain=CrossDomainSchema(
                             approved=True,
                             source_domain=BaseDomain.PROFESSIONAL,
-                            target_domain=BaseDomain.SYSTEM
+                            target_domain=BaseDomain.GENERAL
                         )
                     ).dict()
                 },
-                "skills": [
-                    "agent_coordination",
-                    "message_handling",
-                    "memory_management"
+                "relationships": [
+                    {
+                        "type": "COORDINATES",  # AgentRelationType.COORDINATES
+                        "target_id": "analytics-agent-1",
+                        "properties": {"type": "coordination"}
+                    },
+                    {
+                        "type": "COORDINATES",  # AgentRelationType.COORDINATES
+                        "target_id": "parsing-agent-1",
+                        "properties": {"type": "coordination"}
+                    }
                 ]
             },
+            # Analytics Agent - Matching AgentType.AGENT
             {
                 "id": "analytics-agent-1",
                 "name": "AnalyticsAgent",
-                "type": "analytics",
-                "workspace": "system",
-                "domain": BaseDomain.PROFESSIONAL,
-                "knowledge_vertical": KnowledgeVertical.TECHNOLOGY,
-                "status": "active",
+                "type": "agent",  # AgentType.AGENT
+                "workspace": "personal",  # AgentWorkspace.PERSONAL
+                "domain": "analysis",  # AgentDomain.ANALYSIS
+                "status": "active",  # AgentStatus.ACTIVE
                 "metadata": {
-                    "visualization": {
-                        "position": "outer",
-                        "category": "processing"
-                    },
-                    "capabilities": {
-                        "metrics_tracking": True,
-                        "data_analysis": True,
-                        "memory_operations": {
-                            "store": True,
-                            "recall": True,
-                            "reflect": True,
-                            "query": True
-                        }
-                    },
+                    "type": "analytics",
+                    "capabilities": [
+                        "metrics_tracking",
+                        "data_analysis",
+                        "memory_store",
+                        "memory_recall",
+                        "memory_reflect",
+                        "memory_query"
+                    ],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "confidence": 0.9,
+                    "specialization": "analytics",
                     "memory_access": {
                         "episodic": True,
                         "semantic": True
@@ -555,35 +446,40 @@ async def initialize_agents(session_id: str = None):
                         source="system"
                     ).dict()
                 },
-                "skills": [
-                    "metrics_tracking",
-                    "data_analysis",
-                    "memory_management"
+                "relationships": [
+                    {
+                        "type": "ASSISTS",  # AgentRelationType.ASSISTS
+                        "target_id": "coordination-agent-1",
+                        "properties": {"type": "analytics"}
+                    },
+                    {
+                        "type": "COLLABORATES_WITH",  # AgentRelationType.COLLABORATES_WITH
+                        "target_id": "parsing-agent-1",
+                        "properties": {"type": "data_processing"}
+                    }
                 ]
             },
+            # Parsing Agent - Matching AgentType.AGENT
             {
                 "id": "parsing-agent-1",
                 "name": "ParsingAgent",
-                "type": "parsing",
-                "workspace": "system",
-                "domain": BaseDomain.PROFESSIONAL,
-                "knowledge_vertical": KnowledgeVertical.TECHNOLOGY,
-                "status": "active",
+                "type": "agent",  # AgentType.AGENT
+                "workspace": "personal",  # AgentWorkspace.PERSONAL
+                "domain": "analysis",  # AgentDomain.ANALYSIS
+                "status": "active",  # AgentStatus.ACTIVE
                 "metadata": {
-                    "visualization": {
-                        "position": "outer",
-                        "category": "processing"
-                    },
-                    "capabilities": {
-                        "content_parsing": True,
-                        "data_extraction": True,
-                        "memory_operations": {
-                            "store": True,
-                            "recall": True,
-                            "reflect": True,
-                            "query": True
-                        }
-                    },
+                    "type": "parsing",
+                    "capabilities": [
+                        "content_parsing",
+                        "data_extraction",
+                        "memory_store",
+                        "memory_recall",
+                        "memory_reflect",
+                        "memory_query"
+                    ],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "confidence": 0.9,
+                    "specialization": "parsing",
                     "memory_access": {
                         "episodic": True,
                         "semantic": True
@@ -595,35 +491,40 @@ async def initialize_agents(session_id: str = None):
                         source="system"
                     ).dict()
                 },
-                "skills": [
-                    "content_parsing",
-                    "data_extraction",
-                    "memory_management"
+                "relationships": [
+                    {
+                        "type": "ASSISTS",  # AgentRelationType.ASSISTS
+                        "target_id": "coordination-agent-1",
+                        "properties": {"type": "parsing"}
+                    },
+                    {
+                        "type": "COLLABORATES_WITH",  # AgentRelationType.COLLABORATES_WITH
+                        "target_id": "analytics-agent-1",
+                        "properties": {"type": "data_processing"}
+                    }
                 ]
             },
+            # Orchestration Agent - Matching AgentType.AGENT
             {
                 "id": "orchestration-agent-1",
                 "name": "OrchestrationAgent",
-                "type": "orchestration",
-                "workspace": "system",
-                "domain": BaseDomain.PROFESSIONAL,
-                "knowledge_vertical": KnowledgeVertical.TECHNOLOGY,
-                "status": "active",
+                "type": "agent",  # AgentType.AGENT
+                "workspace": "personal",  # AgentWorkspace.PERSONAL
+                "domain": "general",  # AgentDomain.GENERAL
+                "status": "active",  # AgentStatus.ACTIVE
                 "metadata": {
-                    "visualization": {
-                        "position": "inner",
-                        "category": "management"
-                    },
-                    "capabilities": {
-                        "task_orchestration": True,
-                        "agent_coordination": True,
-                        "memory_operations": {
-                            "store": True,
-                            "recall": True,
-                            "reflect": True,
-                            "query": True
-                        }
-                    },
+                    "type": "orchestration",
+                    "capabilities": [
+                        "task_orchestration",
+                        "agent_coordination",
+                        "memory_store",
+                        "memory_recall",
+                        "memory_reflect",
+                        "memory_query"
+                    ],
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "confidence": 0.9,
+                    "specialization": "orchestration",
                     "memory_access": {
                         "episodic": True,
                         "semantic": True
@@ -636,14 +537,21 @@ async def initialize_agents(session_id: str = None):
                         cross_domain=CrossDomainSchema(
                             approved=True,
                             source_domain=BaseDomain.PROFESSIONAL,
-                            target_domain=BaseDomain.SYSTEM
+                            target_domain=BaseDomain.GENERAL
                         )
                     ).dict()
                 },
-                "skills": [
-                    "task_orchestration",
-                    "agent_coordination",
-                    "memory_management"
+                "relationships": [
+                    {
+                        "type": "COORDINATES",  # AgentRelationType.COORDINATES
+                        "target_id": "coordination-agent-1",
+                        "properties": {"type": "orchestration"}
+                    },
+                    {
+                        "type": "DELEGATES_TO",  # AgentRelationType.DELEGATES_TO
+                        "target_id": "task-agent-1",
+                        "properties": {"type": "task_execution"}
+                    }
                 ]
             }
         ]
@@ -754,17 +662,18 @@ async def initialize_agents(session_id: str = None):
                 
                 # Task management relationships
                 """
-                MATCH (task:Agent {type: 'task'})
+                MATCH (task:Agent {agentType: 'task'})
                 MATCH (agent:Agent)
-                WHERE agent.id <> task.id AND agent.metadata.capabilities.task_participation = true
+                WHERE agent.id <> task.id 
+                AND 'task_participation' IN agent.metadata.capabilities
                 MERGE (task)-[:MANAGES_TASKS {type: 'functional'}]->(agent)
                 """,
                 
                 # Thread management relationships
                 """
-                MATCH (thread:Agent {type: 'thread'})
+                MATCH (thread:Agent {agentType: 'thread'})
                 MATCH (agent:Agent)
-                WHERE agent.metadata.capabilities.thread_context = true
+                WHERE 'thread_context' IN agent.metadata.capabilities
                 MERGE (thread)-[:MANAGES_THREADS {type: 'functional'}]->(agent)
                 """,
                 
@@ -772,8 +681,8 @@ async def initialize_agents(session_id: str = None):
                 """
                 MATCH (a:Agent)
                 MATCH (b:Agent)
-                WHERE a.metadata.capabilities.layer_sync = true 
-                AND b.metadata.capabilities.layer_sync = true
+                WHERE 'layer_sync' IN a.metadata.capabilities
+                AND 'layer_sync' IN b.metadata.capabilities
                 AND a <> b
                 MERGE (a)-[:SYNCS_MEMORY {type: 'functional'}]->(b)
                 """,
@@ -782,8 +691,8 @@ async def initialize_agents(session_id: str = None):
                 """
                 MATCH (a:Agent)
                 MATCH (b:Agent)
-                WHERE a.metadata.capabilities.memory_operations.store = true
-                AND b.metadata.capabilities.memory_operations.store = true
+                WHERE 'memory_store' IN a.metadata.capabilities
+                AND 'memory_store' IN b.metadata.capabilities
                 AND a <> b
                 MERGE (a)-[:SHARES_MEMORY {type: 'functional'}]->(b)
                 """
@@ -840,7 +749,8 @@ async def initialize_agents(session_id: str = None):
         logger.error(f"Error initializing agents: {str(e)}")
         raise
     finally:
-        await agent_store.close()
+        if agent_store is not None:
+            await agent_store.close()
 
 if __name__ == "__main__":
     session_id = datetime.now().strftime("%Y%m%d_%H%M%S")

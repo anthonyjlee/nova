@@ -1,7 +1,8 @@
 """Nova-specific endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Union
+from pydantic import BaseModel, Field
 from datetime import datetime
 import uuid
 
@@ -14,6 +15,16 @@ from .models import (
 )
 from nia.core.types.memory_types import Memory, MemoryType
 from nia.core.neo4j.agent_store import AgentStore
+
+class NovaRequest(BaseModel):
+    """Request model for Nova's ask endpoint."""
+    content: str
+    workspace: str = Field(default="personal", pattern="^(personal|professional)$")
+
+class NovaResponse(BaseModel):
+    """Response model for Nova's ask endpoint."""
+    threadId: str
+    message: Dict[str, Any]
 
 nova_router = APIRouter(
     prefix="/api/nova",
@@ -40,7 +51,8 @@ async def list_agents(
             AgentResponse(
                 agent_id=agent["id"],
                 name=agent["name"],
-                type=agent["type"],
+                type="agent",
+                agentType=agent["type"],
                 status=agent["status"],
                 capabilities=agent["metadata"].get("capabilities", []),
                 metadata=agent["metadata"],
@@ -65,7 +77,8 @@ async def get_agent(
         return AgentResponse(
             agent_id=agent["id"],
             name=agent["name"],
-            type=agent["type"],
+            type="agent",
+            agentType=agent["type"],
             status=agent["status"],
             capabilities=agent["metadata"].get("capabilities", []),
             metadata=agent["metadata"],
@@ -103,7 +116,8 @@ async def create_agent(
         return AgentResponse(
             agent_id=stored_agent["id"],
             name=stored_agent["name"],
-            type=stored_agent["type"],
+            type="agent",
+            agentType=stored_agent["type"],
             status=stored_agent["status"],
             capabilities=stored_agent["metadata"].get("capabilities", []),
             metadata=stored_agent["metadata"],
@@ -139,7 +153,8 @@ async def update_agent(
         return AgentResponse(
             agent_id=updated_agent["id"],
             name=updated_agent["name"],
-            type=updated_agent["type"],
+            type="agent",
+            agentType=updated_agent["type"],
             status=updated_agent["status"],
             capabilities=updated_agent["metadata"].get("capabilities", []),
             metadata=updated_agent["metadata"],
@@ -188,12 +203,12 @@ async def get_agent_metrics(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@nova_router.post("/ask", response_model=Dict[str, Any])
+@nova_router.post("/ask", response_model=NovaResponse)
 async def ask_nova(
-    request: Dict[str, str],
+    request: NovaRequest,
     _: None = Depends(get_permission("write")),
     memory_system: Any = Depends(get_memory_system)
-) -> Dict[str, Any]:
+) -> NovaResponse:
     """Ask Nova a question."""
     try:
         # Check if Nova thread exists
@@ -260,12 +275,12 @@ async def ask_nova(
             if not result:
                 raise ServiceError("Failed to store Nova thread")
         
-        thread = result[0]["content"]["data"] if result else thread
+        thread = result[0].content["data"] if result and len(result) > 0 else thread
         
         # Create Nova's response
         message = Message(
             id=str(uuid.uuid4()),
-            content=f"I understand you're asking about: {request['content']}. Let me help with that.",
+            content=f"I understand you're asking about: {request.content}. Let me help with that.",
             sender_type="agent",
             sender_id="nova",
             timestamp=datetime.now().isoformat(),
@@ -298,9 +313,9 @@ async def ask_nova(
         )
         await memory_system.episodic.store_memory(memory)
         
-        return {
-            "threadId": "nova",
-            "message": message
-        }
+        return NovaResponse(
+            threadId="nova",
+            message=message.dict()
+        )
     except Exception as e:
         raise ServiceError(str(e))

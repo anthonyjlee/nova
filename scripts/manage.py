@@ -49,7 +49,7 @@ class ServiceManager:
             },
             "fastapi": {
                 "port": 8000,
-                "health_url": "http://localhost:8000/docs",
+                "health_url": "http://localhost:8000/api/status?key=development",
                 "startup_time": 3
             },
             "frontend": {
@@ -307,13 +307,22 @@ finance_memory_threshold = 0.7
             env = os.environ.copy()
             env["PYTHONPATH"] = str(Path.cwd())
             
-            # Start Celery worker
+            # Start Celery worker with direct venv python path
+            venv_python = str(Path.cwd() / ".venv" / "bin" / "python")
+            celery_cmd = [
+                venv_python, "-m", "celery",
+                "-A", "src.nia.nova.core.celery_app",
+                "worker",
+                "--loglevel=info"
+            ]
+            
             process = subprocess.Popen(
-                ["pdm", "run", "celery"],
+                celery_cmd,
                 env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                cwd=str(Path.cwd())  # Ensure correct working directory
             )
             
             # Check for immediate startup errors
@@ -354,13 +363,20 @@ finance_memory_threshold = 0.7
             env = os.environ.copy()
             env["PYTHONPATH"] = str(Path.cwd())
             
-            # Start server with output
+            # Start FastAPI server with direct venv python path
+            venv_python = str(Path.cwd() / ".venv" / "bin" / "python")
+            server_cmd = [
+                venv_python,
+                "scripts/run_server.py"
+            ]
+            
             process = subprocess.Popen(
-                ["python", "scripts/run_server.py"],
+                server_cmd,
                 env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                cwd=str(Path.cwd())  # Ensure correct working directory
             )
             
             # Check for immediate startup errors
@@ -394,14 +410,17 @@ finance_memory_threshold = 0.7
             # Set up environment
             env = os.environ.copy()
             
-            # Start server with output
+            # Start frontend server with npm path
+            frontend_path = Path.cwd() / "frontend"
+            npm_cmd = ["npm", "run", "dev"]
+            
             process = subprocess.Popen(
-                ["npm", "run", "dev"],
-                cwd="frontend",
+                npm_cmd,
                 env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=True
+                text=True,
+                cwd=str(frontend_path)  # Run in frontend directory
             )
             
             # Check for immediate startup errors

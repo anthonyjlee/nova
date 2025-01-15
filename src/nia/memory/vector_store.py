@@ -53,12 +53,8 @@ class VectorStore:
     async def connect(self):
         """Initialize connection and collections."""
         try:
-            # Get direct client instance
-            client = QdrantClient(
-                url=f"http://{self.host}:{self.port}",
-                timeout=10.0,
-                prefer_grpc=False
-            )
+            # Get singleton client instance
+            client = await self.client
             
             # Check if collection exists
             collections = client.get_collections()
@@ -157,17 +153,14 @@ class VectorStore:
                 }
             )
             
-            # Store point
-            client = QdrantClient(
-                url=f"http://{self.host}:{self.port}",
-                timeout=10.0,
-                prefer_grpc=False
-            )
-            client.upsert(
+            # Store point using singleton client
+            client = await self.client
+            result = client.upsert(
                 collection_name="memories",
                 points=[point],
                 wait=True
             )
+            # Don't await the result since it's not awaitable
             return True
         except Exception as e:
             logger.error(f"Failed to store vector: {str(e)}")
@@ -255,13 +248,9 @@ class VectorStore:
             
             logger.info(f"Search parameters: {json.dumps(search_params, default=str, indent=2)}")
             
-            # Execute search with direct client
+            # Execute search with singleton client
             logger.info("Executing search...")
-            client = QdrantClient(
-                url=f"http://{self.host}:{self.port}",
-                timeout=10.0,
-                prefer_grpc=False
-            )
+            client = await self.client
             
             try:
                 results = client.search(**search_params)
@@ -325,12 +314,8 @@ class VectorStore:
                     payload[key] = v
             
             logger.info(f"Updating metadata with payload: {json.dumps(payload, indent=2)}")
-            # Get direct client instance
-            client = QdrantClient(
-                url=f"http://{self.host}:{self.port}",
-                timeout=10.0,
-                prefer_grpc=False
-            )
+            # Get singleton client instance
+            client = await self.client
             
             client.set_payload(
                 collection_name=collection_name,
@@ -357,12 +342,8 @@ class VectorStore:
         try:
             logger.info(f"Inspecting collection: {collection_name}")
             
-            # Get direct client instance
-            client = QdrantClient(
-                url=f"http://{self.host}:{self.port}",
-                timeout=10.0,
-                prefer_grpc=False
-            )
+            # Get singleton client instance
+            client = await self.client
             
             collection_info = client.get_collection(collection_name)
             logger.info(f"Collection info: {json.dumps(collection_info.dict(), indent=2)}")
@@ -407,12 +388,8 @@ class VectorStore:
         """
         try:
             logger.info(f"Deleting vectors: {vector_ids}")
-            # Get direct client instance
-            client = QdrantClient(
-                url=f"http://{self.host}:{self.port}",
-                timeout=10.0,
-                prefer_grpc=False
-            )
+            # Get singleton client instance
+            client = await self.client
             
             client.delete(
                 collection_name=collection_name,

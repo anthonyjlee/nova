@@ -436,14 +436,24 @@ class AgentStatusResponse(BaseModel):
     timestamp: str
 
 class AgentResponse(BaseModel):
-    """Response model for agent operations."""
-    agent_id: str
+    """Response model for agent operations matching frontend schema."""
+    agent_id: str = Field(alias="id")
     name: str
-    type: str
-    status: str
+    type: Literal["agent"] = Field(default="agent")
+    agentType: str
+    status: str = Field(default="active")
     capabilities: List[str] = Field(default_factory=list)
+    workspace: str = Field(default="personal")  # Allow any workspace value
     metadata: Dict[str, Any] = Field(default_factory=dict)
-    timestamp: str
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+
+    @validator('workspace')
+    def validate_workspace(cls, v):
+        """Convert system workspace to personal for frontend compatibility."""
+        return "personal" if v == "system" else v
+
+    class Config:
+        allow_population_by_field_name = True
 
 class GraphPruneResponse(BaseModel):
     nodes_removed: int
@@ -511,17 +521,75 @@ class ThreadRequest(BaseModel):
     participants: List[str] = Field(default_factory=list)
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
+class ThreadParticipant(BaseModel):
+    """Thread participant model."""
+    id: str
+    name: str
+    type: Literal["user", "agent"]
+    agentType: Optional[str] = None
+    role: Optional[str] = None
+    status: Optional[str] = None
+    workspace: str = "personal"
+    domain: Optional[str] = None
+    threadId: Optional[str] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+class ThreadMessage(BaseModel):
+    """Thread message model."""
+    id: str
+    threadId: str
+    content: str
+    sender: Dict[str, Any]
+    timestamp: str
+    workspace: str = "personal"
+    metadata: Dict[str, Any] = Field(default_factory=dict)
+
+class ThreadValidation(BaseModel):
+    """Thread validation model."""
+    domain: str
+    access_domain: str
+    confidence: float
+    source: str
+    timestamp: str
+    supported_by: List[str] = Field(default_factory=list)
+    contradicted_by: List[str] = Field(default_factory=list)
+    needs_verification: List[str] = Field(default_factory=list)
+    cross_domain: Dict[str, Any] = Field(
+        default_factory=lambda: {
+            "approved": False,
+            "requested": False,
+            "source_domain": "",
+            "target_domain": ""
+        }
+    )
+
 class ThreadResponse(BaseModel):
     """Response model for thread operations."""
     id: str
-    name: str
-    domain: Optional[str] = None
-    messages: List[Dict[str, Any]] = Field(default_factory=list)
-    createdAt: str
-    updatedAt: str
+    title: str  # Changed from name to title
+    domain: str = "general"  # Made required with default
+    status: str = "active"  # Added status field
+    created_at: str  # Changed from createdAt
+    updated_at: str  # Changed from updatedAt
     workspace: str = "personal"
-    participants: List[Dict[str, Any]] = Field(default_factory=list)
-    metadata: Dict[str, Any] = Field(default_factory=dict)
+    participants: List[ThreadParticipant] = Field(default_factory=list)
+    metadata: Dict[str, Any] = Field(
+        default_factory=lambda: {
+            "type": "chat",
+            "system": False,
+            "pinned": False,
+            "description": ""
+        }
+    )
+    validation: ThreadValidation = Field(
+        default_factory=lambda: ThreadValidation(
+            domain="general",
+            access_domain="general",
+            confidence=1.0,
+            source="system",
+            timestamp=datetime.utcnow().isoformat()
+        )
+    )
 
 class MessageRequest(BaseModel):
     """Request model for message operations."""

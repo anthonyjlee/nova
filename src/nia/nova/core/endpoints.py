@@ -348,19 +348,46 @@ async def chat_options_handler(request: Request):
         },
     )
 
-@chat_router.get("/threads", response_model=ThreadListResponse)
+@chat_router.get("/threads")
 async def list_threads(
-    _: None = Depends(get_permission("read")),
+    request: Request,
     thread_manager: Any = Depends(get_thread_manager)
-) -> ThreadListResponse:
+) -> JSONResponse:
     """List all chat threads with optional filtering."""
     try:
-        threads = await thread_manager.list_threads(None)
+        # Validate API key
+        api_key = request.headers.get("X-API-Key")
+        if not api_key or not validate_api_key(api_key):
+            raise HTTPException(
+                status_code=401,
+                detail="Invalid or missing API key"
+            )
+            
+        raw_threads = await thread_manager.list_threads(None)
+        
+        # Convert thread data to match schema
+        threads = []
+        for thread in raw_threads:
+            # Convert created_at/updated_at to createdAt/updatedAt
+            thread_data = {
+                "id": thread["id"],
+                "name": thread.get("title", "Untitled"),  # title -> name
+                "domain": thread.get("domain"),
+                "messages": thread.get("messages", []),
+                "createdAt": thread.get("created_at"),  # created_at -> createdAt
+                "updatedAt": thread.get("updated_at"),  # updated_at -> updatedAt
+                "workspace": thread.get("workspace", "personal"),
+                "participants": thread.get("participants", []),
+                "metadata": thread.get("metadata", {})
+            }
+            threads.append(thread_data)
+            
         response = ThreadListResponse(
             threads=[ThreadResponse(**thread) for thread in threads],
             total=len(threads),
             timestamp=datetime.now().isoformat()
         )
+        
         return JSONResponse(
             content=response.dict(),
             headers={

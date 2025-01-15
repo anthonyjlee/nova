@@ -28,76 +28,122 @@ async def initialize_task_structures(store: ConceptStore):
     """Initialize task-specific structures in Neo4j."""
     logger.info("Initializing task structures")
     
-    # Create task state nodes
+    # Create task state nodes matching TaskState enum
     states = [
-        {"name": "pending", "description": "New or unstarted tasks"},
-        {"name": "in_progress", "description": "Tasks currently being worked on"},
-        {"name": "blocked", "description": "Tasks blocked by dependencies"},
-        {"name": "completed", "description": "Finished tasks"}
+        {
+            "name": "PENDING",
+            "description": "New or unstarted tasks",
+            "value": "pending"
+        },
+        {
+            "name": "IN_PROGRESS",
+            "description": "Tasks currently being worked on",
+            "value": "in_progress"
+        },
+        {
+            "name": "BLOCKED",
+            "description": "Tasks blocked by dependencies",
+            "value": "blocked"
+        },
+        {
+            "name": "COMPLETED",
+            "description": "Finished tasks",
+            "value": "completed"
+        }
     ]
     
     for state in states:
-        await store.store_concept(
-            name=f"TaskState_{state['name']}",
-            type="entity",
-            description=state["description"],
-            validation=ValidationSchema(
-                domain=BaseDomain.GENERAL,
-                access_domain=BaseDomain.GENERAL,
-                confidence=1.0,
-                source="system"
-            ).dict()
+        validation = ValidationSchema(
+            domain=BaseDomain.GENERAL,
+            access_domain=BaseDomain.GENERAL,
+            confidence=1.0,
+            source="system"
+        ).dict()
+        validation["metadata"] = {
+            "enum_name": state["name"],
+            "value": state["value"]
+        }
+        # Create task state directly instead of as a concept
+        await store.run_query(
+            """
+            CREATE (s:TaskState {
+                name: $name,
+                description: $description,
+                value: $value
+            })
+            """,
+            {
+                "name": f"TaskState_{state['value']}",
+                "description": state["description"],
+                "value": state["value"]
+            }
         )
     
     # Create task constraints
-    async with store.driver.session() as session:
-        await session.run("""
-            CREATE CONSTRAINT task_id IF NOT EXISTS
-            FOR (t:Task) REQUIRE t.id IS UNIQUE
-        """)
-        
-        await session.run("""
-            CREATE CONSTRAINT task_state IF NOT EXISTS
-            FOR (s:TaskState) REQUIRE s.name IS UNIQUE
-        """)
+    # Create task constraints
+    await store.run_query("""
+        CREATE CONSTRAINT task_id IF NOT EXISTS
+        FOR (t:Task) REQUIRE t.id IS UNIQUE
+    """)
     
-    # Create task templates
+    await store.run_query("""
+        CREATE CONSTRAINT task_state IF NOT EXISTS
+        FOR (s:TaskState) REQUIRE s.name IS UNIQUE
+    """)
+    
+    # Create task templates matching frontend schema
     templates = [
         {
             "name": "development_task",
-            "type": "entity",
+            "type": "entity",  # Task templates are entities in our concept model
             "description": "Software development task template",
             "domain": BaseDomain.PROFESSIONAL,
             "metadata": {
                 "template": True,
                 "category": "development",
-                "default_state": "pending"
+                "default_state": "pending",
+                "workspace": "professional",
+                "priority": "medium",
+                "capabilities": ["development", "coding", "testing"],
+                "validation_rules": {
+                    "requires_review": True,
+                    "requires_testing": True
+                }
             }
         },
         {
             "name": "organization_task",
-            "type": "entity",
+            "type": "entity",  # Task templates are entities in our concept model
             "description": "Personal organization task template",
             "domain": BaseDomain.PERSONAL,
             "metadata": {
                 "template": True,
                 "category": "organization",
-                "default_state": "pending"
+                "default_state": "pending",
+                "workspace": "personal",
+                "priority": "medium",
+                "capabilities": ["organization", "planning", "tracking"],
+                "validation_rules": {
+                    "requires_review": False,
+                    "requires_testing": False
+                }
             }
         }
     ]
     
     for template in templates:
+        validation = ValidationSchema(
+            domain=template["domain"],
+            access_domain=template["domain"],
+            confidence=1.0,
+            source="system"
+        ).dict()
+        validation["metadata"] = template["metadata"]
         await store.store_concept(
             name=template["name"],
             type=template["type"],
             description=template["description"],
-            validation=ValidationSchema(
-                domain=template["domain"],
-                access_domain=template["domain"],
-                confidence=1.0,
-                source="system"
-            ).dict(),
+            validation=validation
         )
     
     logger.info("Task structures initialized successfully")
@@ -105,7 +151,12 @@ async def initialize_task_structures(store: ConceptStore):
 async def clear_all_data(store: ConceptStore):
     """Clear all data from Neo4j."""
     logger.info("Clearing all existing data...")
-    await store.run_query("MATCH (n) DETACH DELETE n")
+    # Delete all nodes except the basic concepts
+    await store.run_query("""
+        MATCH (n)
+        WHERE (NOT n:Concept OR NOT n.name IN ['Belief', 'Desire', 'Emotion'])
+        DETACH DELETE n
+    """)
     logger.info("All data cleared")
 
 async def initialize_knowledge():
@@ -339,82 +390,75 @@ async def verify_initialization():
     await store.connect()
     logger.info("Connected to Neo4j")
     try:
-        async with store.driver.session() as session:
-            # Check task states
-            result = await session.run(
-                "MATCH (s:Concept) WHERE s.name IN ['TaskState_pending', 'TaskState_in_progress', 'TaskState_blocked', 'TaskState_completed'] RETURN count(s) as count"
-            )
-            record = await result.single()
-            if record["count"] != 4:
-                logger.error("Task states not properly initialized")
-                return False
-                
-            # Check task templates
-            result = await session.run(
-                "MATCH (t:Concept) WHERE t.name IN ['development_task', 'organization_task'] RETURN count(t) as count"
-            )
-            record = await result.single()
-            if record["count"] < 2:
-                logger.error("Task templates not properly initialized")
-                return False
-                
-            # Check constraints
-            result = await session.run(
-                "SHOW CONSTRAINTS"
-            )
-            constraints = [record async for record in result]
-            required_constraints = ["task_id", "task_state"]
-            for constraint in required_constraints:
-                if not any(c["name"] == constraint for c in constraints):
-                    logger.error(f"Missing required constraint: {constraint}")
-                    return False
-
-            # Check domain boundaries
-            result = await session.run(
-                """
-                MATCH (d:Domain)
-                WHERE d.name IN ['tasks', 'professional', 'personal']
-                RETURN count(d) as count
-                """
-            )
-            record = await result.single()
-            if record["count"] != 3:
-                logger.error("Domain boundaries not properly initialized")
+        # Check task states
+        result = await store.run_query(
+            "MATCH (s:TaskState) RETURN count(s) as count"
+        )
+        if not result or result[0]["count"] != 4:
+            logger.error("Task states not properly initialized")
+            return False
+            
+        # Check task templates
+        result = await store.run_query(
+            "MATCH (t:Concept) WHERE t.name IN ['development_task', 'organization_task'] RETURN count(t) as count"
+        )
+        if not result or result[0]["count"] < 2:
+            logger.error("Task templates not properly initialized")
+            return False
+            
+        # Check constraints
+        result = await store.run_query(
+            "SHOW CONSTRAINTS"
+        )
+        required_constraints = ["task_id", "task_state"]
+        for constraint in required_constraints:
+            if not any(c["name"] == constraint for c in result):
+                logger.error(f"Missing required constraint: {constraint}")
                 return False
 
-            # Check access rules
-            result = await session.run(
-                """
-                MATCH (d:Domain)-[:HAS_RULE]->(r:AccessRule)
-                WHERE r.type = 'domain_access'
-                RETURN count(r) as count
-                """
-            )
-            record = await result.single()
-            if record["count"] != 3:
-                logger.error("Access rules not properly initialized")
-                return False
+        # Check domain boundaries
+        result = await store.run_query(
+            """
+            MATCH (d:Domain)
+            WHERE d.name IN ['tasks', 'professional', 'personal']
+            RETURN count(d) as count
+            """
+        )
+        if not result or result[0]["count"] != 3:
+            logger.error("Domain boundaries not properly initialized")
+            return False
 
-            # Create and verify test data
-            if not await create_test_data(store):
-                logger.error("Failed to create test data")
-                return False
+        # Check access rules
+        result = await store.run_query(
+            """
+            MATCH (d:Domain)-[:HAS_RULE]->(r:AccessRule)
+            WHERE r.type = 'domain_access'
+            RETURN count(r) as count
+            """
+        )
+        if not result or result[0]["count"] != 3:
+            logger.error("Access rules not properly initialized")
+            return False
 
-            # Verify test data
-            result = await session.run(
-                """
-                MATCH (t:Task)
-                WHERE t.id IN ['TEST-001', 'TEST-002']
-                RETURN count(t) as count
-                """
-            )
-            record = await result.single()
-            if record["count"] != 2:
-                logger.error("Test data not properly created")
-                return False
+        # Create and verify test data
+        if not await create_test_data(store):
+            logger.error("Failed to create test data")
+            return False
 
-            logger.info("All required structures and test data verified successfully")
-            return True
+        # Verify test data
+        result = await store.run_query(
+            """
+            MATCH (t:Task)
+            WHERE t.id IN ['TEST-001', 'TEST-002']
+            RETURN count(t) as count
+            """
+        )
+        if not result or result[0]["count"] != 2:
+            logger.error("Test data not properly created")
+            return False
+
+        logger.info("All required structures and test data verified successfully")
+        return True
             
     except Exception as e:
         logger.error(f"Error verifying initialization: {str(e)}")

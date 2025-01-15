@@ -288,6 +288,104 @@ class GraphVisualizationSystem:
            }
    ```
 
+### WebSocket Integration
+
+The WebSocket system provides real-time updates with proper type safety and validation:
+
+```typescript
+// WebSocket message types with Zod validation
+const TaskUpdateMessageSchema = z.object({
+  type: z.literal('task_update'),
+  taskId: z.string(),
+  status: z.enum(['pending', 'running', 'completed', 'failed']),
+  progress: z.number().optional(),
+  error: z.string().optional()
+});
+
+// WebSocket client with type safety
+class WebSocketClient {
+  private socket: WebSocket;
+  private messageHandlers: Map<string, (data: any) => void>;
+
+  constructor(url: string) {
+    this.socket = new WebSocket(url);
+    this.messageHandlers = new Map();
+    
+    this.socket.onmessage = (event) => {
+      const message = JSON.parse(event.data);
+      const handler = this.messageHandlers.get(message.type);
+      if (handler) {
+        // Validate message before handling
+        try {
+          const validatedData = TaskUpdateMessageSchema.parse(message);
+          handler(validatedData);
+        } catch (error) {
+          console.error('Invalid message format:', error);
+        }
+      }
+    };
+  }
+
+  onTaskUpdate(handler: (data: z.infer<typeof TaskUpdateMessageSchema>) => void) {
+    this.messageHandlers.set('task_update', handler);
+  }
+
+  // Proper cleanup
+  disconnect() {
+    this.socket.close();
+    this.messageHandlers.clear();
+  }
+}
+```
+
+### Memory System Optimizations
+
+Recent optimizations to improve performance and reliability:
+
+```python
+class OptimizedMemorySystem:
+    def __init__(self):
+        # Connection pooling
+        self.vector_store = VectorStore(
+            connection_pool_size=10,
+            max_retries=3,
+            timeout=30
+        )
+        
+        # Memory pools for caching
+        self.memory_pools = {
+            'recent': deque(maxlen=100),
+            'frequent': LRUCache(1000)
+        }
+        
+        # Minimal serialization flags
+        self.serialization_mode = 'minimal'
+        
+    async def store_memory(self, content: Dict):
+        """Store with optimized serialization."""
+        if self.serialization_mode == 'minimal':
+            # Strip unnecessary fields
+            content = {
+                'id': content['id'],
+                'type': content['type'],
+                'core_data': content['core_data']
+            }
+            
+        # Use connection pool
+        async with self.vector_store.connection() as conn:
+            await conn.store(content)
+            
+        # Update memory pools
+        self.memory_pools['recent'].append(content['id'])
+        self.memory_pools['frequent'].put(content['id'], time.time())
+        
+    async def cleanup(self):
+        """Proper resource cleanup."""
+        await self.vector_store.close_pools()
+        self.memory_pools['recent'].clear()
+        self.memory_pools['frequent'].clear()
+```
+
 ### Data Flow Example
 
 When a user creates a task in chat, the following data flow occurs:
@@ -326,12 +424,21 @@ async def handle_task_creation(message: str, thread_id: str):
 ```
 
 This integration ensures:
-- Consistent domain boundaries
-- Real-time visualization updates
-- Efficient data access patterns
+- Consistent domain boundaries through:
+  * Channels handling structural aspects
+  * Threads handling messaging
+- Real-time visualization updates via WebSocket
+- Efficient data access through:
+  * Connection pooling
+  * Memory pools
+  * Minimal serialization
 - Clear separation of concerns:
   * Qdrant: Message content and search
   * Neo4j: Relationships and metadata
   * DAG: Execution state and flow
+- Type safety through:
+  * Zod validation schemas
+  * TypeScript interfaces
+  * Runtime validation
 
 [Previous content remains unchanged...]
