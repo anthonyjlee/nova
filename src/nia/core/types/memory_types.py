@@ -398,12 +398,13 @@ class Memory(BaseModel):
     """Base memory model."""
     id: Optional[str] = None
     content: Union[str, Dict[str, Any]]  # Allow both string and dict content
-    type: MemoryType
+    type: Union[MemoryType, str]
     importance: float = 1.0
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     context: Dict[str, Any] = Field(default_factory=dict)
     consolidated: bool = False
     domain_context: Optional[DomainContext] = None
+    metadata: Dict[str, Any] = Field(default_factory=dict)  # Add metadata field
     sync_state: Dict[str, Any] = Field(
         default_factory=lambda: {
             "vector_stored": False,
@@ -418,8 +419,9 @@ class Memory(BaseModel):
             # Minimal dict for vector storage
             base = {
                 "id": self.id,
-                "type": self.type.value if isinstance(self.type, MemoryType) else str(self.type),
-                "timestamp": self.timestamp.isoformat() if self.timestamp else None
+                "type": self.type if isinstance(self.type, str) else self.type.value,
+                "timestamp": self.timestamp.isoformat() if self.timestamp else None,
+                "metadata": getattr(self, "metadata", {})  # Include metadata
             }
             # Handle content based on type
             if isinstance(self.content, str):
@@ -430,7 +432,8 @@ class Memory(BaseModel):
                     k: v for k, v in self.content.items()
                     if k in ["thread_id", "task_id", "message_id", "status", "text"]
                 }
-            return base
+            # Only include non-empty fields
+            return {k: v for k, v in base.items() if v is not None and v != [] and v != {}}
         d = super().dict()
         if self.timestamp:
             d["timestamp"] = self.timestamp.isoformat()
@@ -441,7 +444,7 @@ class Memory(BaseModel):
 
 class EpisodicMemory(Memory):
     """Episodic memory model."""
-    type: MemoryType = MemoryType.EPISODIC
+    type: Union[MemoryType, str] = Field(default=MemoryType.EPISODIC, description="Memory type, can be overridden")
     location: Optional[str] = None
     participants: List[str] = Field(default_factory=list, max_items=10)  # Limit participants
     emotions: Dict[str, float] = Field(default_factory=dict)
@@ -453,13 +456,19 @@ class EpisodicMemory(Memory):
     def dict(self, minimal: bool = False) -> Dict[str, Any]:
         """Convert to dictionary with proper serialization."""
         if minimal:
-            # Minimal dict for vector storage
-            base = super().dict(minimal=True)
+            # Get base dict but preserve original type
+            base = {
+                "id": self.id,
+                "content": self.content,
+                "type": self.type if isinstance(self.type, str) else self.type.value,
+                "timestamp": self.timestamp.isoformat() if self.timestamp else None
+            }
             minimal_data = {
                 **base,
                 "location": self.location,
                 "participants": self.participants[:5] if self.participants else [],
-                "related_memories": self.related_memories[:5] if self.related_memories else []
+                "related_memories": self.related_memories[:5] if self.related_memories else [],
+                "metadata": getattr(self, "metadata", {})  # Preserve metadata
             }
             # Only include non-empty fields
             return {k: v for k, v in minimal_data.items() if v is not None and v != [] and v != {}}

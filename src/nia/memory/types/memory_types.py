@@ -1,7 +1,7 @@
 """Memory system type definitions."""
 
 from enum import Enum
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 from pydantic import BaseModel
 from datetime import datetime
 
@@ -76,7 +76,7 @@ class Memory(BaseModel):
     """Base memory representation."""
     id: Optional[str] = None
     content: str
-    type: MemoryType
+    type: Union[MemoryType, str]  # Allow both enum and string types
     timestamp: str
     context: Optional[Dict[str, Any]] = None
     concepts: Optional[List[Concept]] = None
@@ -84,10 +84,126 @@ class Memory(BaseModel):
     participants: Optional[List[str]] = None
     importance: Optional[float] = 0.0
     metadata: Optional[Dict[str, Any]] = None
+    
+    def dict(self, *args, minimal: bool = False, **kwargs):
+        """Override dict serialization to handle custom types."""
+        d = super().dict(*args, **kwargs)
+        # Keep custom type as string
+        if isinstance(self.type, str):
+            d["type"] = self.type
+            if minimal and self.metadata and "type" in self.metadata:
+                self.metadata["type"] = self.type
+        return d
+
+    
+    def __init__(self, **data):
+        """Initialize with validation logging."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            logger.debug(f"Validating memory data: {data}")
+            super().__init__(**data)
+            
+            # Validate required fields
+            if not self.content:
+                raise ValueError("Memory content cannot be empty")
+                
+            if not isinstance(self.type, (MemoryType, str)):
+                raise ValueError(f"Invalid memory type: {self.type}")
+                
+            # Handle memory type conversion
+            if isinstance(self.type, str):
+                # Keep original string if it's a custom type
+                if self.type not in [t.value for t in MemoryType]:
+                    logger.debug(f"Using custom memory type: {self.type}")
+                else:
+                    # Convert to enum if it matches a standard type
+                    try:
+                        self.type = MemoryType(self.type)
+                        logger.debug(f"Converted to enum type: {self.type}")
+                    except ValueError:
+                        logger.warning(f"Invalid memory type string: {self.type}")
+            
+            # Validate timestamp format
+            try:
+                datetime.fromisoformat(self.timestamp)
+                logger.debug(f"Valid timestamp: {self.timestamp}")
+            except ValueError:
+                logger.error(f"Invalid timestamp format: {self.timestamp}")
+                raise ValueError(f"Invalid timestamp format: {self.timestamp}")
+                
+            # Validate concepts if present
+            if self.concepts:
+                for i, concept in enumerate(self.concepts):
+                    logger.debug(f"Validating concept {i+1}: {concept}")
+                    if not concept.name or not concept.type:
+                        logger.error(f"Invalid concept {i+1}: missing name or type")
+                        raise ValueError(f"Invalid concept {i+1}: missing name or type")
+                    logger.debug(f"Concept {i+1} valid")
+                        
+            # Validate relationships if present
+            if self.relationships:
+                for i, rel in enumerate(self.relationships):
+                    logger.debug(f"Validating relationship {i+1}: {rel}")
+                    if not rel.from_ or not rel.to or not rel.type:
+                        logger.error(f"Invalid relationship {i+1}: missing from/to/type")
+                        raise ValueError(f"Invalid relationship {i+1}: missing from/to/type")
+                    logger.debug(f"Relationship {i+1} valid")
+                        
+            # Validate importance range
+            if self.importance is not None:
+                if not (0.0 <= self.importance <= 1.0):
+                    logger.error(f"Invalid importance value: {self.importance}")
+                    raise ValueError(f"Importance must be between 0 and 1: {self.importance}")
+                logger.debug(f"Valid importance: {self.importance}")
+                
+            logger.debug("Memory validation successful")
+            
+        except Exception as e:
+            logger.error(f"Memory validation failed: {str(e)}")
+            raise
 
 class EpisodicMemory(Memory):
     """Episodic memory representation."""
     consolidated: Optional[bool] = False
+    
+    def dict(self, *args, minimal: bool = False, **kwargs):
+        """Override dict serialization to handle custom types."""
+        d = super().dict(*args, minimal=minimal, **kwargs)
+        # Keep custom type as string
+        if isinstance(self.type, str):
+            d["type"] = self.type
+            if minimal and self.metadata and "type" in self.metadata:
+                self.metadata["type"] = self.type
+        return d
+    
+    def __init__(self, **data):
+        """Initialize with validation logging."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            logger.debug(f"Validating episodic memory data: {data}")
+            super().__init__(**data)
+            
+            # Allow custom types
+            if isinstance(self.type, MemoryType):
+                # Only validate if it's a MemoryType enum
+                if self.type != MemoryType.EPISODIC:
+                    logger.error(f"Invalid type for episodic memory: {self.type}")
+                    raise ValueError(f"Invalid type for episodic memory: {self.type}")
+            logger.debug(f"Using memory type: {self.type}")
+                
+            # Validate consolidated flag
+            if self.consolidated is not None and not isinstance(self.consolidated, bool):
+                raise ValueError(f"Invalid consolidated flag: {self.consolidated}")
+                
+            logger.debug("Episodic memory validation successful")
+            
+        except Exception as e:
+            logger.error(f"Episodic memory validation failed: {str(e)}")
+            raise
 
 class TaskOutput(BaseModel):
     """Task output representation."""
@@ -95,3 +211,41 @@ class TaskOutput(BaseModel):
     type: OutputType
     content: str
     metadata: Optional[Dict[str, Any]] = None
+    
+    def __init__(self, **data):
+        """Initialize with validation logging."""
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        try:
+            logger.debug(f"Validating task output data: {data}")
+            super().__init__(**data)
+            
+            # Validate required fields
+            if not self.task_id:
+                raise ValueError("Task ID cannot be empty")
+                
+            if not isinstance(self.type, (OutputType, str)):
+                raise ValueError(f"Invalid output type: {self.type}")
+                
+            # Convert string type to enum if needed
+            if isinstance(self.type, str):
+                try:
+                    self.type = OutputType(self.type)
+                except ValueError:
+                    raise ValueError(f"Invalid output type string: {self.type}")
+            
+            # Validate content
+            if not self.content:
+                raise ValueError("Task output content cannot be empty")
+                
+            # Validate metadata if present
+            if self.metadata:
+                logger.debug(f"Validating task metadata: {self.metadata}")
+                # Add any specific metadata validation here
+                
+            logger.debug("Task output validation successful")
+            
+        except Exception as e:
+            logger.error(f"Task output validation failed: {str(e)}")
+            raise

@@ -355,14 +355,9 @@ async def list_threads(
 ) -> JSONResponse:
     """List all chat threads with optional filtering."""
     try:
-        # Validate API key
-        api_key = request.headers.get("X-API-Key")
-        if not api_key or not validate_api_key(api_key):
-            raise HTTPException(
-                status_code=401,
-                detail="Invalid or missing API key"
-            )
-            
+        # API key validation is handled by dependencies
+        _: None = Depends(get_permission("read"))
+        
         raw_threads = await thread_manager.list_threads(None)
         
         # Convert thread data to match schema

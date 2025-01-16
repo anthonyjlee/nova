@@ -199,63 +199,262 @@ class CoordinationAgent(TinyTroupeAgent, NovaCoordinationAgent, ThreadManagement
         return metrics
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
-        """Process content through both systems."""
-        # Add domain to metadata
-        metadata = metadata or {}
-        metadata["domain"] = self.domain
+        """Process content through both systems with validation and monitoring."""
+        try:
+            # Add domain to metadata
+            metadata = metadata or {}
+            metadata["domain"] = self.domain
+            debug_flags = metadata.get("debug_flags", {})
+
+            # Start monitoring if enabled
+            monitor_task = None
+            if debug_flags.get("monitor_coordination"):
+                monitor_task = await self.world.execute_action(
+                    self,
+                    "start_monitoring",
+                    task_type="coordination_processing",
+                    metadata={
+                        "agent": self.name,
+                        "domain": self.domain,
+                        "debug_flags": debug_flags
+                    }
+                )
+
+            # Validate input schema
+            schema_result = await self.world.execute_action(
+                self,
+                "validate_schema",
+                content=content,
+                schema_type="coordination_input",
+                metadata={"debug_flags": debug_flags}
+            )
+
+            if not schema_result.is_valid:
+                if debug_flags.get("strict_mode"):
+                    raise ValueError(f"Coordination input validation failed: {schema_result.issues}")
+                await self.world.execute_action(
+                    self,
+                    "send_alert",
+                    type="validation_warning",
+                    message=f"Coordination input validation warning: {schema_result.issues}",
+                    severity="medium"
+                )
+
+            # Process through memory system with validation context
+            metadata["validation_result"] = schema_result.dict() if hasattr(schema_result, "dict") else None
+            metadata["monitor_task"] = monitor_task
+            response = await super().process(content, metadata)
         
-        # Process through memory system
-        response = await super().process(content, metadata)
-        
-        # Update TinyTroupe state based on coordination results
-        if response and response.concepts:
-            for concept in response.concepts:
-                # Update emotions based on coordination results
-                if concept.get("type") == "coordination_result":
-                    self.emotions.update({
-                        "coordination_state": concept.get("description", "neutral")
-                    })
-                    
-                # Update desires based on coordination needs
-                if concept.get("type") == "coordination_need":
-                    self.desires.append(f"Address {concept['name']}")
-                    
-                # Update emotions based on domain relevance
-                if "domain_relevance" in concept:
-                    relevance = float(concept["domain_relevance"])
-                    if relevance > 0.8:
+            # Update TinyTroupe state based on coordination results with validation
+            if response and response.concepts:
+                for concept in response.concepts:
+                    # Update emotions based on coordination results
+                    if concept.get("type") == "coordination_result":
                         self.emotions.update({
-                            "domain_state": "highly_relevant"
+                            "coordination_state": concept.get("description", "neutral"),
+                            "validation_state": "confident" if schema_result.is_valid else "cautious"
                         })
-                    elif relevance < 0.3:
+                        
+                    # Update desires based on coordination needs
+                    if concept.get("type") == "coordination_need":
+                        self.desires.append(f"Address {concept['name']}")
+                        if not schema_result.is_valid:
+                            self.desires.append(f"Resolve validation issues: {concept['name']}")
+                        
+                    # Update emotions based on domain relevance
+                    if "domain_relevance" in concept:
+                        relevance = float(concept["domain_relevance"])
+                        if relevance > 0.8:
+                            self.emotions.update({
+                                "domain_state": "highly_relevant",
+                                "confidence": "high"
+                            })
+                        elif relevance < 0.3:
+                            self.emotions.update({
+                                "domain_state": "low_relevance",
+                                "confidence": "low"
+                            })
+                        
+                    # Update emotions based on resource state
+                    if concept.get("type") == "resource_state":
                         self.emotions.update({
-                            "domain_state": "low_relevance"
+                            "resource_state": concept.get("state", "neutral"),
+                            "monitoring_state": "active" if monitor_task else "inactive"
                         })
-                    
-                # Update emotions based on resource state
-                if concept.get("type") == "resource_state":
-                    self.emotions.update({
-                        "resource_state": concept.get("state", "neutral")
-                    })
-                    
-        return response
+
+            # Log debug information if enabled
+            if debug_flags.get("log_validation"):
+                await self.world.execute_action(
+                    self,
+                    "log_debug",
+                    message=f"Coordination processing completed - Validation: {schema_result.dict() if hasattr(schema_result, 'dict') else None}"
+                )
+
+            # Stop monitoring if started
+            if monitor_task:
+                await self.world.execute_action(
+                    self,
+                    "stop_monitoring",
+                    task_id=monitor_task["id"],
+                    metadata={
+                        "success": True,
+                        "response": response.dict() if hasattr(response, "dict") else str(response)
+                    }
+                )
+
+            return response
+
+        except Exception as e:
+            error_msg = f"Error in coordination processing: {str(e)}"
+            logger.error(error_msg)
+
+            if debug_flags.get("log_validation"):
+                await self.world.execute_action(
+                    self,
+                    "log_debug",
+                    message=error_msg,
+                    level="error"
+                )
+
+            # Send alert for processing failure
+            await self.world.execute_action(
+                self,
+                "send_alert",
+                type="coordination_error",
+                message=error_msg,
+                severity="high"
+            )
+
+            # Stop monitoring with error if started
+            if monitor_task:
+                await self.world.execute_action(
+                    self,
+                    "stop_monitoring",
+                    task_id=monitor_task["id"],
+                    metadata={
+                        "success": False,
+                        "error": str(e)
+                    }
+                )
+
+            raise
         
     async def coordinate_and_store(
         self,
         content: Dict[str, Any],
+        target_domain: Optional[str] = None,
+        debug_flags: Optional[Dict] = None
+    ):
+        """Process coordination and store results with validation and monitoring."""
+        monitor_task = None
+        try:
+            # Start monitoring if enabled
+            if debug_flags and debug_flags.get("monitor_coordination"):
+                monitor_task = await self.world.execute_action(
+                    self,
+                    "start_monitoring",
+                    task_type="coordination_storage",
+                    metadata={
+                        "agent": self.name,
+                        "domain": target_domain or self.domain,
+                        "debug_flags": debug_flags
+                    }
+                )
+
+            # Validate domain access if specified
+            if target_domain:
+                await self.validate_domain_access(target_domain)
+
+            # Validate input schema
+            schema_result = await self.world.execute_action(
+                self,
+                "validate_schema",
+                content=content,
+                schema_type="coordination_storage",
+                metadata={"debug_flags": debug_flags}
+            )
+
+            if not schema_result.is_valid:
+                if debug_flags and debug_flags.get("strict_mode"):
+                    raise ValueError(f"Coordination storage validation failed: {schema_result.issues}")
+                await self.world.execute_action(
+                    self,
+                    "send_alert",
+                    type="validation_warning",
+                    message=f"Coordination storage validation warning: {schema_result.issues}",
+                    severity="medium"
+                )
+
+            # Process coordination with validation context
+            result = await self.process_coordination(
+                content,
+                metadata={
+                    "domain": target_domain or self.domain,
+                    "validation_result": schema_result.dict() if hasattr(schema_result, "dict") else None,
+                    "debug_flags": debug_flags,
+                    "monitor_task": monitor_task
+                }
+            )
+
+            # Store coordination results and update state
+            await self._store_coordination_results(result, content, target_domain)
+            
+            # Stop monitoring if started
+            if monitor_task:
+                await self.world.execute_action(
+                    self,
+                    "stop_monitoring",
+                    task_id=monitor_task["id"],
+                    metadata={
+                        "success": True,
+                        "response": result.dict() if hasattr(result, "dict") else str(result)
+                    }
+                )
+
+            return result
+
+        except Exception as e:
+            error_msg = f"Error in coordination storage: {str(e)}"
+            logger.error(error_msg)
+
+            if debug_flags and debug_flags.get("log_validation"):
+                await self.world.execute_action(
+                    self,
+                    "log_debug",
+                    message=error_msg,
+                    level="error"
+                )
+
+            # Send alert for storage failure
+            await self.world.execute_action(
+                self,
+                "send_alert",
+                type="coordination_storage_error",
+                message=error_msg,
+                severity="high"
+            )
+
+            # Stop monitoring with error if started
+            if monitor_task:
+                await self.world.execute_action(
+                    self,
+                    "stop_monitoring",
+                    task_id=monitor_task["id"],
+                    metadata={
+                        "success": False,
+                        "error": str(e)
+                    }
+                )
+
+            raise
+            
+    async def _store_coordination_results(
+        self,
+        result: Any,
+        content: Dict[str, Any],
         target_domain: Optional[str] = None
     ):
-        """Process coordination and store results with domain awareness."""
-        # Validate domain access if specified
-        if target_domain:
-            await self.validate_domain_access(target_domain)
-            
-        # Process coordination
-        result = await self.process_coordination(
-            content,
-            metadata={"domain": target_domain or self.domain}
-        )
-        
+        """Store coordination results and update state."""
         # Store coordination results
         await self.store_memory(
             content={
@@ -309,8 +508,6 @@ class CoordinationAgent(TinyTroupeAgent, NovaCoordinationAgent, ThreadManagement
             
         # Update coordination state
         self._update_coordination_state(result)
-        
-        return result
         
     def _update_coordination_state(self, result):
         """Update internal coordination state."""

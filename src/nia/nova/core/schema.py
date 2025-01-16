@@ -5,27 +5,27 @@ from typing import Dict, Any, Optional, List, Union
 from datetime import datetime
 from pydantic import BaseModel, ValidationError, create_model
 
+from nia.core.feature_flags import FeatureFlags
+from .validation import ValidationPattern, ValidationResult, ValidationTracker
+
 logger = logging.getLogger(__name__)
 
-class SchemaResult:
+class SchemaValidationPattern(ValidationPattern):
+    """Schema-specific validation pattern."""
+    schema_type: str
+    field_name: Optional[str] = None
+    constraint_type: Optional[str] = None
+
+class SchemaResult(BaseModel):
     """Container for schema operation results."""
-    
-    def __init__(
-        self,
-        is_valid: bool,
-        schema: Dict,
-        validations: List[Dict],
-        confidence: float,
-        metadata: Optional[Dict] = None,
-        issues: Optional[List[Dict]] = None
-    ):
-        self.is_valid = is_valid
-        self.schema = schema
-        self.validations = validations
-        self.confidence = confidence
-        self.metadata = metadata or {}
-        self.issues = issues or []
-        self.timestamp = datetime.now().isoformat()
+    is_valid: bool
+    schema: Dict[str, Any]
+    validations: List[Dict[str, Any]]
+    confidence: float
+    metadata: Dict[str, Any] = {}
+    issues: List[Dict[str, Any]] = []
+    patterns: List[SchemaValidationPattern] = []
+    timestamp: str = datetime.now().isoformat()
 
 class SchemaAgent:
     """Core schema functionality for Nova's ecosystem."""
@@ -41,25 +41,31 @@ class SchemaAgent:
         self.store = store
         self.vector_store = vector_store
         self.domain = domain or "professional"  # Default to professional domain
+        self.validation_tracker = ValidationTracker()
         
     async def analyze_schema(
         self,
         content: Dict[str, Any],
         schema_type: str,
-        metadata: Optional[Dict] = None
+        metadata: Optional[Dict] = None,
+        debug_flags: Optional[FeatureFlags] = None
     ) -> SchemaResult:
-        """Analyze schema with domain awareness."""
+        """Analyze schema with domain and validation awareness."""
         try:
             # Add domain to metadata
             metadata = metadata or {}
             metadata["domain"] = self.domain
             
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                logger.debug(f"Analyzing schema - type: {schema_type}, content: {content}")
+                
             # Get similar schemas if vector store available
             similar_schemas = []
             if self.vector_store:
                 similar_schemas = await self._get_similar_schemas(
                     content,
-                    schema_type
+                    schema_type,
+                    debug_flags
                 )
             
             # Analyze with LLM if available
@@ -78,19 +84,39 @@ class SchemaAgent:
                 analysis = self._basic_analysis(
                     content,
                     schema_type,
-                    similar_schemas
+                    similar_schemas,
+                    debug_flags
                 )
                 
             # Extract and validate components
-            schema = self._extract_schema(analysis)
-            validations = self._extract_validations(analysis)
-            issues = self._extract_issues(analysis)
+            schema = await self._extract_schema(analysis, debug_flags)
+            validations = await self._extract_validations(analysis, debug_flags)
+            issues = await self._extract_issues(analysis, debug_flags)
             
+            # Track validation patterns
+            for issue in issues:
+                pattern = SchemaValidationPattern(
+                    type=issue["type"],
+                    description=issue["description"],
+                    severity=issue.get("severity", "low"),
+                    schema_type=schema_type,
+                    field_name=issue.get("field_name"),
+                    constraint_type=issue.get("constraint_type"),
+                    first_seen=datetime.now().isoformat(),
+                    last_seen=datetime.now().isoformat(),
+                    metadata={
+                        "domain": self.domain,
+                        "schema_type": schema_type
+                    }
+                )
+                self.validation_tracker.add_issue(pattern.dict())
+                
             # Calculate confidence and validity
             confidence = self._calculate_confidence(schema, validations, issues)
             is_valid = self._determine_validity(schema, validations, issues, confidence)
             
-            return SchemaResult(
+            # Create result
+            result = SchemaResult(
                 is_valid=is_valid,
                 schema=schema,
                 validations=validations,
@@ -99,29 +125,62 @@ class SchemaAgent:
                     "domain": self.domain,
                     "schema_type": schema_type,
                     "content_type": content.get("type", "unknown"),
-                    "source": metadata.get("source", "unknown")
+                    "source": metadata.get("source", "unknown"),
+                    "validation_timestamp": datetime.now().isoformat()
                 },
-                issues=issues
+                issues=issues,
+                patterns=self.validation_tracker.get_patterns()
             )
             
+            if debug_flags:
+                if await debug_flags.is_debug_enabled('log_validation'):
+                    logger.debug(f"Schema analysis result: {result.dict()}")
+                    
+                    # Log critical patterns
+                    critical_patterns = self.validation_tracker.get_critical_patterns()
+                    if critical_patterns:
+                        logger.warning(f"Critical schema patterns detected: {critical_patterns}")
+                        
+                if not is_valid and await debug_flags.is_debug_enabled('strict_mode'):
+                    raise ValidationError(f"Schema validation failed: {issues}")
+                    
+            return result
+            
         except Exception as e:
-            logger.error(f"Schema analysis error: {str(e)}")
+            error_msg = f"Schema analysis error: {str(e)}"
+            logger.error(error_msg)
+            
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                logger.error(error_msg)
+                
             return SchemaResult(
                 is_valid=False,
                 schema={},
                 validations=[],
                 confidence=0.0,
-                metadata={"error": str(e)},
-                issues=[{"type": "error", "description": str(e)}]
+                metadata={
+                    "error": str(e),
+                    "domain": self.domain,
+                    "schema_type": schema_type
+                },
+                issues=[{
+                    "type": "error",
+                    "severity": "high",
+                    "description": str(e)
+                }]
             )
             
     async def _get_similar_schemas(
         self,
         content: Dict[str, Any],
-        schema_type: str
+        schema_type: str,
+        debug_flags: Optional[FeatureFlags] = None
     ) -> List[Dict]:
-        """Get similar schemas from vector store."""
+        """Get similar schemas from vector store with validation."""
         try:
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                logger.debug(f"Finding similar schemas for type: {schema_type}")
+                
             if "content" in content:
                 results = await self.vector_store.search(
                     content["content"],
@@ -132,18 +191,29 @@ class SchemaAgent:
                         "schema_type": schema_type
                     }
                 )
+                
+                if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                    logger.debug(f"Found {len(results)} similar schemas")
+                    
                 return results
+                
         except Exception as e:
-            logger.error(f"Error getting similar schemas: {str(e)}")
+            error_msg = f"Error getting similar schemas: {str(e)}"
+            logger.error(error_msg)
+            
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                logger.error(error_msg)
+                
         return []
             
     def _basic_analysis(
         self,
         content: Dict[str, Any],
         schema_type: str,
-        similar_schemas: List[Dict]
+        similar_schemas: List[Dict],
+        debug_flags: Optional[FeatureFlags] = None
     ) -> Dict:
-        """Basic schema analysis without LLM."""
+        """Basic schema analysis with validation tracking."""
         schema = {}
         validations = []
         issues = []
@@ -180,13 +250,36 @@ class SchemaAgent:
                     "metadata": {}
                 }
                 
-                # Add fields from content
+                # Add fields from content with validation
                 for key, value in content.items():
                     if isinstance(value, dict) and "type" in value:
+                        # Validate field type
+                        field_type = value["type"]
+                        if field_type not in ["string", "integer", "number", "boolean", "array", "object"]:
+                            issues.append({
+                                "type": "invalid_field_type",
+                                "severity": "high",
+                                "description": f"Invalid field type: {field_type}",
+                                "field_name": key
+                            })
+                            continue
+                            
+                        # Validate constraints
+                        constraints = value.get("constraints", {})
+                        for constraint_name, constraint_value in constraints.items():
+                            if not self._validate_constraint(constraint_name, constraint_value, field_type):
+                                issues.append({
+                                    "type": "invalid_constraint",
+                                    "severity": "medium",
+                                    "description": f"Invalid constraint {constraint_name} for type {field_type}",
+                                    "field_name": key,
+                                    "constraint_type": constraint_name
+                                })
+                                
                         schema["fields"][key] = {
-                            "type": value["type"],
+                            "type": field_type,
                             "required": value.get("required", False),
-                            "constraints": value.get("constraints", {})
+                            "constraints": constraints
                         }
                         
                 # Add basic validations
@@ -201,14 +294,16 @@ class SchemaAgent:
                         issues.append({
                             "type": f"missing_{rule}",
                             "severity": "medium",
-                            "description": f"Schema is missing {rule}"
+                            "description": f"Schema is missing {rule}",
+                            "schema_type": schema_type
                         })
                         
             else:
                 issues.append({
                     "type": "invalid_format",
                     "severity": "high",
-                    "description": "Content must be a dictionary"
+                    "description": "Content must be a dictionary",
+                    "schema_type": schema_type
                 })
                 
             # Add similar schemas as reference
@@ -227,6 +322,48 @@ class SchemaAgent:
             "validations": validations,
             "issues": issues
         }
+        
+    def _validate_constraint(
+        self,
+        constraint_name: str,
+        constraint_value: Any,
+        field_type: str
+    ) -> bool:
+        """Validate a field constraint."""
+        type_constraints = {
+            "string": {
+                "min_length": lambda x: isinstance(x, int) and x >= 0,
+                "max_length": lambda x: isinstance(x, int) and x >= 0,
+                "pattern": lambda x: isinstance(x, str),
+                "enum": lambda x: isinstance(x, list)
+            },
+            "integer": {
+                "minimum": lambda x: isinstance(x, (int, float)),
+                "maximum": lambda x: isinstance(x, (int, float)),
+                "multiple_of": lambda x: isinstance(x, (int, float)) and x > 0
+            },
+            "number": {
+                "minimum": lambda x: isinstance(x, (int, float)),
+                "maximum": lambda x: isinstance(x, (int, float)),
+                "multiple_of": lambda x: isinstance(x, (int, float)) and x > 0
+            },
+            "array": {
+                "min_items": lambda x: isinstance(x, int) and x >= 0,
+                "max_items": lambda x: isinstance(x, int) and x >= 0,
+                "unique_items": lambda x: isinstance(x, bool)
+            },
+            "object": {
+                "required": lambda x: isinstance(x, list),
+                "properties": lambda x: isinstance(x, dict)
+            }
+        }
+        
+        if field_type in type_constraints:
+            constraint_validator = type_constraints[field_type].get(constraint_name)
+            if constraint_validator:
+                return constraint_validator(constraint_value)
+                
+        return False
         
     def _check_rule(self, rule: str, content: Dict[str, Any]) -> bool:
         """Check if content satisfies a schema rule."""
@@ -250,99 +387,141 @@ class SchemaAgent:
             return bool(content.get("validations", {}))
         return False
         
-    def _extract_schema(self, analysis: Dict) -> Dict:
-        """Extract and validate schema."""
-        schema = analysis.get("schema", {})
-        valid_schema = {}
-        
-        if isinstance(schema, dict):
-            # Extract core schema fields
-            valid_schema["type"] = str(schema.get("type", "unknown"))
-            valid_schema["fields"] = {}
+    async def _extract_schema(
+        self,
+        analysis: Dict,
+        debug_flags: Optional[FeatureFlags] = None
+    ) -> Dict:
+        """Extract and validate schema with debug logging."""
+        try:
+            schema = analysis.get("schema", {})
+            valid_schema = {}
             
-            # Extract and validate fields
-            fields = schema.get("fields", {})
-            if isinstance(fields, dict):
-                for name, field in fields.items():
-                    if isinstance(field, dict):
-                        valid_field = {
-                            "type": str(field.get("type", "string")),
-                            "required": bool(field.get("required", False))
-                        }
-                        
-                        # Add optional field attributes
-                        if "description" in field:
-                            valid_field["description"] = str(field["description"])
-                        if "default" in field:
-                            valid_field["default"] = field["default"]
-                        if "constraints" in field:
-                            valid_field["constraints"] = field["constraints"]
+            if isinstance(schema, dict):
+                # Extract core schema fields
+                valid_schema["type"] = str(schema.get("type", "unknown"))
+                valid_schema["fields"] = {}
+                
+                # Extract and validate fields
+                fields = schema.get("fields", {})
+                if isinstance(fields, dict):
+                    for name, field in fields.items():
+                        if isinstance(field, dict):
+                            valid_field = {
+                                "type": str(field.get("type", "string")),
+                                "required": bool(field.get("required", False))
+                            }
                             
-                        valid_schema["fields"][str(name)] = valid_field
+                            # Add optional field attributes
+                            if "description" in field:
+                                valid_field["description"] = str(field["description"])
+                            if "default" in field:
+                                valid_field["default"] = field["default"]
+                            if "constraints" in field:
+                                valid_field["constraints"] = field["constraints"]
+                                
+                            valid_schema["fields"][str(name)] = valid_field
+                            
+                # Add optional schema sections
+                if "constraints" in schema:
+                    valid_schema["constraints"] = schema["constraints"]
+                if "metadata" in schema:
+                    valid_schema["metadata"] = schema["metadata"]
+                if "similar_schemas" in schema:
+                    valid_schema["similar_schemas"] = schema["similar_schemas"]
+                    
+            return valid_schema
+            
+        except Exception as e:
+            error_msg = f"Error extracting schema: {str(e)}"
+            logger.error(error_msg)
+            
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                logger.error(error_msg)
+                
+            return {}
+        
+    async def _extract_validations(
+        self,
+        analysis: Dict,
+        debug_flags: Optional[FeatureFlags] = None
+    ) -> List[Dict]:
+        """Extract and validate schema validations with debug logging."""
+        try:
+            validations = analysis.get("validations", [])
+            valid_validations = []
+            
+            for validation in validations:
+                if isinstance(validation, dict) and "rule" in validation:
+                    valid_validation = {
+                        "rule": str(validation["rule"]),
+                        "passed": bool(validation.get("passed", False)),
+                        "confidence": float(validation.get("confidence", 0.5))
+                    }
+                    
+                    # Add optional fields
+                    if "description" in validation:
+                        valid_validation["description"] = str(validation["description"])
+                    if "details" in validation:
+                        valid_validation["details"] = str(validation["details"])
+                    if "domain_relevance" in validation:
+                        valid_validation["domain_relevance"] = float(validation["domain_relevance"])
+                    if "severity" in validation:
+                        valid_validation["severity"] = str(validation["severity"])
                         
-            # Add optional schema sections
-            if "constraints" in schema:
-                valid_schema["constraints"] = schema["constraints"]
-            if "metadata" in schema:
-                valid_schema["metadata"] = schema["metadata"]
-            if "similar_schemas" in schema:
-                valid_schema["similar_schemas"] = schema["similar_schemas"]
-                
-        return valid_schema
-        
-    def _extract_validations(self, analysis: Dict) -> List[Dict]:
-        """Extract and validate schema validations."""
-        validations = analysis.get("validations", [])
-        valid_validations = []
-        
-        for validation in validations:
-            if isinstance(validation, dict) and "rule" in validation:
-                valid_validation = {
-                    "rule": str(validation["rule"]),
-                    "passed": bool(validation.get("passed", False)),
-                    "confidence": float(validation.get("confidence", 0.5))
-                }
-                
-                # Add optional fields
-                if "description" in validation:
-                    valid_validation["description"] = str(validation["description"])
-                if "details" in validation:
-                    valid_validation["details"] = str(validation["details"])
-                if "domain_relevance" in validation:
-                    valid_validation["domain_relevance"] = float(validation["domain_relevance"])
-                if "severity" in validation:
-                    valid_validation["severity"] = str(validation["severity"])
+                    valid_validations.append(valid_validation)
                     
-                valid_validations.append(valid_validation)
+            return valid_validations
+            
+        except Exception as e:
+            error_msg = f"Error extracting validations: {str(e)}"
+            logger.error(error_msg)
+            
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                logger.error(error_msg)
                 
-        return valid_validations
+            return []
         
-    def _extract_issues(self, analysis: Dict) -> List[Dict]:
-        """Extract and validate schema issues."""
-        issues = analysis.get("issues", [])
-        valid_issues = []
-        
-        for issue in issues:
-            if isinstance(issue, dict) and "type" in issue:
-                valid_issue = {
-                    "type": str(issue["type"]),
-                    "severity": str(issue.get("severity", "medium")),
-                    "description": str(issue.get("description", "Unknown issue"))
-                }
-                
-                # Add optional fields
-                if "details" in issue:
-                    valid_issue["details"] = str(issue["details"])
-                if "domain_impact" in issue:
-                    valid_issue["domain_impact"] = float(issue["domain_impact"])
-                if "suggested_fix" in issue:
-                    valid_issue["suggested_fix"] = str(issue["suggested_fix"])
-                if "related_rules" in issue:
-                    valid_issue["related_rules"] = [str(r) for r in issue["related_rules"]]
+    async def _extract_issues(
+        self,
+        analysis: Dict,
+        debug_flags: Optional[FeatureFlags] = None
+    ) -> List[Dict]:
+        """Extract and validate schema issues with debug logging."""
+        try:
+            issues = analysis.get("issues", [])
+            valid_issues = []
+            
+            for issue in issues:
+                if isinstance(issue, dict) and "type" in issue:
+                    valid_issue = {
+                        "type": str(issue["type"]),
+                        "severity": str(issue.get("severity", "medium")),
+                        "description": str(issue.get("description", "Unknown issue"))
+                    }
                     
-                valid_issues.append(valid_issue)
+                    # Add optional fields
+                    if "details" in issue:
+                        valid_issue["details"] = str(issue["details"])
+                    if "domain_impact" in issue:
+                        valid_issue["domain_impact"] = float(issue["domain_impact"])
+                    if "suggested_fix" in issue:
+                        valid_issue["suggested_fix"] = str(issue["suggested_fix"])
+                    if "related_rules" in issue:
+                        valid_issue["related_rules"] = [str(r) for r in issue["related_rules"]]
+                        
+                    valid_issues.append(valid_issue)
+                    
+            return valid_issues
+            
+        except Exception as e:
+            error_msg = f"Error extracting issues: {str(e)}"
+            logger.error(error_msg)
+            
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                logger.error(error_msg)
                 
-        return valid_issues
+            return []
         
     def _calculate_confidence(
         self,
@@ -430,10 +609,14 @@ class SchemaAgent:
     async def generate_pydantic_model(
         self,
         schema: Dict[str, Any],
-        model_name: str = "DynamicModel"
+        model_name: str = "DynamicModel",
+        debug_flags: Optional[FeatureFlags] = None
     ) -> type[BaseModel]:
-        """Generate a Pydantic model from schema definition."""
+        """Generate a Pydantic model from schema definition with validation."""
         try:
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                logger.debug(f"Generating Pydantic model: {model_name}")
+                
             # Extract field definitions
             fields = {}
             for name, field in schema.get("fields", {}).items():
@@ -449,10 +632,18 @@ class SchemaAgent:
                 **fields
             )
             
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                logger.debug(f"Generated model: {model}")
+                
             return model
             
         except Exception as e:
-            logger.error(f"Error generating Pydantic model: {str(e)}")
+            error_msg = f"Error generating Pydantic model: {str(e)}"
+            logger.error(error_msg)
+            
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                logger.error(error_msg)
+                
             raise
             
     def _get_python_type(self, schema_type: str) -> type:

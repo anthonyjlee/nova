@@ -56,20 +56,55 @@ class VectorStore:
             # Get singleton client instance
             client = await self.client
             
+            # Get embedding dimension and model info
+            dimension = await self.embedding_service.dimension
+            model_name = self.embedding_service.model.replace("/", "_").replace("@", "_")
+            collection_name = f"memories_{model_name}_{dimension}d"
+            
+            logger.info(f"Using collection: {collection_name} for {dimension}-dimensional vectors")
+            
             # Check if collection exists
             collections = client.get_collections()
-            collection_exists = "memories" in [c.name for c in collections.collections]
+            collection_exists = collection_name in [c.name for c in collections.collections]
             
             if not collection_exists:
-                # Create collection with required indexes
-                logger.info("Creating memories collection with indexes")
+                # Create collection with required indexes and HNSW config
+                logger.info(f"Creating collection {collection_name} with {dimension} dimensions")
                 client.create_collection(
-                    collection_name="memories",
+                    collection_name=collection_name,
                     vectors_config=models.VectorParams(
-                        size=384,  # Default embedding size
-                        distance=models.Distance.COSINE
+                        size=dimension,
+                        distance=models.Distance.COSINE,
+                        hnsw_config=models.HnswConfigDiff(
+                            m=16,  # Number of edges per node
+                            ef_construct=100,  # Dynamic candidate list size
+                            full_scan_threshold=10  # Lower threshold for test data
+                        )
+                    ),
+                    optimizers_config=models.OptimizersConfigDiff(
+                        indexing_threshold=10,  # Lower threshold for test data
+                        memmap_threshold=10,  # Lower threshold for test data
+                        default_segment_number=2,  # Use multiple segments
+                        vacuum_min_vector_number=0,  # Clean up immediately
+                        max_optimization_threads=4  # Use multiple threads
                     )
                 )
+                
+                # Force index optimization
+                client.update_collection(
+                    collection_name=collection_name,
+                    optimizer_config=models.OptimizersConfigDiff(
+                        indexing_threshold=10,
+                        memmap_threshold=10,
+                        default_segment_number=2,
+                        vacuum_min_vector_number=0,
+                        max_optimization_threads=4
+                    )
+                )
+            
+            # Store current collection name
+            self.current_collection = collection_name
+            logger.info(f"Using collection: {self.current_collection}")
             
             # Define required indexes with all metadata fields
             required_indexes = [
@@ -91,7 +126,7 @@ class VectorStore:
                 logger.info(f"Creating index for {field_name}")
                 try:
                     client.create_payload_index(
-                        collection_name="memories",
+                        collection_name=self.current_collection,
                         field_name=field_name,
                         field_schema=field_schema,
                         wait=True  # Wait for index to be created
@@ -101,7 +136,7 @@ class VectorStore:
                     time.sleep(0.5)  # Give time for index to be ready
                     
                     # Verify index exists
-                    collection_info = client.get_collection("memories")
+                    collection_info = client.get_collection(self.current_collection)
                     if field_name not in collection_info.payload_schema:
                         raise Exception(f"Index {field_name} not found after creation")
                         
@@ -138,29 +173,75 @@ class VectorStore:
             # Convert content to string for embedding
             content_str = json.dumps(content) if isinstance(content, dict) else str(content)
             
-            # Generate embedding
+            # Generate embedding and normalize
             vector = await self.embedding_service.create_embedding(content_str)
             
-            # Create point
+            # Normalize vector (L2 norm)
+            import numpy as np
+            norm = np.linalg.norm(vector)
+            if norm > 0:
+                vector = [x/norm for x in vector]
+                
+            logger.info(f"Normalized storage vector first 5: {vector[:5]}")
+            
+            # Create point with flattened metadata
+            payload = {
+                "content": content,
+                "layer": layer,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+            # Flatten metadata into payload with metadata_ prefix
+            if metadata:
+                for k, v in metadata.items():
+                    payload[f"metadata_{k}"] = v
+            
             point = models.PointStruct(
                 id=str(uuid.uuid4()),
                 vector=vector,
-                payload={
-                    "content": content,
-                    "metadata": metadata or {},
-                    "layer": layer,
-                    "timestamp": datetime.now().isoformat()
-                }
+                payload=payload
             )
             
-            # Store point using singleton client
+            logger.debug(f"Creating point with metadata: {metadata}")
+            
+            logger.debug(f"Creating point with payload: {point.payload}")
+            
+            # Store point using singleton client and current collection
             client = await self.client
+            
+            # Log vector details for verification
+            logger.info(
+                f"Storing vector:\n"
+                f"- Collection: {self.current_collection}\n"
+                f"- ID: {point.id}\n"
+                f"- Dimension: {len(point.vector)}\n"
+                f"- Content: {content_str[:100]}...\n"
+                f"- Layer: {layer}"
+            )
+            
             result = client.upsert(
-                collection_name="memories",
+                collection_name=self.current_collection,
                 points=[point],
                 wait=True
             )
-            # Don't await the result since it's not awaitable
+            
+            # Verify stored vector
+            stored = client.retrieve(
+                collection_name=self.current_collection,
+                ids=[point.id],
+                with_vectors=True
+            )
+            if not stored or not stored[0].vector:
+                raise ValueError("Failed to verify stored vector")
+            
+            stored_vector = stored[0].vector
+            logger.info(
+                f"Vector stored and verified:\n"
+                f"- ID: {point.id}\n"
+                f"- Stored dimension: {len(stored_vector)}\n"
+                f"- First 5 values: {stored_vector[:5]}"
+            )
+            
             return True
         except Exception as e:
             logger.error(f"Failed to store vector: {str(e)}")
@@ -173,7 +254,7 @@ class VectorStore:
         score_threshold: float = 0.7,
         layer: Optional[str] = None,
         filter_conditions: Optional[List[models.FieldCondition]] = None,
-        collection_name: str = "memories"
+        collection_name: Optional[str] = None
     ) -> List[Dict]:
         """Search for similar vectors.
         
@@ -202,8 +283,16 @@ class VectorStore:
             else:
                 content_str = str(content)
             
-            # Create query embedding from processed content
+            # Create query embedding and normalize
             query_vector = await self.embedding_service.create_embedding(content_str)
+            
+            # Normalize query vector (L2 norm)
+            import numpy as np
+            norm = np.linalg.norm(query_vector)
+            if norm > 0:
+                query_vector = [x/norm for x in query_vector]
+                
+            logger.info(f"Normalized query vector first 5: {query_vector[:5]}")
             
             # Process and validate filter conditions
             logger.info("Processing filter conditions...")
@@ -212,7 +301,6 @@ class VectorStore:
             
             if filter_conditions:
                 for condition in filter_conditions:
-                    # Log each condition
                     logger.info(f"Processing condition: {condition}")
                     
                     if isinstance(condition, models.FieldCondition):
@@ -235,8 +323,9 @@ class VectorStore:
             logger.info(f"Final filter conditions: {must_conditions}")
             
             # Construct search parameters
+            # Use current collection if none specified
             search_params = {
-                "collection_name": collection_name,
+                "collection_name": collection_name or self.current_collection,
                 "query_vector": query_vector,
                 "limit": limit,
                 "score_threshold": score_threshold,
@@ -252,20 +341,69 @@ class VectorStore:
             logger.info("Executing search...")
             client = await self.client
             
+            # Log search parameters for debugging
+            logger.info(f"Search vector first 5 values: {query_vector[:5]}")
+            
             try:
-                results = client.search(**search_params)
+                # Try exact content match first
+                exact_filter = models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="content",
+                            match=models.MatchValue(value=content_str)
+                        )
+                    ] + must_conditions if must_conditions else []
+                )
                 
-                # Log raw results
-                logger.info(f"Raw search results: {json.dumps(results, default=str, indent=2)}")
+                exact_results = client.search(
+                    collection_name=collection_name or self.current_collection,
+                    query_vector=query_vector,
+                    query_filter=exact_filter,
+                    limit=limit,
+                    with_payload=True
+                )
                 
+                # Log exact match results
+                logger.info(f"Exact match results: {json.dumps(exact_results, default=str, indent=2)}")
+                
+                # If no exact matches, try similarity search
+                if not exact_results:
+                    logger.info("No exact matches, trying similarity search...")
+                    results = client.search(**search_params)
+                    logger.info(f"Similarity search results: {json.dumps(results, default=str, indent=2)}")
+                else:
+                    results = exact_results
+                    
                 # Process results
                 processed = []
                 if results:
                     for hit in results:
                         if hasattr(hit, 'payload'):
-                            processed.append(hit.payload)
+                            # Log match details
+                            logger.info(
+                                f"Found match:\n"
+                                f"- Score: {hit.score}\n"
+                                f"- Content: {hit.payload.get('content')}\n"
+                                f"- Layer: {hit.payload.get('layer')}"
+                            )
+                            # Extract metadata from flattened structure
+                            metadata = {}
+                            for k, v in hit.payload.items():
+                                if k.startswith('metadata_'):
+                                    metadata[k[9:]] = v  # Remove metadata_ prefix
+                            
+                            result = {
+                                "content": hit.payload.get("content"),
+                                "metadata": metadata,
+                                "layer": hit.payload.get("layer"),
+                                "timestamp": hit.payload.get("timestamp")
+                            }
+                            processed.append(result)
+                else:
+                    logger.warning("No matches found above threshold")
                 
                 return processed
+                
             except Exception as e:
                 logger.error(f"Search failed: {str(e)}")
                 return []
@@ -277,7 +415,7 @@ class VectorStore:
         self,
         vector_id: str,
         metadata: Dict,
-        collection_name: str = "memories"
+        collection_name: Optional[str] = None
     ):
         """Update vector metadata.
         
@@ -318,7 +456,7 @@ class VectorStore:
             client = await self.client
             
             client.set_payload(
-                collection_name=collection_name,
+                collection_name=collection_name or self.current_collection,
                 points=[vector_id],
                 payload=payload,
                 wait=True  # Wait for operation to complete
@@ -329,7 +467,7 @@ class VectorStore:
             
     async def inspect_collection(
         self,
-        collection_name: str = "memories"
+        collection_name: Optional[str] = None
     ) -> List[Dict]:
         """Inspect collection data.
         
@@ -340,17 +478,19 @@ class VectorStore:
             List[Dict]: Collection data
         """
         try:
-            logger.info(f"Inspecting collection: {collection_name}")
+            # Use current collection if none specified
+            target_collection = collection_name or self.current_collection
+            logger.info(f"Inspecting collection: {target_collection}")
             
             # Get singleton client instance
             client = await self.client
             
-            collection_info = client.get_collection(collection_name)
+            collection_info = client.get_collection(target_collection)
             logger.info(f"Collection info: {json.dumps(collection_info.dict(), indent=2)}")
             
             # Get points with a single request
             batch = client.scroll(
-                collection_name=collection_name,
+                collection_name=target_collection,
                 limit=1000,  # Increased limit to get more points at once
                 with_payload=True,
                 with_vectors=False
@@ -378,7 +518,7 @@ class VectorStore:
     async def delete_vectors(
         self,
         vector_ids: List[str],
-        collection_name: str = "memories"
+        collection_name: Optional[str] = None
     ):
         """Delete vectors by ID.
         
@@ -392,7 +532,7 @@ class VectorStore:
             client = await self.client
             
             client.delete(
-                collection_name=collection_name,
+                collection_name=collection_name or self.current_collection,
                 points_selector=models.PointIdsList(
                     points=vector_ids
                 ),

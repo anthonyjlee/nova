@@ -6,6 +6,7 @@ from datetime import datetime
 
 from ...memory.types.memory_types import AgentResponse, DialogueMessage
 from ...memory.prompts import AGENT_PROMPTS
+from ...memory.chunking import chunk_content
 
 logger = logging.getLogger(__name__)
 
@@ -64,6 +65,75 @@ class BaseAgent:
         # Format prompt template
         return self.prompt_template.format(content=content_str.strip())
     
+    def _combine_responses(self, responses: List[Dict]) -> Dict:
+        """Combine multiple chunk responses into single response.
+        
+        Args:
+            responses: List of chunk responses
+            
+        Returns:
+            Combined response
+        """
+        if not responses:
+            return {}
+            
+        # Combine concepts
+        all_concepts = []
+        seen_concepts = set()
+        for response in responses:
+            for concept in response.get("concepts", []):
+                concept_key = (concept["name"], concept["type"])
+                if concept_key not in seen_concepts:
+                    all_concepts.append(concept)
+                    seen_concepts.add(concept_key)
+                    
+        # Combine key points
+        all_points = []
+        seen_points = set()
+        for response in responses:
+            for point in response.get("key_points", []):
+                if point not in seen_points:
+                    all_points.append(point)
+                    seen_points.add(point)
+                    
+        # Combine implications and uncertainties
+        all_implications = []
+        all_uncertainties = []
+        seen_implications = set()
+        seen_uncertainties = set()
+        
+        for response in responses:
+            for imp in response.get("implications", []):
+                if imp not in seen_implications:
+                    all_implications.append(imp)
+                    seen_implications.add(imp)
+                    
+            for unc in response.get("uncertainties", []):
+                if unc not in seen_uncertainties:
+                    all_uncertainties.append(unc)
+                    seen_uncertainties.add(unc)
+                    
+        # Combine reasoning steps
+        all_reasoning = []
+        for response in responses:
+            all_reasoning.extend(response.get("reasoning", []))
+            
+        # Create combined response
+        combined = {
+            "response": "\n\n".join(r.get("response", "") for r in responses),
+            "concepts": all_concepts,
+            "key_points": all_points,
+            "implications": all_implications,
+            "uncertainties": all_uncertainties,
+            "reasoning": all_reasoning
+        }
+        
+        # Add metadata from first response
+        if responses[0].get("metadata"):
+            combined["metadata"] = responses[0]["metadata"]
+            
+        return combined
+    
     async def process(
         self,
         content: Dict[str, Any],
@@ -79,27 +149,68 @@ class BaseAgent:
             Agent response
         """
         try:
-            # Format prompt and get structured completion
-            prompt = self._format_prompt(content)
-            logger.debug(f"Formatted prompt: {prompt}")
+            # Split content into chunks with validation logging
+            logger.debug(f"Chunking content: {content}")
+            chunks = chunk_content(content)
+            logger.debug(f"Created {len(chunks)} chunks")
+            chunk_responses = []
             
-            raw_response = await self.llm.get_structured_completion(
-                prompt,
-                agent_type=self.agent_type,
-                metadata=metadata
-            )
-            logger.debug(f"Raw LLM response: {raw_response}")
+            # Process each chunk with validation
+            for i, chunk in enumerate(chunks):
+                # Format prompt for chunk
+                prompt = self._format_prompt(chunk)
+                logger.debug(f"Processing chunk {i+1}/{len(chunks)}")
+                logger.debug(f"Chunk content: {chunk}")
+                logger.debug(f"Formatted prompt: {prompt}")
+                
+                try:
+                    # Get structured completion for chunk
+                    chunk_response = await self.llm.get_structured_completion(
+                        prompt,
+                        agent_type=self.agent_type,
+                        metadata=metadata
+                    )
+                    logger.debug(f"Chunk {i+1} response: {chunk_response}")
+                    
+                    # Validate response structure
+                    if not isinstance(chunk_response, (dict, str)):
+                        raise ValueError(f"Invalid response type: {type(chunk_response)}")
+                    
+                    # Add chunk metadata
+                    if isinstance(chunk_response, dict):
+                        chunk_response["chunk_metadata"] = {
+                            "index": i,
+                            "total_chunks": len(chunks),
+                            "chunk_size": len(str(chunk))
+                        }
+                    
+                    chunk_responses.append(chunk_response)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing chunk {i+1}: {str(e)}")
+                    logger.error(f"Chunk content: {chunk}")
+                    logger.error(f"Formatted prompt: {prompt}")
+                    raise
+            
+            # Combine chunk responses with validation
+            logger.debug("Combining chunk responses")
+            combined_response = self._combine_responses(chunk_responses)
+            logger.debug(f"Combined response: {combined_response}")
+            
+            # Validate final response
+            if not isinstance(combined_response, (dict, str)):
+                raise ValueError(f"Invalid combined response type: {type(combined_response)}")
             
             # Handle raw string response
-            if isinstance(raw_response, str):
+            if isinstance(combined_response, str):
                 # Convert to structured response
                 structured_response = {
-                    "response": raw_response,
-                    "dialogue": raw_response,
+                    "response": combined_response,
+                    "dialogue": combined_response,
                     "concepts": [{
                         "name": f"{self.agent_type.title()} Analysis",
                         "type": self.agent_type,
-                        "description": raw_response,
+                        "description": combined_response,
                         "related": [],
                         "validation": {
                             "confidence": 0.8,
@@ -108,7 +219,7 @@ class BaseAgent:
                             "needs_verification": []
                         }
                     }],
-                    "key_points": [f"{self.agent_type} perspective: {raw_response}"],
+                    "key_points": [f"{self.agent_type} perspective: {combined_response}"],
                     "implications": ["Analysis in progress"],
                     "uncertainties": [],
                     "reasoning": [f"{self.agent_type} analysis initiated"],
@@ -118,9 +229,9 @@ class BaseAgent:
                         "timestamp": datetime.now().isoformat()
                     }
                 }
-                raw_response = AgentResponse(**structured_response)
+                combined_response = AgentResponse(**structured_response)
             
-            response = raw_response
+            response = combined_response
             
             # Initialize response metadata
             if not response.metadata:

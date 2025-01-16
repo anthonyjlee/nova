@@ -58,22 +58,14 @@ class LMStudioLLM:
         template: str = "parsing_analysis",
         max_tokens: int = 1000
     ) -> Union[AnalysisResponse, AnalyticsResponse, LLMErrorResponse]:
-        """Analyze content using LM Studio and outlines."""
+        """Analyze content using LM Studio."""
         try:
             from openai import OpenAI
-            import outlines
-            from pydantic import BaseModel, Field
-            from typing import List
             
             # Extract text from content
             text = content.get("text", "")
             if isinstance(text, dict):
                 text = str(text)
-            
-            from .models import LLMAnalyticsResult, LLMAnalysisResult
-            
-            # Select response model based on template
-            response_model = LLMAnalyticsResult if template == "analytics_processing" else LLMAnalysisResult
             
             # Create OpenAI client for LMStudio
             client = OpenAI(
@@ -81,22 +73,44 @@ class LMStudioLLM:
                 api_key="lm-studio"  # LMStudio accepts any non-empty string
             )
             
-            # Create generator with response model
-            generator = outlines.generate.json(client, response_model)
-            
             # Prepare prompt based on template
             prompt = self._prepare_prompt({"text": text, "metadata": content.get("metadata", {})}, template)
             
-            # Generate structured response
-            result = generator(prompt)
+            # Get completion from LM Studio
+            response = client.chat.completions.create(
+                model=self.chat_model,
+                messages=[
+                    {"role": "system", "content": "You are a helpful AI assistant that provides structured analysis."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=max_tokens,
+                temperature=0.7
+            )
+            
+            # Parse response
+            try:
+                result = json.loads(response.choices[0].message.content)
+            except json.JSONDecodeError:
+                # If response is not valid JSON, return error
+                return {
+                    "response": "Error: Invalid JSON response",
+                    "concepts": [{
+                        "name": "Error",
+                        "type": "error",
+                        "description": "Failed to parse JSON response",
+                        "confidence": 0.0
+                    }],
+                    "key_points": ["Error parsing response"],
+                    "implications": ["Analysis failed"],
+                    "uncertainties": ["Response format"],
+                    "reasoning": ["Invalid JSON"]
+                }
             
             # Add metadata if provided
             if content.get("metadata"):
-                result_dict = result.model_dump()
-                result_dict["metadata"] = content["metadata"]
-                return result_dict
+                result["metadata"] = content["metadata"]
                 
-            return result.model_dump()
+            return result
             
         except Exception as e:
             # Return error response
@@ -120,13 +134,15 @@ class LMStudioLLM:
             return f"""Analyze the following content and generate analytics insights. Return the result as a JSON object with the following structure:
 {{
     "response": "Your analysis here",
-    "confidence": confidence_score
+    "confidence": 0.95
 }}
 
 Content to analyze:
 {content.get("text", str(content))}
 
 Domain: {content["metadata"].get("domain", "general")}
+
+Important: Your response must be a complete, well-formed JSON object following exactly this structure. The confidence value should be a number between 0 and 1.
 """
         elif template == "parsing_analysis":
             return f"""Analyze the following text and extract structured information. Return the result as a JSON object with the following structure:

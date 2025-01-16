@@ -3,24 +3,27 @@
 import logging
 from typing import Dict, Any, Optional, List
 from datetime import datetime
+from pydantic import BaseModel
+
+from nia.core.feature_flags import FeatureFlags
+from .validation import ValidationPattern, ValidationResult, ValidationTracker
 
 logger = logging.getLogger(__name__)
 
-class ResponseResult:
+class ResponseValidationPattern(ValidationPattern):
+    """Response-specific validation pattern."""
+    response_type: str
+    component_type: Optional[str] = None
+    structure_type: Optional[str] = None
+
+class ResponseResult(BaseModel):
     """Container for response processing results."""
-    
-    def __init__(
-        self,
-        components: List[Dict],
-        confidence: float,
-        metadata: Optional[Dict] = None,
-        structure: Optional[Dict] = None
-    ):
-        self.components = components
-        self.confidence = confidence
-        self.metadata = metadata or {}
-        self.structure = structure or {}
-        self.timestamp = datetime.now().isoformat()
+    components: List[Dict]
+    confidence: float
+    metadata: Dict[str, Any] = {}
+    structure: Dict[str, Any] = {}
+    validation: Optional[ValidationResult] = None
+    timestamp: str = datetime.now().isoformat()
 
 class ResponseAgent:
     """Core response processing functionality for Nova's ecosystem."""
@@ -36,22 +39,30 @@ class ResponseAgent:
         self.store = store
         self.vector_store = vector_store
         self.domain = domain or "professional"  # Default to professional domain
+        self.validation_tracker = ValidationTracker()
         
     async def analyze_response(
         self,
         content: Dict[str, Any],
-        metadata: Optional[Dict] = None
+        metadata: Optional[Dict] = None,
+        debug_flags: Optional[FeatureFlags] = None
     ) -> ResponseResult:
-        """Analyze response with domain awareness."""
+        """Analyze response with domain and validation awareness."""
         try:
             # Add domain to metadata
             metadata = metadata or {}
             metadata["domain"] = self.domain
             
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                logger.debug(f"Analyzing response - content: {content}")
+                
             # Get similar responses if vector store available
             similar_responses = []
             if self.vector_store:
-                similar_responses = await self._get_similar_responses(content)
+                similar_responses = await self._get_similar_responses(
+                    content,
+                    debug_flags
+                )
             
             # Analyze with LLM if available
             if self.llm:
@@ -65,38 +76,126 @@ class ResponseAgent:
                     max_tokens=1000
                 )
             else:
-                analysis = self._basic_analysis(content, similar_responses)
+                analysis = await self._basic_analysis(
+                    content,
+                    similar_responses,
+                    debug_flags
+                )
                 
-            # Extract and validate components
-            components = self._extract_components(analysis)
-            structure = self._extract_structure(analysis)
+            # Extract and validate components with validation tracking
+            components = await self._extract_components(analysis, debug_flags)
+            structure = await self._extract_structure(analysis, debug_flags)
             
-            # Calculate confidence
-            confidence = self._calculate_confidence(components, structure)
+            # Track validation patterns
+            validation_issues = []
             
-            return ResponseResult(
+            # Validate components
+            if not components:
+                issue = {
+                    "type": "missing_components",
+                    "severity": "high",
+                    "description": "Response has no valid components"
+                }
+                validation_issues.append(issue)
+                
+                if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                    logger.warning(f"Missing components detected: {issue}")
+                    
+            # Validate structure
+            required_structure = ["sequence", "dependencies"]
+            for req in required_structure:
+                if req not in structure:
+                    issue = {
+                        "type": "missing_structure",
+                        "severity": "medium",
+                        "description": f"Response missing required structure: {req}"
+                    }
+                    validation_issues.append(issue)
+                    
+                    if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                        logger.warning(f"Missing structure detected: {issue}")
+                        
+            # Create validation result
+            validation_result = ValidationResult(
+                is_valid=len(validation_issues) == 0,
+                issues=validation_issues,
+                metadata={
+                    "response_type": content.get("type", "unknown"),
+                    "domain": self.domain,
+                    "timestamp": datetime.now().isoformat()
+                }
+            )
+            
+            # Calculate confidence with validation awareness
+            confidence = self._calculate_confidence(
+                components,
+                structure,
+                validation_result
+            )
+            
+            # Create response result
+            result = ResponseResult(
                 components=components,
                 confidence=confidence,
                 metadata={
                     "domain": self.domain,
                     "content_type": content.get("type", "text"),
-                    "source": content.get("source", "unknown")
+                    "source": content.get("source", "unknown"),
+                    "validation_timestamp": datetime.now().isoformat()
                 },
-                structure=structure
+                structure=structure,
+                validation=validation_result
             )
             
+            if debug_flags:
+                if await debug_flags.is_debug_enabled('log_validation'):
+                    logger.debug(f"Response analysis result: {result.dict()}")
+                    
+                    # Log critical patterns
+                    critical_patterns = self.validation_tracker.get_critical_patterns()
+                    if critical_patterns:
+                        logger.warning(f"Critical response patterns detected: {critical_patterns}")
+                        
+                if not result.validation.is_valid and await debug_flags.is_debug_enabled('strict_mode'):
+                    raise ValueError(f"Response validation failed: {validation_issues}")
+                    
+            return result
+            
         except Exception as e:
-            logger.error(f"Response analysis error: {str(e)}")
+            error_msg = f"Response analysis error: {str(e)}"
+            logger.error(error_msg)
+            
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                logger.error(error_msg)
+                
             return ResponseResult(
                 components=[],
                 confidence=0.0,
-                metadata={"error": str(e)},
-                structure={"error": str(e)}
+                metadata={
+                    "error": str(e),
+                    "domain": self.domain
+                },
+                structure={},
+                validation=ValidationResult(
+                    is_valid=False,
+                    issues=[{
+                        "type": "error",
+                        "severity": "high",
+                        "description": str(e)
+                    }]
+                )
             )
             
-    async def _get_similar_responses(self, content: Dict[str, Any]) -> List[Dict]:
-        """Get similar responses from vector store."""
+    async def _get_similar_responses(
+        self,
+        content: Dict[str, Any],
+        debug_flags: Optional[FeatureFlags] = None
+    ) -> List[Dict]:
+        """Get similar responses from vector store with validation."""
         try:
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                logger.debug(f"Finding similar responses for content: {content}")
+                
             if "content" in content:
                 results = await self.vector_store.search(
                     content["content"],
@@ -106,19 +205,31 @@ class ResponseAgent:
                         "type": "response"
                     }
                 )
+                
+                if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                    logger.debug(f"Found {len(results)} similar responses")
+                    
                 return results
+                
         except Exception as e:
-            logger.error(f"Error getting similar responses: {str(e)}")
+            error_msg = f"Error getting similar responses: {str(e)}"
+            logger.error(error_msg)
+            
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                logger.error(error_msg)
+                
         return []
             
-    def _basic_analysis(
+    async def _basic_analysis(
         self,
         content: Dict[str, Any],
-        similar_responses: List[Dict]
+        similar_responses: List[Dict],
+        debug_flags: Optional[FeatureFlags] = None
     ) -> Dict:
-        """Basic response analysis without LLM."""
+        """Basic response analysis with validation tracking."""
         components = []
         structure = {}
+        validation_issues = []
         
         # Basic component extraction from text
         text = str(content.get("content", "")).lower()
@@ -135,7 +246,7 @@ class ResponseAgent:
             "example": 0.6
         }
         
-        # Check for component indicators
+        # Check for component indicators with validation
         for indicator, base_confidence in component_indicators.items():
             if indicator in text:
                 # Extract the component statement
@@ -152,109 +263,255 @@ class ResponseAgent:
                         "confidence": base_confidence,
                         "source": "text_analysis"
                     })
+                else:
+                    issue = {
+                        "type": "empty_component",
+                        "severity": "medium",
+                        "description": f"Empty {indicator} component detected"
+                    }
+                    validation_issues.append(issue)
                     
-        # Add similar responses as structure
+                    if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                        logger.warning(f"Empty component detected: {issue}")
+                    
+        # Add similar responses as structure with validation
         if similar_responses:
             structure["similar_responses"] = [
                 {
-                    "content": m.get("content", {}).get("content", ""),
-                    "similarity": m.get("similarity", 0.0),
-                    "timestamp": m.get("timestamp", "")
+                    "content": s.get("content", {}).get("content", ""),
+                    "similarity": s.get("similarity", 0.0),
+                    "timestamp": s.get("timestamp", "")
                 }
-                for m in similar_responses
+                for s in similar_responses
             ]
+        else:
+            issue = {
+                "type": "no_similar_responses",
+                "severity": "low",
+                "description": "No similar responses found"
+            }
+            validation_issues.append(issue)
+            
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                logger.info(f"No similar responses: {issue}")
                 
         return {
             "components": components,
-            "structure": structure
+            "structure": structure,
+            "validation_issues": validation_issues
         }
         
-    def _extract_components(self, analysis: Dict) -> List[Dict]:
-        """Extract and validate components."""
-        components = analysis.get("components", [])
-        valid_components = []
-        
-        for component in components:
-            if isinstance(component, dict) and "statement" in component:
-                valid_component = {
-                    "statement": str(component["statement"]),
-                    "type": str(component.get("type", "component")),
-                    "confidence": float(component.get("confidence", 0.5))
-                }
-                
-                # Add optional fields
-                if "description" in component:
-                    valid_component["description"] = str(component["description"])
-                if "source" in component:
-                    valid_component["source"] = str(component["source"])
-                if "domain_relevance" in component:
-                    valid_component["domain_relevance"] = float(component["domain_relevance"])
-                if "intent" in component:
-                    valid_component["intent"] = str(component["intent"])
-                if "context" in component:
-                    valid_component["context"] = str(component["context"])
-                if "role" in component:
-                    valid_component["role"] = str(component["role"])
+    async def _extract_components(
+        self,
+        analysis: Dict,
+        debug_flags: Optional[FeatureFlags] = None
+    ) -> List[Dict]:
+        """Extract and validate components with debug logging."""
+        try:
+            components = analysis.get("components", [])
+            valid_components = []
+            validation_issues = []
+            
+            for component in components:
+                if isinstance(component, dict) and "statement" in component:
+                    valid_component = {
+                        "statement": str(component["statement"]),
+                        "type": str(component.get("type", "component")),
+                        "confidence": float(component.get("confidence", 0.5))
+                    }
                     
-                valid_components.append(valid_component)
-                
-        return valid_components
-        
-    def _extract_structure(self, analysis: Dict) -> Dict:
-        """Extract and validate structure."""
-        structure = analysis.get("structure", {})
-        valid_structure = {}
-        
-        if isinstance(structure, dict):
-            # Extract relevant structure fields
-            if "similar_responses" in structure:
-                valid_structure["similar_responses"] = [
-                    {
-                        "content": str(r.get("content", "")),
-                        "similarity": float(r.get("similarity", 0.0)),
-                        "timestamp": str(r.get("timestamp", ""))
+                    # Add optional fields
+                    if "description" in component:
+                        valid_component["description"] = str(component["description"])
+                    if "source" in component:
+                        valid_component["source"] = str(component["source"])
+                    if "domain_relevance" in component:
+                        valid_component["domain_relevance"] = float(component["domain_relevance"])
+                    if "intent" in component:
+                        valid_component["intent"] = str(component["intent"])
+                    if "context" in component:
+                        valid_component["context"] = str(component["context"])
+                    if "role" in component:
+                        valid_component["role"] = str(component["role"])
+                        
+                    valid_components.append(valid_component)
+                else:
+                    issue = {
+                        "type": "invalid_component",
+                        "severity": "medium",
+                        "description": "Component missing required fields"
                     }
-                    for r in structure["similar_responses"]
-                    if isinstance(r, dict)
-                ]
-                
-            if "sequence" in structure:
-                valid_structure["sequence"] = [
-                    str(s) for s in structure["sequence"]
-                    if isinstance(s, str)
-                ]
-                
-            if "dependencies" in structure:
-                valid_structure["dependencies"] = [
-                    str(d) for d in structure["dependencies"]
-                    if isinstance(d, str)
-                ]
-                
-            if "domain_factors" in structure:
-                valid_structure["domain_factors"] = {
-                    str(k): str(v)
-                    for k, v in structure["domain_factors"].items()
-                    if isinstance(k, str) and isinstance(v, (str, int, float, bool))
-                }
-                
-            if "quality_factors" in structure:
-                valid_structure["quality_factors"] = [
-                    {
-                        "factor": str(f.get("factor", "")),
-                        "weight": float(f.get("weight", 0.5))
+                    validation_issues.append(issue)
+                    
+                    if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                        logger.warning(f"Invalid component detected: {issue}")
+                        
+            # Track validation patterns
+            for issue in validation_issues:
+                pattern = ResponseValidationPattern(
+                    type=issue["type"],
+                    description=issue["description"],
+                    severity=issue["severity"],
+                    response_type="component",
+                    component_type=component.get("type"),
+                    first_seen=datetime.now().isoformat(),
+                    last_seen=datetime.now().isoformat(),
+                    metadata={
+                        "domain": self.domain
                     }
-                    for f in structure.get("quality_factors", [])
-                    if isinstance(f, dict)
-                ]
+                )
+                self.validation_tracker.add_issue(pattern.dict())
+                    
+            return valid_components
+            
+        except Exception as e:
+            error_msg = f"Error extracting components: {str(e)}"
+            logger.error(error_msg)
+            
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                logger.error(error_msg)
                 
-        return valid_structure
+            return []
+        
+    async def _extract_structure(
+        self,
+        analysis: Dict,
+        debug_flags: Optional[FeatureFlags] = None
+    ) -> Dict:
+        """Extract and validate structure with debug logging."""
+        try:
+            structure = analysis.get("structure", {})
+            valid_structure = {}
+            validation_issues = []
+            
+            if isinstance(structure, dict):
+                # Extract similar responses with validation
+                if "similar_responses" in structure:
+                    valid_responses = []
+                    for response in structure["similar_responses"]:
+                        if isinstance(response, dict):
+                            valid_response = {
+                                "content": str(response.get("content", "")),
+                                "similarity": float(response.get("similarity", 0.0)),
+                                "timestamp": str(response.get("timestamp", ""))
+                            }
+                            valid_responses.append(valid_response)
+                        else:
+                            issue = {
+                                "type": "invalid_similar_response",
+                                "severity": "low",
+                                "description": "Similar response has invalid format"
+                            }
+                            validation_issues.append(issue)
+                            
+                    valid_structure["similar_responses"] = valid_responses
+                    
+                # Extract sequence with validation
+                if "sequence" in structure:
+                    valid_sequence = []
+                    for step in structure["sequence"]:
+                        if isinstance(step, str):
+                            valid_sequence.append(step)
+                        else:
+                            issue = {
+                                "type": "invalid_sequence_step",
+                                "severity": "medium",
+                                "description": "Sequence step must be string"
+                            }
+                            validation_issues.append(issue)
+                            
+                    valid_structure["sequence"] = valid_sequence
+                    
+                # Extract dependencies with validation
+                if "dependencies" in structure:
+                    valid_dependencies = []
+                    for dep in structure["dependencies"]:
+                        if isinstance(dep, str):
+                            valid_dependencies.append(dep)
+                        else:
+                            issue = {
+                                "type": "invalid_dependency",
+                                "severity": "medium",
+                                "description": "Dependency must be string"
+                            }
+                            validation_issues.append(issue)
+                            
+                    valid_structure["dependencies"] = valid_dependencies
+                    
+                # Extract domain factors with validation
+                if "domain_factors" in structure:
+                    valid_factors = {}
+                    for key, value in structure["domain_factors"].items():
+                        if isinstance(key, str) and isinstance(value, (str, int, float, bool)):
+                            valid_factors[key] = value
+                        else:
+                            issue = {
+                                "type": "invalid_domain_factor",
+                                "severity": "low",
+                                "description": "Domain factor has invalid format"
+                            }
+                            validation_issues.append(issue)
+                            
+                    valid_structure["domain_factors"] = valid_factors
+                    
+                # Extract quality factors with validation
+                if "quality_factors" in structure:
+                    valid_quality = []
+                    for factor in structure["quality_factors"]:
+                        if isinstance(factor, dict):
+                            valid_factor = {
+                                "factor": str(factor.get("factor", "")),
+                                "weight": float(factor.get("weight", 0.5))
+                            }
+                            valid_quality.append(valid_factor)
+                        else:
+                            issue = {
+                                "type": "invalid_quality_factor",
+                                "severity": "low",
+                                "description": "Quality factor has invalid format"
+                            }
+                            validation_issues.append(issue)
+                            
+                    valid_structure["quality_factors"] = valid_quality
+                    
+            # Track validation patterns
+            for issue in validation_issues:
+                pattern = ResponseValidationPattern(
+                    type=issue["type"],
+                    description=issue["description"],
+                    severity=issue["severity"],
+                    response_type="structure",
+                    structure_type=list(structure.keys())[0] if structure else None,
+                    first_seen=datetime.now().isoformat(),
+                    last_seen=datetime.now().isoformat(),
+                    metadata={
+                        "domain": self.domain
+                    }
+                )
+                self.validation_tracker.add_issue(pattern.dict())
+                
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                if validation_issues:
+                    logger.warning(f"Structure validation issues: {validation_issues}")
+                    
+            return valid_structure
+            
+        except Exception as e:
+            error_msg = f"Error extracting structure: {str(e)}"
+            logger.error(error_msg)
+            
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                logger.error(error_msg)
+                
+            return {}
         
     def _calculate_confidence(
         self,
         components: List[Dict],
-        structure: Dict
+        structure: Dict,
+        validation_result: ValidationResult
     ) -> float:
-        """Calculate overall response analysis confidence."""
+        """Calculate overall response analysis confidence with validation."""
         if not components:
             return 0.0
             
@@ -302,7 +559,23 @@ class ResponseAgent:
         if structure_weight > 0:
             structure_conf = structure_conf / structure_weight
             
-            # Weighted combination of component and structure confidence
-            return (0.6 * component_conf) + (0.4 * structure_conf)
+            # Validation impact
+            validation_impact = 0.0
+            if validation_result:
+                severity_weights = {
+                    "low": 0.1,
+                    "medium": 0.3,
+                    "high": 0.5
+                }
+                
+                total_impact = sum(
+                    severity_weights.get(i.get("severity", "medium"), 0.3)
+                    for i in validation_result.issues
+                )
+                validation_impact = total_impact / len(validation_result.issues) if validation_result.issues else 0.0
+                
+            # Weighted combination with validation impact
+            base_conf = (0.6 * component_conf) + (0.4 * structure_conf)
+            return max(0.0, base_conf - validation_impact)
         else:
             return component_conf

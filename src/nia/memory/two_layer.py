@@ -65,14 +65,35 @@ class EpisodicLayer:
             # Generate ID if not present
             memory_id = getattr(memory, "id", str(uuid.uuid4()))
             
-            # Create minimal metadata
-            metadata = {
-                "id": memory_id,
-                "type": memory.type.value if isinstance(memory.type, MemoryType) else memory.type,
-                "timestamp": getattr(memory, "timestamp", datetime.now().isoformat())
-            }
+            # Use original metadata
+            metadata = getattr(memory, "metadata", {}).copy()
             
-            # Store directly in vector store
+            # Keep original metadata and add required fields
+            metadata.update({
+                "id": memory_id,
+                "timestamp": getattr(memory, "timestamp", datetime.now().isoformat()),
+                "thread_id": metadata.get("thread_id"),
+                "description": metadata.get("description", ""),
+                "system": metadata.get("system", False),
+                "pinned": metadata.get("pinned", False),
+                "consolidated": metadata.get("consolidated", False)
+            })
+            
+            # Keep original type from metadata
+            if "type" in metadata:
+                # Preserve original type
+                pass
+            elif isinstance(memory.type, str):
+                metadata["type"] = memory.type
+            elif isinstance(memory.type, MemoryType):
+                metadata["type"] = memory.type.value
+            
+            # Remove None values
+            metadata = {k: v for k, v in metadata.items() if v is not None}
+            
+            logger.debug(f"Storing memory with metadata: {metadata}")
+            
+            logger.debug(f"Storing with metadata type: {metadata.get('type')}")
             return await self.store.store_vector(
                 content=memory.content,
                 metadata=metadata,
@@ -226,61 +247,73 @@ class TwoLayerMemorySystem:
                 logger.debug(f"Memory {memory_id} already stored")
                 return True
             
-            # Extract essential metadata
-            essential_metadata = {
-                "type": memory_dict["type"],
+            # Preserve original metadata
+            metadata = memory_dict.get("metadata", {}).copy()
+            
+            # Keep original metadata and add required fields
+            metadata.update({
                 "id": memory_id,
-                "timestamp": memory_dict.get("timestamp", datetime.now().isoformat())
-            }
+                "timestamp": memory_dict.get("timestamp", datetime.now().isoformat()),
+                "type": memory_dict.get("type"),  # Preserve type
+                "thread_id": metadata.get("thread_id"),
+                "description": metadata.get("description", ""),
+                "system": metadata.get("system", False),
+                "pinned": metadata.get("pinned", False),
+                "consolidated": metadata.get("consolidated", False)
+            })
             
-            # Add only necessary additional metadata
-            if memory_dict.get("metadata"):
-                essential_metadata.update({
-                    k: v for k, v in memory_dict["metadata"].items()
-                    if k in ["domain", "thread_id", "task_id", "message_id"]
-                })
+            # Remove None values
+            metadata = {k: v for k, v in metadata.items() if v is not None}
             
-            # Determine layer
-            layer = essential_metadata.get("type")
-            if isinstance(layer, MemoryType):
-                layer = layer.value
-                
+            logger.debug(f"Storing memory with metadata: {metadata}")
+            
             # Use direct storage pattern
             if hasattr(memory, 'knowledge'):
                 content = {
                     "text": memory_dict["content"],
                     "knowledge": memory.knowledge
                 }
-                metadata = {
-                    **essential_metadata,
+                # Add knowledge metadata
+                metadata.update({
                     "concepts": memory.knowledge.get("concepts", []),
                     "relationships": memory.knowledge.get("relationships", []),
                     "importance": getattr(memory, "importance", 0.8),
                     "context": getattr(memory, "context", {}),
                     "consolidated": False
-                }
+                })
             else:
                 content = memory_dict["content"]
-                metadata = essential_metadata
+            
+            logger.debug(f"Final metadata for storage: {metadata}")
 
             # Store directly in episodic layer
-            success = await self.episodic.store_memory(
-                EpisodicMemory(
-                    content=content,
-                    metadata=metadata,
-                    type=memory_dict["type"]
-                )
+            memory_type = metadata.get("type", memory_dict["type"])
+            logger.debug(f"Creating EpisodicMemory with type: {memory_type}")
+            
+            # Create EpisodicMemory but preserve original type
+            episodic_memory = EpisodicMemory(
+                content=content,
+                metadata=metadata,
+                type=memory_type  # Use type from metadata
             )
+            # Ensure type is preserved in both memory and metadata
+            episodic_memory.type = memory_type
+            episodic_memory.metadata["type"] = memory_type
+            
+            success = await self.episodic.store_memory(episodic_memory)
             
             if not success:
                 return False
                 
-            # Add to episodic pool
+            # Add to episodic pool with payload structure
             self._memory_pools["episodic"][memory_id] = {
                 "content": memory_dict["content"],
-                "metadata": essential_metadata,
-                "timestamp": essential_metadata["timestamp"]
+                "metadata": metadata,
+                "timestamp": metadata["timestamp"],
+                "layer": "episodic"
             }
+            
+            logger.debug(f"Added to episodic pool with metadata: {metadata}")
             
             return True
         except Exception as e:
@@ -297,12 +330,20 @@ class TwoLayerMemorySystem:
             memory_data = None
             location = None
             
-            # Check memory pools first
+            # Check memory pools first with payload structure
             if memory_id in self._memory_pools["semantic"]:
-                memory_data = self._memory_pools["semantic"][memory_id]
+                pool_data = self._memory_pools["semantic"][memory_id]
+                memory_data = {
+                    "content": pool_data["content"],
+                    "metadata": pool_data["metadata"]
+                }
                 location = "semantic"
             elif memory_id in self._memory_pools["episodic"]:
-                memory_data = self._memory_pools["episodic"][memory_id]
+                pool_data = self._memory_pools["episodic"][memory_id]
+                memory_data = {
+                    "content": pool_data["content"],
+                    "metadata": pool_data["metadata"]
+                }
                 location = "episodic"
             
             # If not in pools, check semantic layer
@@ -334,25 +375,55 @@ class TwoLayerMemorySystem:
                 if memories:
                     memory_data = memories[0]
                     location = "episodic"
-                    # Add to episodic pool
-                    self._memory_pools["episodic"][memory_id] = memory_data
+                    # Extract metadata from nested structure
+                    if isinstance(memory_data, dict):
+                        content = memory_data.get("content")
+                        metadata = memory_data.get("metadata", {})
+                        # Add to episodic pool with proper structure
+                        self._memory_pools["episodic"][memory_id] = {
+                            "content": content,
+                            "metadata": metadata,
+                            "timestamp": memory_data.get("timestamp")
+                        }
             
             if not memory_data:
                 return None
                 
-            # Create memory object with minimal data
+            # Extract metadata and content from payload
+            if isinstance(memory_data, dict):
+                content = memory_data.get("content", memory_data)
+                # Get metadata from nested structure
+                metadata = memory_data.get("metadata", {})
+                if not metadata and "payload" in memory_data:
+                    # Handle vector store payload structure
+                    payload = memory_data["payload"]
+                    metadata = payload.get("metadata", {})
+                    content = payload.get("content", content)
+            else:
+                content = memory_data
+                metadata = {}
+            
+            # Get type from metadata and preserve original type
+            memory_type = metadata.get("type")
+            if not memory_type:
+                memory_type = "thread"  # Default to thread type
+            
+            logger.debug(f"Using original type: {memory_type}")
+            logger.debug(f"Original metadata: {metadata}")
+            logger.debug(f"Content: {content}")
+            
+            # Create memory object
             memory = Memory(
                 id=memory_id,
-                content=memory_data["content"],
-                type=memory_data.get("type", "thread"),
-                importance=0.8,  # Default importance
-                timestamp=datetime.fromisoformat(memory_data.get("timestamp", datetime.now().isoformat())),
-                context={},  # Empty context by default
-                metadata={
-                    "type": memory_data.get("type", "thread"),
-                    **(memory_data.get("metadata", {}))
-                }
+                content=content,
+                type=memory_type,
+                importance=metadata.get("importance", 0.8),
+                timestamp=metadata.get("timestamp", datetime.now().isoformat()),
+                context=metadata.get("context", {}),
+                metadata=metadata
             )
+            
+            logger.debug(f"Created memory with metadata: {memory.metadata}")
             
             # Sync to other layer if needed
             if sync_layers and self.semantic and location in ["semantic", "episodic"]:
@@ -393,14 +464,26 @@ class TwoLayerMemorySystem:
             for m in memories:
                 # All results from vector store should be dicts
                 memory_dict = m if isinstance(m, dict) else m.dict()
+                # Get metadata and map type if needed
+                metadata = memory_dict.get("metadata", {})
+                memory_type = metadata.get("type")
+                if not memory_type:
+                    memory_type = "thread"  # Default to thread type
+                elif memory_type == "MemoryType.EPISODIC":
+                    # Map legacy type back to string
+                    memory_type = "thread"
+                
+                # Update metadata with mapped type
+                metadata["type"] = memory_type
+                
                 memory = Memory(
                     id=memory_dict.get("id", str(uuid.uuid4())),
                     content=memory_dict.get("content", ""),
-                    type=memory_dict.get("type", MemoryType.EPISODIC),
+                    type=memory_type,
                     importance=memory_dict.get("importance", 0.8),
                     timestamp=datetime.fromisoformat(memory_dict.get("timestamp", datetime.now().isoformat())),
                     context=memory_dict.get("context", {}),
-                    metadata=memory_dict.get("metadata", {})
+                    metadata=metadata
                 )
                 result.append(memory)
                 

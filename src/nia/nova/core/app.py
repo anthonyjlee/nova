@@ -78,6 +78,7 @@ from .endpoints import (
     orchestration_router,
     chat_router
 )
+from .debug_websocket import debug_websocket_endpoint
 from .agent_endpoints import agent_router
 from .graph_endpoints import graph_router
 from .knowledge_endpoints import kg_router
@@ -86,7 +87,9 @@ from .tasks_endpoints import tasks_router
 from .websocket_endpoints import ws_router
 from .user_endpoints import user_router
 from .channel_endpoints import channel_router
+from .debug_endpoints import router as debug_router
 from .dependencies import get_memory_system, get_thread_manager
+from nia.core.feature_flags import FeatureFlags
 
 # Create FastAPI app
 app = FastAPI(
@@ -98,7 +101,7 @@ app = FastAPI(
 # Configure CORS - must be first middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
     allow_headers=["*", "X-API-Key", "Content-Type", "Authorization"],
@@ -119,6 +122,10 @@ app.include_router(user_router)           # User management
 app.include_router(ws_router)             # Real-time updates
 app.include_router(tasks_router)          # Task management
 app.include_router(channel_router)        # Channel management
+app.include_router(debug_router)          # Debug endpoints
+
+# Add WebSocket endpoints
+app.add_api_websocket_route("/ws/debug", debug_websocket_endpoint)
 
 # Add root routes directly to app
 @app.options("/api/status")
@@ -311,6 +318,16 @@ async def startup_event():
     """Handle application startup."""
     try:
         logger.info("Application starting up...")
+        
+        # Initialize Redis for feature flags
+        feature_flags = FeatureFlags()
+        app.state.feature_flags = feature_flags
+        
+        # Enable debug flags for development
+        await feature_flags.enable_debug('log_validation')
+        await feature_flags.enable_debug('log_websocket')
+        await feature_flags.enable_debug('log_storage')
+        logger.info("Feature flags initialized")
         
         # Initialize services with non-blocking retries
         logger.warning("Initializing services...")

@@ -6,6 +6,7 @@ from datetime import datetime
 
 from ...nova.core.orchestration import OrchestrationAgent as NovaOrchestrationAgent
 from ...nova.core.analytics import AnalyticsAgent, AnalyticsResult
+from ...nova.core.validation import ValidationResult
 from ..tinytroupe_agent import TinyTroupeAgent
 from ...world.environment import NIAWorld
 from ...memory.two_layer import TwoLayerMemorySystem
@@ -73,6 +74,7 @@ class OrchestrationAgent(NovaOrchestrationAgent, TinyTroupeAgent, TaskManagement
         self.execution_monitors = {}  # task_id -> monitor_state
         self.resource_allocations = {}  # resource_id -> allocation_state
         self.dependency_graph = {}  # task_id -> dependencies
+        self.swarm_validations = {}  # swarm_id -> validation_state
         
     def _initialize_orchestration_attributes(self):
         """Initialize orchestration-specific attributes."""
@@ -88,7 +90,9 @@ class OrchestrationAgent(NovaOrchestrationAgent, TinyTroupeAgent, TaskManagement
                 "Monitor execution progress",
                 "Handle dependencies efficiently",
                 "Adapt to changing conditions",
-                "Ensure system resilience"
+                "Ensure system resilience",
+                "Validate swarm configurations",
+                "Track validation patterns"
             ],
             "emotions": {
                 "baseline": "analytical",
@@ -97,7 +101,8 @@ class OrchestrationAgent(NovaOrchestrationAgent, TinyTroupeAgent, TaskManagement
                 "towards_flows": "attentive",
                 "towards_resources": "efficient",
                 "towards_execution": "vigilant",
-                "towards_adaptation": "responsive"
+                "towards_adaptation": "responsive",
+                "towards_validation": "precise"
             },
             "capabilities": [
                 "agent_orchestration",
@@ -109,677 +114,435 @@ class OrchestrationAgent(NovaOrchestrationAgent, TinyTroupeAgent, TaskManagement
                 "execution_monitoring",
                 "dependency_handling",
                 "adaptive_planning",
-                "resilience_management"
+                "resilience_management",
+                "swarm_validation",
+                "pattern_validation"
             ]
         }
         self.define(**attributes)
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
-        """Process content through both systems with enhanced flow awareness."""
-        # Add domain to metadata
-        metadata = metadata or {}
-        metadata["domain"] = self.domain
-        
-        # Update flow tracking with analytics
-        if flow_id := content.get("flow_id"):
-            await self._update_flow_state(flow_id, content)
-            
-            # Get flow analytics
-            analytics_result = await self._get_flow_analytics(flow_id)
-            
-            # Update flow state based on analytics
-            if analytics_result and analytics_result.is_valid:
-                await self._apply_analytics_insights(flow_id, analytics_result)
-            
-        # Process through memory system
-        response = await super().process(content, metadata)
-        
-        # Handle memory operations
-        if content.get("type") == "memory_store":
-            memory_id = str(datetime.now().timestamp())
-            memory_content = content.get("content", {})
-            
-            # Create response with memory content and metadata
-            return AgentResponse(
-                response="Memory stored successfully",
-                concepts=[{
-                    "type": "memory",
-                    "content": memory_content,
-                    "metadata": metadata
-                }],
-                confidence=1.0,
-                orchestration={
-                    "status": "success",
-                    "memory_id": memory_id,
-                    "memory": memory_content,
-                    "matches": [],
-                    "timestamp": datetime.now().isoformat()
-                },
-                memory_id=memory_id,
-                memory=memory_content
-            )
-        elif content.get("type") == "memory_search":
-            # Handle memory search
-            query = content.get("content", {})
-            return AgentResponse(
-                response="Memory search completed",
-                concepts=[],
-                confidence=1.0,
-                orchestration={
-                    "status": "success",
-                    "matches": [
-                        {
-                            "content": query,
-                            "score": 0.95,
-                            "metadata": metadata
-                        }
-                    ],
-                    "timestamp": datetime.now().isoformat()
-                }
-            )
-        
-        # Update TinyTroupe state based on orchestration results
-        if response and response.concepts:
-            for concept in response.concepts:
-                # Update emotions based on orchestration results
-                if concept.get("type") == "orchestration_result":
-                    self.emotions.update({
-                        "orchestration_state": concept.get("description", "neutral")
-                    })
-                    
-                # Update desires based on orchestration needs
-                if concept.get("type") == "orchestration_need":
-                    self.desires.append(f"Coordinate {concept['name']}")
-                    
-                # Update emotions based on domain relevance
-                if "domain_relevance" in concept:
-                    relevance = float(concept["domain_relevance"])
-                    if relevance > 0.8:
-                        self.emotions.update({
-                            "domain_state": "highly_relevant"
-                        })
-                    elif relevance < 0.3:
-                        self.emotions.update({
-                            "domain_state": "low_relevance"
-                        })
-                        
-                # Update flow state emotions
-                if concept.get("type") == "flow_state":
-                    self.emotions.update({
-                        "flow_state": concept.get("state", "neutral")
-                    })
-                    
-                # Update resource state emotions
-                if concept.get("type") == "resource_state":
-                    self.emotions.update({
-                        "resource_state": concept.get("state", "neutral")
-                    })
-                    
-                # Update execution state emotions
-                if concept.get("type") == "execution_state":
-                    self.emotions.update({
-                        "execution_state": concept.get("state", "neutral")
-                    })
-                    
-        # Convert AgentResponse to expected format
-        # Create response object
+        """Process content through both systems with enhanced flow and validation awareness."""
         try:
-            if isinstance(response, str):
-                # Try to parse JSON string
-                try:
-                    import json
-                    parsed = json.loads(response)
-                    response_str = parsed.get("response", response)
-                    response_concepts = parsed.get("concepts", [])
-                    response_memory_id = parsed.get("memory_id")
-                except json.JSONDecodeError:
-                    response_str = response
-                    response_concepts = []
-                    response_memory_id = None
-            else:
-                response_str = response.response if hasattr(response, 'response') else str(response)
-                response_concepts = response.concepts if hasattr(response, 'concepts') else []
-                response_memory_id = response.memory_id if hasattr(response, 'memory_id') else None
-
-            return AgentResponse(
-                response=response_str,
-                concepts=response_concepts,
-                confidence=1.0,
-                orchestration={
-                    "status": "success",
-                    "memory_id": response_memory_id,
-                    "memory": response_concepts,
+            # Get debug flags
+            debug_flags = metadata.get("debug_flags", {}) if metadata else {}
+            metadata = metadata or {}
+            metadata["domain"] = self.domain
+            
+            # Validate swarm configuration if present
+            if swarm_config := content.get("swarm_config"):
+                if debug_flags.get("log_validation"):
+                    await self.store_memory(
+                        content="Starting swarm configuration validation",
+                        importance=0.8,
+                        context={"type": "validation_log"}
+                    )
+                    
+                validation_result = await self._validate_swarm_config(
+                    swarm_config,
+                    debug_flags
+                )
+                
+                if not validation_result.is_valid:
+                    if debug_flags.get("strict_mode"):
+                        raise ValueError(f"Swarm validation failed: {validation_result.issues}")
+                    else:
+                        await self.store_memory(
+                            content=f"Swarm validation warning: {validation_result.issues}",
+                            importance=0.9,
+                            context={"type": "validation_warning"}
+                        )
+                        
+                metadata["validation_result"] = validation_result.dict() if hasattr(validation_result, "dict") else None
+            
+            # Update flow tracking with analytics and validation
+            if flow_id := content.get("flow_id"):
+                await self._update_flow_state(flow_id, content, debug_flags)
+                
+                # Get flow analytics with validation context
+                analytics_result = await self._get_flow_analytics(
+                    flow_id,
+                    metadata={"validation_result": metadata.get("validation_result")}
+                )
+                
+                # Update flow state based on analytics and validation
+                if analytics_result and analytics_result.is_valid:
+                    await self._apply_analytics_insights(
+                        flow_id,
+                        analytics_result,
+                        debug_flags
+                    )
+                    
+            # Process through memory system
+            response = await super().process(content, metadata)
+            
+            # Update validation patterns
+            if validation_result := metadata.get("validation_result"):
+                await self._update_validation_patterns(validation_result, debug_flags)
+                
+            return response
+            
+        except Exception as e:
+            error_msg = f"Error in orchestration processing: {str(e)}"
+            logger.error(error_msg)
+            
+            if debug_flags.get("log_validation"):
+                await self.store_memory(
+                    content=error_msg,
+                    importance=0.9,
+                    context={"type": "validation_error"}
+                )
+                
+            raise
+            
+    async def _validate_swarm_config(
+        self,
+        swarm_config: Dict[str, Any],
+        debug_flags: Dict[str, bool]
+    ) -> ValidationResult:
+        """Validate swarm configuration."""
+        try:
+            # Validate swarm structure
+            structure_issues = []
+            if not isinstance(swarm_config.get("agents"), list):
+                structure_issues.append({
+                    "type": "structure",
+                    "severity": "high",
+                    "description": "Swarm must have an agents list"
+                })
+                
+            if not isinstance(swarm_config.get("patterns"), dict):
+                structure_issues.append({
+                    "type": "structure",
+                    "severity": "high",
+                    "description": "Swarm must have patterns configuration"
+                })
+                
+            # Validate agent configurations
+            agent_issues = []
+            for agent in swarm_config.get("agents", []):
+                if not isinstance(agent.get("capabilities"), list):
+                    agent_issues.append({
+                        "type": "agent_config",
+                        "severity": "medium",
+                        "description": f"Agent {agent.get('name')} missing capabilities"
+                    })
+                    
+                if not agent.get("role"):
+                    agent_issues.append({
+                        "type": "agent_config",
+                        "severity": "medium",
+                        "description": f"Agent {agent.get('name')} missing role"
+                    })
+                    
+            # Validate pattern configurations
+            pattern_issues = []
+            for pattern_id, pattern in swarm_config.get("patterns", {}).items():
+                if not isinstance(pattern.get("conditions"), dict):
+                    pattern_issues.append({
+                        "type": "pattern_config",
+                        "severity": "medium",
+                        "description": f"Pattern {pattern_id} missing conditions"
+                    })
+                    
+                if not isinstance(pattern.get("actions"), list):
+                    pattern_issues.append({
+                        "type": "pattern_config",
+                        "severity": "medium",
+                        "description": f"Pattern {pattern_id} missing actions"
+                    })
+                    
+            # Combine all issues
+            all_issues = structure_issues + agent_issues + pattern_issues
+            
+            # Store validation result
+            swarm_id = swarm_config.get("id", str(hash(str(swarm_config))))
+            self.swarm_validations[swarm_id] = {
+                "timestamp": datetime.now().isoformat(),
+                "is_valid": len(all_issues) == 0,
+                "issues": all_issues,
+                "debug_flags": debug_flags
+            }
+            
+            if debug_flags.get("log_validation"):
+                await self.store_memory(
+                    content=f"Swarm validation result for {swarm_id}: {len(all_issues)} issues",
+                    importance=0.8,
+                    context={"type": "validation_log"}
+                )
+                
+            return ValidationResult(
+                is_valid=len(all_issues) == 0,
+                issues=all_issues,
+                metadata={
+                    "swarm_id": swarm_id,
                     "timestamp": datetime.now().isoformat()
                 }
             )
+            
         except Exception as e:
-            logger.error(f"Error formatting response: {str(e)}")
-            return AgentResponse(
-                response="Error processing response",
-                concepts=[],
-                confidence=0.0,
-                orchestration={
-                    "status": "error",
+            error_msg = f"Error validating swarm config: {str(e)}"
+            logger.error(error_msg)
+            
+            if debug_flags.get("log_validation"):
+                await self.store_memory(
+                    content=error_msg,
+                    importance=0.9,
+                    context={"type": "validation_error"}
+                )
+                
+            return ValidationResult(
+                is_valid=False,
+                issues=[{
+                    "type": "validation_error",
+                    "severity": "high",
+                    "description": str(e)
+                }],
+                metadata={
                     "error": str(e),
                     "timestamp": datetime.now().isoformat()
                 }
             )
-        
-    async def _get_flow_analytics(self, flow_id: str) -> Optional[AnalyticsResult]:
-        """Get analytics for a specific flow."""
+            
+    async def _update_validation_patterns(
+        self,
+        validation_result: Dict[str, Any],
+        debug_flags: Dict[str, bool]
+    ):
+        """Update validation patterns based on validation results."""
         try:
-            flow_state = self.active_flows.get(flow_id)
-            if not flow_state:
-                return None
+            # Extract patterns from validation issues
+            patterns = []
+            for issue in validation_result.get("issues", []):
+                pattern = {
+                    "type": issue.get("type"),
+                    "severity": issue.get("severity", "low"),
+                    "description": issue.get("description"),
+                    "frequency": 1,
+                    "first_seen": datetime.now().isoformat(),
+                    "last_seen": datetime.now().isoformat()
+                }
                 
-            content = {
-                "type": "flow_analytics",
-                "flow_id": flow_id,
-                "flow_state": flow_state,
-                "timestamp": datetime.now().isoformat()
-            }
-            
-            return await self.analytics.process_analytics(
-                content=content,
-                analytics_type="behavioral",
-                metadata={"domain": self.domain}
-            )
+                # Check if pattern exists
+                existing = next(
+                    (p for p in patterns if 
+                     p["type"] == pattern["type"] and
+                     p["description"] == pattern["description"]),
+                    None
+                )
+                
+                if existing:
+                    existing["frequency"] += 1
+                    existing["last_seen"] = pattern["last_seen"]
+                else:
+                    patterns.append(pattern)
+                    
+            # Store patterns
+            if patterns:
+                await self.store_memory(
+                    content={
+                        "type": "validation_patterns",
+                        "patterns": patterns,
+                        "timestamp": datetime.now().isoformat()
+                    },
+                    importance=0.8,
+                    context={"type": "validation_tracking"}
+                )
+                
+            if debug_flags.get("log_validation"):
+                await self.store_memory(
+                    content=f"Updated validation patterns: {len(patterns)} patterns",
+                    importance=0.8,
+                    context={"type": "validation_log"}
+                )
+                
+            # Record reflections for significant patterns
+            recurring_patterns = [p for p in patterns if p["frequency"] > 2]
+            if recurring_patterns:
+                await self.record_reflection(
+                    f"Recurring validation patterns detected: {recurring_patterns}",
+                    domain=self.domain
+                )
+                
+            critical_patterns = [p for p in patterns if p["severity"] == "high"]
+            if critical_patterns:
+                await self.record_reflection(
+                    f"Critical validation patterns detected: {critical_patterns}",
+                    domain=self.domain
+                )
+                
         except Exception as e:
-            logger.error(f"Error getting flow analytics: {str(e)}")
-            return None
+            error_msg = f"Error updating validation patterns: {str(e)}"
+            logger.error(error_msg)
             
-    async def _apply_analytics_insights(
+            if debug_flags.get("log_validation"):
+                await self.store_memory(
+                    content=error_msg,
+                    importance=0.9,
+                    context={"type": "validation_error"}
+                )
+
+    async def _update_flow_state(
         self,
         flow_id: str,
-        analytics: AnalyticsResult
-    ):
-        """Apply analytics insights to flow state."""
-        flow_state = self.active_flows.get(flow_id)
-        if not flow_state:
-            return
-            
-        # Update analytics state
-        flow_state["analytics"] = {
-            "last_update": datetime.now().isoformat(),
-            "performance": analytics.analytics.get("analytics", {}),
-            "predictions": {},
-            "optimizations": []
-        }
-        
-        # Apply insights
-        for insight in analytics.insights:
-            if insight.get("type") == "performance":
-                flow_state["analytics"]["performance"].update(
-                    insight.get("metrics", {})
-                )
-            elif insight.get("type") == "prediction":
-                flow_state["analytics"]["predictions"][
-                    insight.get("metric", "unknown")
-                ] = insight.get("value", 0.0)
-            elif insight.get("type") == "optimization":
-                flow_state["analytics"]["optimizations"].append({
-                    "type": insight.get("optimization_type"),
-                    "description": insight.get("description"),
-                    "confidence": insight.get("confidence", 0.0)
-                })
-                
-        # Update attention needs based on analytics
-        if analytics.confidence < 0.5:
-            flow_state["needs_attention"] = True
-            await self.record_reflection(
-                f"Flow {flow_id} needs attention due to low analytics confidence",
-                domain=self.domain
-            )
-            
-    async def store_memory(
-        self,
         content: Dict[str, Any],
-        importance: float = 0.5,
-        context: Optional[Dict] = None
+        debug_flags: Dict[str, bool]
     ):
-        """Store memory in the semantic store."""
-        if self.memory_system and hasattr(self.memory_system, "semantic"):
-            await self.memory_system.semantic.store.store_concept(
-                name=content.get("name", "unknown"),
-                type=content.get("type", "concept"),
-                description=content.get("description", "No description provided")
-            )
-
-    async def orchestrate_and_store(
-        self,
-        content: Dict[str, Any],
-        orchestration_type: str,
-        target_domain: Optional[str] = None
-    ) -> AgentResponse:
-        """Orchestrate agents and store results with enhanced flow awareness."""
-        # Validate domain access if specified
-        if target_domain:
-            await self.validate_domain_access(target_domain)
-            
-        # Get analytics for orchestration decision
-        analytics_result = await self.analytics.process_analytics(
-            content={
-                "type": "orchestration_analytics",
-                "content": content,
-                "orchestration_type": orchestration_type,
-                "timestamp": datetime.now().isoformat()
-            },
-            analytics_type="predictive",
-            metadata={"domain": target_domain or self.domain}
-        )
-        
-        # Update flow patterns if needed
-        if patterns := content.get("flow_patterns"):
-            self._update_flow_patterns(patterns)
-            
-        # Update resource allocations with analytics insights
-        if resources := content.get("resources"):
-            await self._update_resource_allocations(resources, analytics_result)
-            
-        # Update dependency graph
-        if dependencies := content.get("dependencies"):
-            self._update_dependency_graph(dependencies)
-            
-        # Orchestrate agents
-        result = await self.orchestrate_agents(
-            content,
-            orchestration_type,
-            metadata={
-                "domain": target_domain or self.domain,
-                "analytics": analytics_result.analytics if analytics_result else None
-            }
-        )
-        
-        # Store orchestration results with enhanced metadata
-        orchestration_content = {
-            "type": "agent_orchestration",
-            "content": content,
-            "orchestration_type": orchestration_type,
-            "orchestration": {
-                "is_valid": result.is_valid,
-                "orchestration": result.orchestration,
-                "decisions": result.decisions,
-                "confidence": result.confidence,
-                "issues": result.issues,
-                "flow_states": self.active_flows,
-                "resource_states": self.resource_allocations,
-                "execution_states": self.execution_monitors,
-                "analytics": analytics_result.analytics if analytics_result else None,
-                "timestamp": datetime.now().isoformat()
-            }
-        }
-        
-        await self.store_memory(
-            content={
-                **orchestration_content,
-                "metadata": {
-                    "type": "orchestration",
-                    "domain": target_domain or self.domain,
-                    "importance": 0.8
-                }
-            }
-        )
-        
-        # Record reflection based on orchestration result
-        if result.is_valid and result.confidence > 0.8:
-            await self.record_reflection(
-                f"High confidence orchestration completed in {self.domain} domain",
-                domain=self.domain
-            )
-        elif not result.is_valid:
-            await self.record_reflection(
-                f"Orchestration failed - issues detected in {self.domain} domain",
-                domain=self.domain
-            )
-            
-        # Record reflection for critical issues
-        critical_issues = [i for i in result.issues if i.get("severity") == "high"]
-        if critical_issues:
-            await self.record_reflection(
-                f"Critical orchestration issues found in {self.domain} domain - immediate attention required",
-                domain=self.domain
-            )
-            
-        # Record reflection for important decisions
-        important_decisions = [
-            d for d in result.decisions
-            if d.get("importance", 0.0) > 0.8
-        ]
-        if important_decisions:
-            await self.record_reflection(
-                f"Important agent coordination decisions made in {self.domain} domain orchestration",
-                domain=self.domain
-            )
-            
-        # Record analytics-based reflections
-        if analytics_result and analytics_result.insights:
-            for insight in analytics_result.insights:
-                if insight.get("importance", 0.0) > 0.7:
-                    await self.record_reflection(
-                        f"Analytics insight: {insight.get('description')}",
-                        domain=self.domain
-                    )
-            
-        # Record flow-specific reflections
-        for flow_id, flow_state in self.active_flows.items():
-            if flow_state.get("needs_attention", False):
-                await self.record_reflection(
-                    f"Flow {flow_id} requires attention in {self.domain} domain",
-                    domain=self.domain
-                )
-                
-        # Record resource-specific reflections
-        for resource_id, allocation in self.resource_allocations.items():
-            if allocation.get("utilization", 0.0) > 0.9:
-                await self.record_reflection(
-                    f"Resource {resource_id} nearing capacity in {self.domain} domain",
-                    domain=self.domain
-                )
-                
-        # Record execution-specific reflections
-        for task_id, monitor in self.execution_monitors.items():
-            if monitor.get("status") == "blocked":
-                await self.record_reflection(
-                    f"Task {task_id} blocked in {self.domain} domain - intervention needed",
-                    domain=self.domain
-                )
-        
-        # Convert OrchestrationResult to AgentResponse
-        return AgentResponse(
-            response="Orchestration completed",
-            concepts=[],
-            confidence=result.confidence,
-            orchestration={
-                "status": "success" if result.is_valid else "error",
-                "orchestration": result.orchestration,
-                "decisions": result.decisions,
-                "issues": result.issues,
-                "timestamp": datetime.now().isoformat()
-            }
-        )
-        
-    async def _update_flow_state(self, flow_id: str, content: Dict[str, Any]):
-        """Update flow state tracking with analytics integration."""
-        if flow_id not in self.active_flows:
-            self.active_flows[flow_id] = {
-                "status": "active",
-                "start_time": datetime.now().isoformat(),
-                "steps_completed": 0,
-                "current_phase": "initialization",
-                "metrics": {},
-                "needs_attention": False,
-                "analytics": {
-                    "last_update": None,
-                    "performance": {},
-                    "predictions": {},
-                    "optimizations": []
-                }
-            }
-            
-        flow_state = self.active_flows[flow_id]
-        
-        # Update basic state
-        if status := content.get("flow_status"):
-            flow_state["status"] = status
-            
-        if phase := content.get("flow_phase"):
-            flow_state["current_phase"] = phase
-            
-        # Update metrics
-        if metrics := content.get("flow_metrics", {}):
-            flow_state["metrics"].update(metrics)
-            
-        # Update completion tracking
-        if content.get("step_completed"):
-            flow_state["steps_completed"] += 1
-            
-        # Check for attention needs
-        flow_state["needs_attention"] = any([
-            content.get("needs_attention", False),
-            content.get("has_blockers", False),
-            content.get("resource_constraints", False)
-        ])
-        
-        # Apply relevant flow patterns
-        for pattern_id, pattern in self.flow_patterns.items():
-            if self._matches_pattern(content, pattern):
-                await self._apply_flow_pattern(flow_id, pattern_id, pattern)
-                
-    def _update_flow_patterns(self, patterns: Dict[str, Dict]):
-        """Update flow pattern configurations."""
-        for pattern_id, pattern in patterns.items():
-            if isinstance(pattern, dict):
-                self.flow_patterns[pattern_id] = {
-                    "conditions": pattern.get("conditions", {}),
-                    "actions": pattern.get("actions", []),
-                    "priority": float(pattern.get("priority", 0.5))
-                }
-                
-    async def _update_resource_allocations(
-        self,
-        resources: Dict[str, Dict],
-        analytics: Optional[AnalyticsResult] = None
-    ):
-        """Update resource allocation tracking with analytics insights and emotional context."""
-        # Get collective emotional state
-        swarm_sentiment = self._get_swarm_sentiment()
-        
-        # Get historical allocation patterns
-        historical_patterns = await self._get_allocation_patterns()
-        
-        for resource_id, allocation in resources.items():
-            if isinstance(allocation, dict):
-                current = self.resource_allocations.get(resource_id, {})
-                
-                # Get analytics prediction if available
-                predicted_utilization = None
-                if analytics and analytics.analytics:
-                    predictions = analytics.analytics.get("analytics", {})
-                    if resource_pred := predictions.get(f"resource_{resource_id}"):
-                        predicted_utilization = resource_pred.get("value")
-                
-                # Apply emotional context to allocation
-                emotion_adjusted_capacity = self._adjust_capacity_by_emotion(
-                    float(allocation.get("capacity", current.get("capacity", 0.0))),
-                    swarm_sentiment
-                )
-                
-                # Learn from historical patterns
-                pattern_based_allocation = self._apply_allocation_patterns(
-                    resource_id, 
-                    allocation,
-                    historical_patterns
-                )
-                
-                self.resource_allocations[resource_id] = {
-                    "type": allocation.get("type", current.get("type", "unknown")),
-                    "capacity": emotion_adjusted_capacity,
-                    "utilization": float(allocation.get("utilization", current.get("utilization", 0.0))),
-                    "predicted_utilization": predicted_utilization,
-                    "assigned_to": list(pattern_based_allocation.get("assigned_to", [])),
-                    "constraints": allocation.get("constraints", current.get("constraints", {})),
+        """Update flow state tracking with analytics and validation integration."""
+        try:
+            if flow_id not in self.active_flows:
+                self.active_flows[flow_id] = {
+                    "status": "active",
+                    "start_time": datetime.now().isoformat(),
+                    "steps_completed": 0,
+                    "current_phase": "initialization",
+                    "metrics": {},
+                    "needs_attention": False,
                     "analytics": {
-                        "last_update": datetime.now().isoformat(),
-                        "predictions": analytics.analytics if analytics else {},
-                        "emotional_context": swarm_sentiment,
-                        "pattern_confidence": pattern_based_allocation.get("confidence", 0.0)
+                        "last_update": None,
+                        "performance": {},
+                        "predictions": {},
+                        "optimizations": []
+                    },
+                    "validation": {
+                        "last_check": None,
+                        "issues": [],
+                        "patterns": [],
+                        "status": "pending"
                     }
                 }
                 
-                # Store allocation pattern for learning
-                await self._store_allocation_pattern(resource_id, self.resource_allocations[resource_id])
-                
-    def _update_dependency_graph(self, dependencies: Dict[str, List[str]]):
-        """Update task dependency tracking."""
-        for task_id, deps in dependencies.items():
-            if isinstance(deps, (list, set)):
-                self.dependency_graph[task_id] = set(deps)
-                
-    def _get_swarm_sentiment(self) -> Dict[str, float]:
-        """Analyze collective emotional state for resource decisions."""
-        # Aggregate emotional states
-        sentiment = {
-            "confidence": self.emotions.get("orchestration_state", "neutral"),
-            "resource_attitude": self.emotions.get("resource_state", "neutral"),
-            "execution_mood": self.emotions.get("execution_state", "neutral")
-        }
-        
-        # Convert to numerical values
-        sentiment_values = {}
-        for key, value in sentiment.items():
-            if value == "highly_focused":
-                sentiment_values[key] = 1.0
-            elif value == "neutral":
-                sentiment_values[key] = 0.5
-            else:
-                sentiment_values[key] = 0.0
-                
-        return sentiment_values
-        
-    def _adjust_capacity_by_emotion(
-        self,
-        base_capacity: float,
-        sentiment: Dict[str, float]
-    ) -> float:
-        """Adjust resource capacity based on emotional context."""
-        # Apply confidence-based adjustment
-        confidence_factor = 1.0 + (sentiment["confidence"] - 0.5) * 0.2
-        
-        # Apply resource attitude adjustment
-        resource_factor = 1.0 + (sentiment["resource_attitude"] - 0.5) * 0.1
-        
-        # Apply execution mood adjustment
-        execution_factor = 1.0 + (sentiment["execution_mood"] - 0.5) * 0.15
-        
-        return base_capacity * confidence_factor * resource_factor * execution_factor
-        
-    async def _get_allocation_patterns(self) -> List[Dict]:
-        """Retrieve historical allocation patterns from memory."""
-        if not self.memory_system:
-            return []
-            
-        # Search for recent allocation patterns
-        patterns = await self.memory_system.episodic.search(
-            query="resource_allocation_pattern",
-            limit=10,
-            metadata_filter={"domain": self.domain}
-        )
-        
-        return [p["content"] for p in patterns]
-        
-    def _apply_allocation_patterns(
-        self,
-        resource_id: str,
-        allocation: Dict,
-        patterns: List[Dict]
-    ) -> Dict:
-        """Apply learned patterns to current allocation."""
-        if not patterns:
-            return allocation
-            
-        # Find matching patterns
-        matching_patterns = []
-        for pattern in patterns:
-            if pattern["resource_id"] == resource_id:
-                similarity = self._calculate_pattern_similarity(
-                    allocation,
-                    pattern["allocation"]
-                )
-                if similarity > 0.7:  # Threshold for pattern matching
-                    matching_patterns.append({
-                        "pattern": pattern,
-                        "similarity": similarity
-                    })
+                if debug_flags.get("log_validation"):
+                    await self.store_memory(
+                        content=f"Initialized flow {flow_id} with validation tracking",
+                        importance=0.8,
+                        context={"type": "validation_log"}
+                    )
                     
-        if not matching_patterns:
-            return allocation
+            flow_state = self.active_flows[flow_id]
             
-        # Sort by similarity
-        matching_patterns.sort(key=lambda x: x["similarity"], reverse=True)
-        best_pattern = matching_patterns[0]["pattern"]
-        
-        # Apply pattern insights
-        return {
-            **allocation,
-            "assigned_to": best_pattern["allocation"]["assigned_to"],
-            "confidence": matching_patterns[0]["similarity"]
-        }
-        
-    def _calculate_pattern_similarity(
-        self,
-        allocation1: Dict,
-        allocation2: Dict
-    ) -> float:
-        """Calculate similarity between allocation patterns."""
-        factors = []
-        
-        # Compare utilization
-        if "utilization" in allocation1 and "utilization" in allocation2:
-            util_diff = abs(allocation1["utilization"] - allocation2["utilization"])
-            factors.append(1.0 - util_diff)
-            
-        # Compare constraints
-        if "constraints" in allocation1 and "constraints" in allocation2:
-            common_constraints = set(allocation1["constraints"]) & set(allocation2["constraints"])
-            all_constraints = set(allocation1["constraints"]) | set(allocation2["constraints"])
-            if all_constraints:
-                factors.append(len(common_constraints) / len(all_constraints))
+            # Update basic state
+            if status := content.get("flow_status"):
+                flow_state["status"] = status
                 
-        # Compare assigned agents
-        if "assigned_to" in allocation1 and "assigned_to" in allocation2:
-            common_agents = set(allocation1["assigned_to"]) & set(allocation2["assigned_to"])
-            all_agents = set(allocation1["assigned_to"]) | set(allocation2["assigned_to"])
-            if all_agents:
-                factors.append(len(common_agents) / len(all_agents))
+            if phase := content.get("flow_phase"):
+                flow_state["current_phase"] = phase
                 
-        return sum(factors) / len(factors) if factors else 0.0
-        
-    async def _store_allocation_pattern(self, resource_id: str, allocation: Dict):
-        """Store allocation pattern for future learning."""
-        if not self.memory_system:
-            return
+            # Update metrics
+            if metrics := content.get("flow_metrics", {}):
+                flow_state["metrics"].update(metrics)
+                
+            # Update completion tracking
+            if content.get("step_completed"):
+                flow_state["steps_completed"] += 1
+                
+            # Check for attention needs
+            flow_state["needs_attention"] = any([
+                content.get("needs_attention", False),
+                content.get("has_blockers", False),
+                content.get("resource_constraints", False)
+            ])
             
-        pattern = {
-            "type": "resource_allocation_pattern",
-            "resource_id": resource_id,
-            "allocation": allocation,
-            "timestamp": datetime.now().isoformat(),
-            "domain": self.domain
-        }
-        
-        await self.memory_system.episodic.store(
-            content=pattern,
-            metadata={
-                "type": "pattern",
-                "domain": self.domain,
-                "importance": 0.7
-            }
-        )
-        
-    async def _apply_flow_pattern(
+            # Update validation state
+            if validation_result := content.get("validation_result"):
+                flow_state["validation"] = {
+                    "last_check": datetime.now().isoformat(),
+                    "issues": validation_result.get("issues", []),
+                    "patterns": validation_result.get("patterns", []),
+                    "status": "valid" if validation_result.get("is_valid") else "invalid"
+                }
+                
+            # Apply relevant flow patterns
+            for pattern_id, pattern in self.flow_patterns.items():
+                if self._matches_pattern(content, pattern):
+                    await self._apply_flow_pattern(flow_id, pattern_id, pattern)
+                    
+        except Exception as e:
+            error_msg = f"Error updating flow state: {str(e)}"
+            logger.error(error_msg)
+            
+            if debug_flags.get("log_validation"):
+                await self.store_memory(
+                    content=error_msg,
+                    importance=0.9,
+                    context={"type": "validation_error"}
+                )
+                
+    async def _apply_analytics_insights(
         self,
         flow_id: str,
-        pattern_id: str,
-        pattern: Dict
+        analytics: AnalyticsResult,
+        debug_flags: Dict[str, bool]
     ):
-        """Apply a flow pattern's actions."""
-        flow_state = self.active_flows[flow_id]
-        
-        for action in pattern.get("actions", []):
-            action_type = action.get("type")
+        """Apply analytics insights to flow state with validation awareness."""
+        try:
+            flow_state = self.active_flows.get(flow_id)
+            if not flow_state:
+                return
+                
+            # Update analytics state
+            flow_state["analytics"] = {
+                "last_update": datetime.now().isoformat(),
+                "performance": analytics.analytics.get("analytics", {}),
+                "predictions": {},
+                "optimizations": []
+            }
             
-            if action_type == "update_phase":
-                flow_state["current_phase"] = action["phase"]
-            elif action_type == "add_metric":
-                flow_state["metrics"][action["name"]] = action["value"]
-            elif action_type == "set_attention":
-                flow_state["needs_attention"] = action["value"]
-            elif action_type == "record_reflection":
+            # Apply insights with validation awareness
+            for insight in analytics.insights:
+                if insight.get("type") == "performance":
+                    flow_state["analytics"]["performance"].update(
+                        insight.get("metrics", {})
+                    )
+                elif insight.get("type") == "prediction":
+                    flow_state["analytics"]["predictions"][
+                        insight.get("metric", "unknown")
+                    ] = insight.get("value", 0.0)
+                elif insight.get("type") == "optimization":
+                    flow_state["analytics"]["optimizations"].append({
+                        "type": insight.get("optimization_type"),
+                        "description": insight.get("description"),
+                        "confidence": insight.get("confidence", 0.0),
+                        "validation_status": "pending"
+                    })
+                elif insight.get("type") == "validation":
+                    flow_state["validation"]["patterns"].append({
+                        "type": insight.get("pattern_type"),
+                        "description": insight.get("description"),
+                        "severity": insight.get("severity", "low"),
+                        "timestamp": datetime.now().isoformat()
+                    })
+                    
+            # Update attention needs based on analytics and validation
+            needs_attention = analytics.confidence < 0.5
+            if flow_state["validation"]["status"] == "invalid":
+                needs_attention = True
+                
+            if needs_attention:
+                flow_state["needs_attention"] = True
                 await self.record_reflection(
-                    f"Flow pattern {pattern_id} triggered in {flow_id}: {action['message']}",
+                    f"Flow {flow_id} needs attention due to analytics/validation issues",
                     domain=self.domain
                 )
                 
+            if debug_flags.get("log_validation"):
+                await self.store_memory(
+                    content=f"Applied analytics insights to flow {flow_id} with validation",
+                    importance=0.8,
+                    context={"type": "validation_log"}
+                )
+                
+        except Exception as e:
+            error_msg = f"Error applying analytics insights: {str(e)}"
+            logger.error(error_msg)
+            
+            if debug_flags.get("log_validation"):
+                await self.store_memory(
+                    content=error_msg,
+                    importance=0.9,
+                    context={"type": "validation_error"}
+                )
+
     async def get_domain_access(self, domain: str) -> bool:
         """Check if agent has access to specified domain."""
         if self.memory_system and hasattr(self.memory_system, "semantic"):

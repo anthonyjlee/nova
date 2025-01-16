@@ -112,58 +112,166 @@ class ReflectionAgent(NovaReflectionAgent, TinyTroupeAgent):
     async def analyze_and_store(
         self,
         content: Dict[str, Any],
-        target_domain: Optional[str] = None
+        target_domain: Optional[str] = None,
+        metadata: Optional[Dict] = None
     ):
         """Analyze reflection and store results with domain awareness."""
-        # Validate domain access if specified
-        if target_domain:
-            await self.validate_domain_access(target_domain)
+        try:
+            # Get debug flags
+            debug_flags = metadata.get("debug_flags", {}) if metadata else {}
             
-        # Analyze reflection
-        result = await self.analyze_reflection(
-            content,
-            metadata={"domain": target_domain or self.domain}
-        )
-        
-        # Store reflection analysis
-        await self.store_memory(
-            content={
-                "type": "reflection_analysis",
-                "content": content,
-                "analysis": {
-                    "insights": result.insights,
-                    "confidence": result.confidence,
-                    "patterns": result.patterns,
-                    "timestamp": datetime.now().isoformat()
+            # Validate domain access if specified
+            if target_domain:
+                await self.validate_domain_access(target_domain)
+                
+            if debug_flags.get("log_validation"):
+                await self.store_memory(
+                    content="Starting reflection analysis with validation tracking",
+                    importance=0.8,
+                    context={"type": "validation_log"}
+                )
+                
+            # Analyze reflection with validation context
+            result = await self.analyze_reflection(
+                content,
+                metadata={
+                    "domain": target_domain or self.domain,
+                    "validation_context": metadata.get("validation_result"),
+                    "debug_flags": debug_flags
                 }
-            },
-            importance=0.8,
-            context={
-                "type": "reflection",
-                "domain": target_domain or self.domain
-            }
-        )
-        
-        # Record reflection based on analysis
-        if result.confidence > 0.8:
-            await self.record_reflection(
-                f"High confidence reflection analysis achieved in {self.domain} domain",
-                domain=self.domain
-            )
-        elif result.confidence < 0.3:
-            await self.record_reflection(
-                f"Low confidence reflection analysis - may need additional patterns in {self.domain} domain",
-                domain=self.domain
             )
             
-        # Record reflection for recurring themes
-        if result.patterns.get("recurring_themes", []):
-            await self.record_reflection(
-                f"Recurring themes identified in {self.domain} domain - further analysis recommended",
-                domain=self.domain
+            # Track validation patterns
+            if result.patterns and metadata and "validation_result" in metadata:
+                validation_patterns = self._extract_validation_patterns(
+                    result.patterns,
+                    metadata["validation_result"]
+                )
+                
+                if debug_flags.get("log_validation"):
+                    await self.store_memory(
+                        content=f"Validation patterns identified: {validation_patterns}",
+                        importance=0.8,
+                        context={"type": "validation_log"}
+                    )
+                    
+                result.patterns["validation"] = validation_patterns
+        
+            # Store reflection analysis with validation context
+            await self.store_memory(
+                content={
+                    "type": "reflection_analysis",
+                    "content": content,
+                    "analysis": {
+                        "insights": result.insights,
+                        "confidence": result.confidence,
+                        "patterns": result.patterns,
+                        "validation_patterns": validation_patterns if "validation_patterns" in locals() else [],
+                        "timestamp": datetime.now().isoformat()
+                    }
+                },
+                importance=0.8,
+                context={
+                    "type": "reflection",
+                    "domain": target_domain or self.domain,
+                    "validation_context": metadata.get("validation_result") if metadata else None
+                }
             )
         
-        return result
+            # Record reflections with validation awareness
+            if result.confidence > 0.8:
+                await self.record_reflection(
+                    f"High confidence reflection analysis with validation in {self.domain} domain",
+                    domain=self.domain
+                )
+            elif result.confidence < 0.3:
+                await self.record_reflection(
+                    f"Low confidence reflection analysis - validation review needed in {self.domain} domain",
+                    domain=self.domain
+                )
+                
+            # Record validation-specific reflections
+            if "validation_patterns" in locals():
+                recurring_patterns = [p for p in validation_patterns if p.get("frequency", 0) > 2]
+                if recurring_patterns:
+                    await self.record_reflection(
+                        f"Recurring validation patterns identified in {self.domain} domain: {recurring_patterns}",
+                        domain=self.domain
+                    )
+                    
+                critical_patterns = [p for p in validation_patterns if p.get("severity") == "high"]
+                if critical_patterns:
+                    await self.record_reflection(
+                        f"Critical validation patterns require attention in {self.domain} domain: {critical_patterns}",
+                        domain=self.domain
+                    )
+        
+            return result
+            
+        except Exception as e:
+            error_msg = f"Error in reflection analysis: {str(e)}"
+            logger.error(error_msg)
+            
+            if debug_flags.get("log_validation"):
+                await self.store_memory(
+                    content=error_msg,
+                    importance=0.9,
+                    context={"type": "validation_error"}
+                )
+                
+            raise
+            
+    def _extract_validation_patterns(
+        self,
+        reflection_patterns: Dict[str, Any],
+        validation_result: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Extract validation patterns from reflection and validation results.
+        
+        Args:
+            reflection_patterns: Patterns from reflection analysis
+            validation_result: Results from schema validation
+            
+        Returns:
+            List of validation patterns with metadata
+        """
+        patterns = []
+        
+        # Track schema validation patterns
+        if validation_result.get("issues"):
+            for issue in validation_result["issues"]:
+                pattern = {
+                    "type": "schema_validation",
+                    "description": issue.get("description"),
+                    "severity": issue.get("severity", "low"),
+                    "frequency": 1  # Initial occurrence
+                }
+                
+                # Check if similar pattern exists
+                existing = next(
+                    (p for p in patterns if 
+                     p["type"] == pattern["type"] and
+                     p["description"] == pattern["description"]),
+                    None
+                )
+                
+                if existing:
+                    existing["frequency"] += 1
+                else:
+                    patterns.append(pattern)
+                    
+        # Track reflection patterns related to validation
+        for theme in reflection_patterns.get("recurring_themes", []):
+            if any(kw in theme.lower() for kw in ["valid", "schema", "type", "format"]):
+                pattern = {
+                    "type": "reflection_validation",
+                    "description": theme,
+                    "severity": "medium",
+                    "frequency": reflection_patterns.get("theme_frequencies", {}).get(theme, 1)
+                }
+                patterns.append(pattern)
+                
+        return patterns
         
     async def get_domain_access(self, domain: str) -> bool:
         """Check if agent has access to specified domain."""

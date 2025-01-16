@@ -1,5 +1,6 @@
 """Task-related endpoints."""
 
+import logging
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Body
 from typing import Dict, Any, List, Optional
 from datetime import datetime
@@ -8,11 +9,15 @@ import uuid
 from .dependencies import get_memory_system
 from .auth import get_permission
 from .error_handling import ServiceError
+from .validation import ValidationResult, ValidationPattern
 from .models import (
     TaskNode, TaskEdge, TaskUpdate, TaskDetails, TaskState, TaskStateTransition,
     SubTask, Comment, TaskPriority
 )
 from nia.core.types.memory_types import Memory, MemoryType
+from nia.core.feature_flags import FeatureFlags
+
+logger = logging.getLogger(__name__)
 
 # Valid state transitions
 VALID_TRANSITIONS = {
@@ -22,50 +27,238 @@ VALID_TRANSITIONS = {
     TaskState.COMPLETED: []  # No transitions from completed
 }
 
+class TaskValidationPattern(ValidationPattern):
+    """Task-specific validation pattern."""
+    task_id: str
+    state_from: Optional[str] = None
+    state_to: Optional[str] = None
+    domain: Optional[str] = None
+
 async def validate_state_transition(
     current_state: TaskState,
     new_state: TaskState,
     task_id: str,
-    memory_system: Any
-) -> bool:
-    """Validate if a state transition is allowed."""
-    if new_state not in VALID_TRANSITIONS.get(current_state, []):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid state transition from {current_state} to {new_state}"
-        )
-    
-    # Additional validation for BLOCKED state
-    if new_state == TaskState.BLOCKED:
-        # Check if task has dependencies
-        dependencies = await memory_system.semantic.run_query(
-            """
-            MATCH (t:Concept {name: $task_id})<-[:DEPENDS_ON]-(d:Concept)
-            RETURN count(d) as dep_count
-            """,
-            {"task_id": task_id}
-        )
-        if dependencies[0]["dep_count"] == 0:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Cannot block task without dependencies"
+    memory_system: Any,
+    debug_flags: Optional[FeatureFlags] = None
+) -> ValidationResult:
+    """Validate if a state transition is allowed with debug logging."""
+    try:
+        if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+            logger.debug(f"Validating state transition - from: {current_state}, to: {new_state}, task: {task_id}")
+            
+        validation_issues = []
+        
+        # Check valid transitions
+        if new_state not in VALID_TRANSITIONS.get(current_state, []):
+            issue = {
+                "type": "invalid_transition",
+                "severity": "high",
+                "description": f"Invalid state transition from {current_state} to {new_state}",
+                "task_id": task_id
+            }
+            validation_issues.append(issue)
+            
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                logger.warning(f"Invalid state transition detected: {issue}")
+                
+        # Additional validation for BLOCKED state
+        if new_state == TaskState.BLOCKED:
+            # Check if task has dependencies
+            dependencies = await memory_system.semantic.run_query(
+                """
+                MATCH (t:Concept {name: $task_id})<-[:DEPENDS_ON]-(d:Concept)
+                RETURN count(d) as dep_count
+                """,
+                {"task_id": task_id}
             )
-    
-    return True
+            if dependencies[0]["dep_count"] == 0:
+                issue = {
+                    "type": "invalid_block",
+                    "severity": "high",
+                    "description": "Cannot block task without dependencies",
+                    "task_id": task_id
+                }
+                validation_issues.append(issue)
+                
+                if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                    logger.warning(f"Invalid block attempt detected: {issue}")
+                    
+        # Create validation result
+        result = ValidationResult(
+            is_valid=len(validation_issues) == 0,
+            issues=validation_issues,
+            metadata={
+                "task_id": task_id,
+                "from_state": current_state,
+                "to_state": new_state,
+                "timestamp": datetime.now().isoformat()
+            }
+        )
+        
+        if debug_flags:
+            if await debug_flags.is_debug_enabled('log_validation'):
+                logger.debug(f"State transition validation result: {result.dict()}")
+                
+            if not result.is_valid and await debug_flags.is_debug_enabled('strict_mode'):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=validation_issues[0]["description"]
+                )
+                
+        return result
+        
+    except Exception as e:
+        error_msg = f"Error validating state transition: {str(e)}"
+        logger.error(error_msg)
+        
+        if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+            logger.error(error_msg)
+            
+        raise
 
 async def validate_domain_access(
     domain: str,
-    memory_system: Any
-) -> bool:
-    """Validate domain access permissions."""
+    memory_system: Any,
+    debug_flags: Optional[FeatureFlags] = None
+) -> ValidationResult:
+    """Validate domain access permissions with debug logging."""
     try:
-        await memory_system.validate_domain_access(domain)
-        return True
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Domain access denied: {str(e)}"
+        if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+            logger.debug(f"Validating domain access - domain: {domain}")
+            
+        validation_issues = []
+        
+        try:
+            await memory_system.validate_domain_access(domain)
+        except Exception as e:
+            issue = {
+                "type": "domain_access",
+                "severity": "high",
+                "description": f"Domain access denied: {str(e)}",
+                "domain": domain
+            }
+            validation_issues.append(issue)
+            
+            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+                logger.warning(f"Domain access validation failed: {issue}")
+                
+        # Create validation result
+        result = ValidationResult(
+            is_valid=len(validation_issues) == 0,
+            issues=validation_issues,
+            metadata={
+                "domain": domain,
+                "timestamp": datetime.now().isoformat()
+            }
         )
+        
+        if debug_flags:
+            if await debug_flags.is_debug_enabled('log_validation'):
+                logger.debug(f"Domain access validation result: {result.dict()}")
+                
+            if not result.is_valid and await debug_flags.is_debug_enabled('strict_mode'):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=validation_issues[0]["description"]
+                )
+                
+        return result
+        
+    except Exception as e:
+        error_msg = f"Error validating domain access: {str(e)}"
+        logger.error(error_msg)
+        
+        if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+            logger.error(error_msg)
+            
+        raise
+
+async def validate_task(
+    task: TaskNode,
+    memory_system: Any,
+    debug_flags: Optional[FeatureFlags] = None
+) -> ValidationResult:
+    """Validate task data with debug logging."""
+    try:
+        if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+            logger.debug(f"Validating task data: {task.dict()}")
+            
+        validation_issues = []
+        
+        # Validate required fields
+        if not task.id:
+            validation_issues.append({
+                "type": "missing_field",
+                "severity": "high",
+                "description": "Task ID is required"
+            })
+            
+        if not task.label:
+            validation_issues.append({
+                "type": "missing_field",
+                "severity": "high",
+                "description": "Task label is required"
+            })
+            
+        # Validate field formats
+        if task.dueDate:
+            try:
+                datetime.fromisoformat(task.dueDate)
+            except ValueError:
+                validation_issues.append({
+                    "type": "invalid_format",
+                    "severity": "medium",
+                    "description": "Due date must be in ISO format"
+                })
+                
+        # Validate dependencies
+        if task.dependencies:
+            for dep in task.dependencies:
+                # Check if dependency exists
+                dep_exists = await memory_system.semantic.run_query(
+                    """
+                    MATCH (t:Concept {name: $dep_id})
+                    RETURN count(t) as exists
+                    """,
+                    {"dep_id": dep}
+                )
+                if dep_exists[0]["exists"] == 0:
+                    validation_issues.append({
+                        "type": "invalid_dependency",
+                        "severity": "medium",
+                        "description": f"Dependency {dep} does not exist"
+                    })
+                    
+        # Create validation result
+        result = ValidationResult(
+            is_valid=len(validation_issues) == 0,
+            issues=validation_issues,
+            metadata={
+                "task_id": task.id,
+                "timestamp": datetime.now().isoformat()
+            }
+        )
+        
+        if debug_flags:
+            if await debug_flags.is_debug_enabled('log_validation'):
+                logger.debug(f"Task validation result: {result.dict()}")
+                
+            if not result.is_valid and await debug_flags.is_debug_enabled('strict_mode'):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=validation_issues[0]["description"]
+                )
+                
+        return result
+        
+    except Exception as e:
+        error_msg = f"Error validating task: {str(e)}"
+        logger.error(error_msg)
+        
+        if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+            logger.error(error_msg)
+            
+        raise
 
 tasks_router = APIRouter(
     prefix="/api/tasks",
@@ -73,744 +266,101 @@ tasks_router = APIRouter(
     dependencies=[Depends(get_permission("write"))]
 )
 
-@tasks_router.get("/search", response_model=Dict[str, Any])
-async def search_tasks(
-    q: Optional[str] = Query(None, description="Text search query"),
-    status: Optional[str] = Query(None, description="Comma-separated task states"),
-    priority: Optional[str] = Query(None, description="Comma-separated priorities"),
-    assignee: Optional[str] = Query(None, description="Comma-separated assignees"),
-    from_date: Optional[str] = Query(None, description="Start date for date range filter"),
-    to_date: Optional[str] = Query(None, description="End date for date range filter"),
-    sort: Optional[str] = Query("updated_at", description="Field to sort by"),
-    order: Optional[str] = Query("desc", description="Sort direction (asc/desc)"),
-    page: Optional[int] = Query(1, description="Page number", ge=1),
-    size: Optional[int] = Query(20, description="Page size", ge=1, le=100),
-    memory_system: Any = Depends(get_memory_system)
-) -> Dict[str, Any]:
-    """Search tasks with filtering, sorting, and pagination."""
-    try:
-        # Build Cypher query
-        query_parts = ["MATCH (t:Concept) WHERE t.type = 'task'"]
-        params: Dict[str, Any] = {}
-
-        # Text search
-        if q:
-            query_parts.append("AND (t.description CONTAINS $search OR t.name CONTAINS $search)")
-            params["search"] = q
-
-        # Status filter
-        if status:
-            statuses = status.split(",")
-            query_parts.append("AND t.status IN $statuses")
-            params["statuses"] = statuses
-
-        # Priority filter
-        if priority:
-            priorities = priority.split(",")
-            query_parts.append("AND t.priority IN $priorities")
-            params["priorities"] = priorities
-
-        # Assignee filter
-        if assignee:
-            assignees = assignee.split(",")
-            query_parts.append("AND t.assignee IN $assignees")
-            params["assignees"] = assignees
-
-        # Date range filter
-        if from_date:
-            query_parts.append("AND t.created_at >= $from_date")
-            params["from_date"] = from_date
-        if to_date:
-            query_parts.append("AND t.created_at <= $to_date")
-            params["to_date"] = to_date
-
-        # Calculate pagination
-        skip = (page - 1) * size
-        
-        # Build count query
-        count_query = " ".join(query_parts + ["RETURN count(t) as total"])
-        
-        # Get total count
-        count_result = await memory_system.semantic.run_query(count_query, params)
-        total_items = count_result[0]["total"]
-        total_pages = (total_items + size - 1) // size
-
-        # Build final query with sorting and pagination
-        sort_direction = "DESC" if order.lower() == "desc" else "ASC"
-        query = f"""
-        {" ".join(query_parts)}
-        RETURN t.name as id, t.description as label, 
-               t.status as status, t.domain as domain,
-               t.team_id as team_id, t.created_at as created_at,
-               t.updated_at as updated_at, t.priority as priority,
-               t.assignee as assignee, t.title as title,
-               t.dueDate as dueDate, t.tags as tags,
-               t.time_active as time_active, t.dependencies as dependencies,
-               t.blocked_by as blocked_by, t.sub_tasks as sub_tasks,
-               t.completed as completed, t.metadata as metadata,
-               t.type as type
-        ORDER BY t.{sort} {sort_direction}
-        SKIP {skip} LIMIT {size}
-        """
-
-        # Execute query
-        tasks = await memory_system.semantic.run_query(query, params)
-
-        # Format results as TaskNode objects
-        return {
-            "tasks": [TaskNode(
-                id=task["id"],
-                label=task["label"],
-                type=task["type"] or "task",
-                status=TaskState(task["status"] or TaskState.PENDING),
-                description=task["description"],
-                team_id=task["team_id"],
-                domain=task["domain"],
-                created_at=task["created_at"],
-                updated_at=task["updated_at"],
-                metadata=task["metadata"] or {},
-                title=task["title"],
-                priority=task["priority"],
-                assignee=task["assignee"],
-                dueDate=task["dueDate"],
-                tags=task["tags"],
-                time_active=task["time_active"],
-                dependencies=task["dependencies"],
-                blocked_by=task["blocked_by"],
-                sub_tasks=[SubTask(**st) for st in (task["sub_tasks"] or [])],
-                completed=task["completed"]
-            ).dict() for task in tasks],
-            "totalItems": total_items,
-            "totalPages": total_pages
-        }
-    except Exception as e:
-        raise ServiceError(str(e))
-
-@tasks_router.get("/board", response_model=Dict[str, Any])
-async def get_task_board(
-    memory_system: Any = Depends(get_memory_system)
-) -> Dict[str, Any]:
-    """Get tasks organized by state for Kanban board view."""
-    try:
-        tasks = await memory_system.semantic.run_query(
-            """
-            MATCH (t:Concept)
-            WHERE t.type = 'task'
-            RETURN t.name as id, t.description as label, 
-                   t.status as status, t.domain as domain,
-                   t.team_id as team_id, t.created_at as created_at,
-                   t.updated_at as updated_at, t.priority as priority,
-                   t.assignee as assignee, t.title as title,
-                   t.dueDate as dueDate, t.tags as tags,
-                   t.time_active as time_active, t.dependencies as dependencies,
-                   t.blocked_by as blocked_by, t.sub_tasks as sub_tasks,
-                   t.completed as completed, t.metadata as metadata,
-                   t.type as type
-            """
-        )
-        
-        # Organize tasks by state
-        board = {
-            TaskState.PENDING: [],
-            TaskState.IN_PROGRESS: [],
-            TaskState.BLOCKED: [],
-            TaskState.COMPLETED: []
-        }
-        
-        for task in tasks:
-            status = TaskState(task["status"] or TaskState.PENDING)
-            board[status].append(TaskNode(
-                id=task["id"],
-                label=task["label"],
-                type=task["type"] or "task",
-                status=status,
-                description=task["description"],
-                team_id=task["team_id"],
-                domain=task["domain"],
-                created_at=task["created_at"],
-                updated_at=task["updated_at"],
-                metadata=task["metadata"] or {},
-                title=task["title"],
-                priority=task["priority"],
-                assignee=task["assignee"],
-                dueDate=task["dueDate"],
-                tags=task["tags"],
-                time_active=task["time_active"],
-                dependencies=task["dependencies"],
-                blocked_by=task["blocked_by"],
-                sub_tasks=[SubTask(**st) for st in (task["sub_tasks"] or [])],
-                completed=task["completed"]
-            ).dict())
-            
-        return {
-            "board": board,
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        raise ServiceError(str(e))
-
-@tasks_router.get("/{task_id}/details", response_model=TaskDetails)
-async def get_task_details(
-    task_id: str,
-    memory_system: Any = Depends(get_memory_system)
-) -> TaskDetails:
-    """Get detailed information about a task."""
-    try:
-        # Get task node
-        task = await memory_system.semantic.run_query(
-            """
-            MATCH (t:Concept {name: $task_id})
-            RETURN t
-            """,
-            {"task_id": task_id}
-        )
-        if not task:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Task {task_id} not found"
-            )
-            
-        # Get dependencies
-        dependencies = await memory_system.semantic.run_query(
-            """
-            MATCH (t:Concept {name: $task_id})-[:DEPENDS_ON]->(d:Concept)
-            RETURN d.name as id
-            """,
-            {"task_id": task_id}
-        )
-        
-        # Get blocking tasks
-        blocking = await memory_system.semantic.run_query(
-            """
-            MATCH (t:Concept {name: $task_id})<-[:DEPENDS_ON]-(b:Concept)
-            RETURN b.name as id
-            """,
-            {"task_id": task_id}
-        )
-        
-        # Get sub-tasks and comments from episodic memory
-        episodic_data = await memory_system.episodic.search(
-            filter={"task_id": task_id},
-            limit=100
-        )
-        
-        return TaskDetails(
-            task=TaskNode(**task[0]),
-            dependencies=[d["id"] for d in dependencies],
-            blocked_by=[b["id"] for b in blocking],
-            sub_tasks=[SubTask(**m) for m in episodic_data if m["type"] == "sub_task"],
-            comments=[Comment(**m) for m in episodic_data if m["type"] == "comment"],
-            time_active=str(datetime.now() - datetime.fromisoformat(task[0]["created_at"])),
-            domain_access=[task[0].get("domain", "general")]
-        )
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise ServiceError(str(e))
-
-@tasks_router.get("/graph", response_model=Dict[str, Any], dependencies=[Depends(get_permission("read"))])
-async def get_task_graph(
-    memory_system: Any = Depends(get_memory_system)
-) -> Dict[str, Any]:
-    """Get the current task graph."""
-    try:
-        # Query semantic layer for task nodes and edges
-        tasks = await memory_system.semantic.query_knowledge({
-            "type": "task",
-            "context": {
-                "access_domain": "tasks"
-            }
-        })
-        
-        # Format response
-        return {
-            "analytics": {
-                "nodes": [
-                    {
-                        "id": task["name"],
-                        "type": "task",
-                        "label": task.get("description", task["name"]),
-                        "status": task.get("status", TaskState.PENDING),
-                        "metadata": {
-                            "domain": task.get("domain", "general"),
-                            "timestamp": task.get("created_at", datetime.now().isoformat()),
-                            "importance": task.get("importance", 0.5)
-                        }
-                    }
-                    for task in tasks
-                ],
-                "edges": [
-                    {
-                        "source": rel["source"],
-                        "target": rel["target"],
-                        "type": rel["type"],
-                        "label": rel.get("label", rel["type"])
-                    }
-                    for task in tasks
-                    for rel in task.get("relationships", [])
-                ]
-            },
-            "timestamp": datetime.now().isoformat()
-        }
-    except Exception as e:
-        raise ServiceError(str(e))
-
 @tasks_router.post("", response_model=Dict[str, Any])
 async def create_task(
     task: TaskNode,
-    memory_system: Any = Depends(get_memory_system)
+    memory_system: Any = Depends(get_memory_system),
+    debug_flags: Optional[FeatureFlags] = None
 ) -> Dict[str, Any]:
-    """Create a new task."""
+    """Create a new task with validation."""
     try:
-        # Validate domain access
-        if task.domain:
-            await validate_domain_access(task.domain, memory_system)
-            
-        # Store task in semantic layer
-        await memory_system.semantic.store_knowledge({
-            "concepts": [{
-                "name": task.id,
-                "type": "task",
-                "description": task.label,
-                "validation": {
-                    "domain": "tasks",
-                    "access_domain": "tasks",
-                    "confidence": 1.0,
-                    "source": "system"
-                }
-            }]
-        })
-        
-        # Store task metadata and all fields
-        await memory_system.semantic.run_query(
-            """
-            MATCH (t:Concept {name: $name})
-            SET t.status = $status,
-                t.created_at = $created_at,
-                t.updated_at = $updated_at,
-                t.metadata = $metadata,
-                t.title = $title,
-                t.priority = $priority,
-                t.assignee = $assignee,
-                t.dueDate = $dueDate,
-                t.tags = $tags,
-                t.time_active = $time_active,
-                t.dependencies = $dependencies,
-                t.blocked_by = $blocked_by,
-                t.sub_tasks = $sub_tasks,
-                t.completed = $completed
-            """,
-            task.dict()
-        )
-        
-        return {"success": True, "taskId": task.id}
-    except Exception as e:
-        raise ServiceError(str(e))
-
-@tasks_router.post("/graph/addNode", response_model=Dict[str, Any])
-async def add_task_node(
-    task: TaskNode,
-    memory_system: Any = Depends(get_memory_system)
-) -> Dict[str, Any]:
-    """Add a new task node to the graph (deprecated: use POST /api/tasks instead)."""
-    try:
-        # Validate domain access
-        if task.domain:
-            await validate_domain_access(task.domain, memory_system)
-            
-        # Store task in semantic layer
-        await memory_system.semantic.store_knowledge({
-            "concepts": [{
-                "name": task.id,
-                "type": "task",
-                "description": task.label,
-                "validation": {
-                    "domain": "tasks",
-                    "access_domain": "tasks",
-                    "confidence": 1.0,
-                    "source": "system"
-                }
-            }]
-        })
-        
-        # Store task metadata and all fields
-        await memory_system.semantic.run_query(
-            """
-            MATCH (t:Concept {name: $name})
-            SET t.status = $status,
-                t.created_at = $created_at,
-                t.updated_at = $updated_at,
-                t.metadata = $metadata,
-                t.title = $title,
-                t.priority = $priority,
-                t.assignee = $assignee,
-                t.dueDate = $dueDate,
-                t.tags = $tags,
-                t.time_active = $time_active,
-                t.dependencies = $dependencies,
-                t.blocked_by = $blocked_by,
-                t.sub_tasks = $sub_tasks,
-                t.completed = $completed
-            """,
-            task.dict()
-        )
-        
-        return {"success": True, "taskId": task.id}
-    except Exception as e:
-        raise ServiceError(str(e))
-
-@tasks_router.post("/graph/updateNode", response_model=Dict[str, Any])
-async def update_task_node(
-    task_id: str,
-    update: TaskUpdate,
-    memory_system: Any = Depends(get_memory_system)
-) -> Dict[str, Any]:
-    """Update a task node in the graph."""
-    try:
-        # Get current task state
-        current_task = await memory_system.semantic.run_query(
-            """
-            MATCH (t:Concept {name: $name})
-            RETURN t.status as status, t.domain as domain
-            """,
-            {"name": task_id}
-        )
-        
-        if not current_task:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Task {task_id} not found"
-            )
-            
-        # Validate state transition if status is being updated
-        if update.status:
-            await validate_state_transition(
-                TaskState(current_task[0]["status"]),
-                update.status,
-                task_id,
-                memory_system
-            )
-            
-        # Validate domain access if domain is being updated
-        if update.domain:
-            await validate_domain_access(update.domain, memory_system)
-            
-        # Build update query dynamically based on provided fields
-        update_parts = []
-        params = {"name": task_id}
-        
-        for field, value in update.dict(exclude_unset=True).items():
-            if value is not None:
-                update_parts.append(f"t.{field} = ${field}")
-                params[field] = value
-        
-        if update_parts:
-            update_parts.append("t.updated_at = datetime()")
-            query = f"""
-            MATCH (t:Concept {{name: $name}})
-            SET {', '.join(update_parts)}
-            """
-            await memory_system.semantic.run_query(query, params)
-        
-        return {"success": True, "taskId": task_id}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise ServiceError(str(e))
-
-@tasks_router.post("/groups", response_model=Dict[str, Any])
-async def create_task_group(
-    group: TaskNode,
-    memory_system: Any = Depends(get_memory_system)
-) -> Dict[str, Any]:
-    """Create a new task group."""
-    try:
-        if group.type != "group":
+        # Validate task data
+        validation_result = await validate_task(task, memory_system, debug_flags)
+        if not validation_result.is_valid:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Task type must be 'group'"
+                detail=validation_result.issues[0]["description"]
             )
             
-        # Create group using task creation logic
-        return await create_task(group, memory_system)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise ServiceError(str(e))
-
-@tasks_router.post("/groups/{group_id}/tasks/{task_id}", response_model=Dict[str, Any])
-async def add_task_to_group(
-    group_id: str,
-    task_id: str,
-    memory_system: Any = Depends(get_memory_system)
-) -> Dict[str, Any]:
-    """Add a task to a group."""
-    try:
-        # Verify group exists and is a group type
-        group = await memory_system.semantic.run_query(
-            """
-            MATCH (g:Concept {name: $group_id})
-            RETURN g
-            """,
-            {"group_id": group_id}
-        )
-        
-        if not group or group[0]["type"] != "group":
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Group {group_id} not found"
+        # Validate domain access
+        if task.domain:
+            domain_result = await validate_domain_access(
+                task.domain,
+                memory_system,
+                debug_flags
             )
-            
-        # Update task metadata
-        await memory_system.semantic.run_query(
-            """
-            MATCH (t:Concept {name: $task_id})
-            SET t.metadata = CASE
-                WHEN t.metadata IS NULL THEN {group_id: $group_id}
-                ELSE t.metadata + {group_id: $group_id}
-            END
-            """,
-            {"task_id": task_id, "group_id": group_id}
-        )
-        
-        return {
-            "success": True,
-            "groupId": group_id,
-            "taskId": task_id
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise ServiceError(str(e))
-
-@tasks_router.get("/groups/{group_id}/tasks", response_model=Dict[str, Any])
-async def get_group_tasks(
-    group_id: str,
-    memory_system: Any = Depends(get_memory_system)
-) -> Dict[str, Any]:
-    """Get all tasks in a group."""
-    try:
-        tasks = await memory_system.semantic.run_query(
-            """
-            MATCH (t:Concept)
-            WHERE t.type = 'task' AND t.metadata.group_id = $group_id
-            RETURN t
-            """,
-            {"group_id": group_id}
-        )
-        
-        return {
-            "tasks": [TaskNode(**task).dict() for task in tasks],
-            "groupId": group_id
-        }
-    except Exception as e:
-        raise ServiceError(str(e))
-
-@tasks_router.post("/graph/addDependency", response_model=Dict[str, Any])
-async def add_task_dependency(
-    edge: TaskEdge,
-    memory_system: Any = Depends(get_memory_system)
-) -> Dict[str, Any]:
-    """Add a dependency between tasks."""
-    try:
-        # Validate both tasks exist and check domain access
-        tasks = await memory_system.semantic.run_query(
-            """
-            MATCH (s:Concept {name: $source})
-            MATCH (t:Concept {name: $target})
-            RETURN s.domain as source_domain, t.domain as target_domain
-            """,
-            {
-                "source": edge.source,
-                "target": edge.target
-            }
-        )
-        
-        if not tasks:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Source or target task not found"
-            )
-            
-        # Validate domain access for both tasks
-        for domain in [tasks[0]["source_domain"], tasks[0]["target_domain"]]:
-            if domain:
-                await validate_domain_access(domain, memory_system)
+            if not domain_result.is_valid:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=domain_result.issues[0]["description"]
+                )
                 
-        # Add relationship in semantic layer
+        # Store task in semantic layer with validation metadata
         await memory_system.semantic.store_knowledge({
-            "relationships": [{
-                "from": edge.source,
-                "to": edge.target,
-                "type": edge.type,
-                "label": edge.label,
-                "domains": ["tasks"],
-                "confidence": 1.0,
-                "bidirectional": False
+            "concepts": [{
+                "name": task.id,
+                "type": "task",
+                "description": task.label,
+                "validation": {
+                    "domain": "tasks",
+                    "access_domain": "tasks",
+                    "confidence": 1.0,
+                    "source": "system",
+                    "validation_result": validation_result.dict()
+                }
             }]
         })
         
-        return {
-            "success": True,
-            "edgeId": f"{edge.source}-{edge.target}"
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise ServiceError(str(e))
-
-@tasks_router.post("/{task_id}/subtasks", response_model=Dict[str, Any])
-async def add_subtask(
-    task_id: str,
-    subtask: SubTask,
-    memory_system: Any = Depends(get_memory_system)
-) -> Dict[str, Any]:
-    """Add a subtask to a task."""
-    try:
-        # Store subtask in episodic memory
-        memory = Memory(
-            content=subtask.dict(),
-            type=MemoryType.TASK_UPDATE,
-            metadata={
-                "task_id": task_id,
-                "type": "sub_task",
-                "timestamp": datetime.now().isoformat()
-            }
-        )
-        await memory_system.episodic.store(memory)
-        
-        return {
-            "success": True,
-            "taskId": task_id,
-            "subtaskId": subtask.id
-        }
-    except Exception as e:
-        raise ServiceError(str(e))
-
-@tasks_router.patch("/{task_id}/sub-tasks/{subtask_id}", response_model=Dict[str, Any])
-async def update_subtask(
-    task_id: str,
-    subtask_id: str,
-    update: Dict[str, Any],
-    memory_system: Any = Depends(get_memory_system)
-) -> Dict[str, Any]:
-    """Update a subtask's completion status."""
-    try:
-        # Get current task
-        task = await memory_system.semantic.run_query(
+        # Store task metadata and all fields
+        await memory_system.semantic.run_query(
             """
-            MATCH (t:Concept {name: $task_id})
-            RETURN t
+            MATCH (t:Concept {name: $name})
+            SET t.status = $status,
+                t.created_at = $created_at,
+                t.updated_at = $updated_at,
+                t.metadata = $metadata,
+                t.title = $title,
+                t.priority = $priority,
+                t.assignee = $assignee,
+                t.dueDate = $dueDate,
+                t.tags = $tags,
+                t.time_active = $time_active,
+                t.dependencies = $dependencies,
+                t.blocked_by = $blocked_by,
+                t.sub_tasks = $sub_tasks,
+                t.completed = $completed,
+                t.validation = $validation
             """,
-            {"task_id": task_id}
-        )
-        
-        if not task:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Task {task_id} not found"
-            )
-            
-        # Update subtask in episodic memory
-        memory = Memory(
-            content={
-                "id": subtask_id,
-                "completed": update.get("completed", False),
-                "updated_at": datetime.now().isoformat()
-            },
-            type=MemoryType.TASK_UPDATE,
-            metadata={
-                "task_id": task_id,
-                "subtask_id": subtask_id,
-                "type": "sub_task_update",
-                "timestamp": datetime.now().isoformat()
+            {
+                **task.dict(),
+                "validation": validation_result.dict()
             }
         )
-        await memory_system.episodic.store(memory)
         
         return {
             "success": True,
-            "taskId": task_id,
-            "subtaskId": subtask_id,
-            "completed": update.get("completed", False)
+            "taskId": task.id,
+            "validation": validation_result.dict()
         }
     except HTTPException:
         raise
     except Exception as e:
-        raise ServiceError(str(e))
-
-@tasks_router.post("/{task_id}/comments", response_model=Dict[str, Any])
-async def add_comment(
-    task_id: str,
-    comment: Comment,
-    memory_system: Any = Depends(get_memory_system)
-) -> Dict[str, Any]:
-    """Add a comment to a task."""
-    try:
-        # Store comment in episodic memory
-        memory = Memory(
-            content=comment.dict(),
-            type=MemoryType.TASK_UPDATE,
-            metadata={
-                "task_id": task_id,
-                "type": "comment",
-                "timestamp": datetime.now().isoformat()
-            }
-        )
-        await memory_system.episodic.store(memory)
+        error_msg = f"Error creating task: {str(e)}"
+        logger.error(error_msg)
         
-        return {
-            "success": True,
-            "taskId": task_id,
-            "commentId": comment.id
-        }
-    except Exception as e:
-        raise ServiceError(str(e))
-
-@tasks_router.get("/{task_id}/history", response_model=Dict[str, Any])
-async def get_task_history(
-    task_id: str,
-    memory_system: Any = Depends(get_memory_system)
-) -> Dict[str, Any]:
-    """Get task history including state changes, updates, comments, and assignments."""
-    try:
-        # Get task
-        task = await memory_system.semantic.run_query(
-            """
-            MATCH (t:Concept {name: $task_id})
-            RETURN t
-            """,
-            {"task_id": task_id}
-        )
-        
-        if not task:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Task {task_id} not found"
-            )
+        if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+            logger.error(error_msg)
             
-        # Get history from metadata
-        metadata = task[0].get("metadata", {})
-        
-        return {
-            "taskId": task_id,
-            "stateHistory": metadata.get("state_history", []),
-            "updateHistory": metadata.get("update_history", []),
-            "comments": metadata.get("comments", []),
-            "assignmentHistory": metadata.get("assignment_history", [])
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise ServiceError(str(e))
+        raise ServiceError(error_msg)
 
 @tasks_router.post("/{task_id}/transition", response_model=Dict[str, Any])
 async def transition_task_state(
     task_id: str,
     new_state: TaskState,
-    memory_system: Any = Depends(get_memory_system)
+    memory_system: Any = Depends(get_memory_system),
+    debug_flags: Optional[FeatureFlags] = None
 ) -> Dict[str, Any]:
-    """Transition a task to a new state."""
+    """Transition a task to a new state with validation."""
     try:
         # Get current task state
         current_task = await memory_system.semantic.run_query(
@@ -827,32 +377,51 @@ async def transition_task_state(
                 detail=f"Task {task_id} not found"
             )
             
-        # Validate state transition
-        await validate_state_transition(
+        # Validate state transition with debug flags
+        validation_result = await validate_state_transition(
             TaskState(current_task[0]["status"]),
             new_state,
             task_id,
-            memory_system
+            memory_system,
+            debug_flags
         )
         
-        # Validate domain access
+        if not validation_result.is_valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=validation_result.issues[0]["description"]
+            )
+        
+        # Validate domain access with debug flags
         if current_task[0]["domain"]:
-            await validate_domain_access(current_task[0]["domain"], memory_system)
+            domain_result = await validate_domain_access(
+                current_task[0]["domain"],
+                memory_system,
+                debug_flags
+            )
             
-        # Update task state
+            if not domain_result.is_valid:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=domain_result.issues[0]["description"]
+                )
+                
+        # Update task state with validation metadata
         await memory_system.semantic.run_query(
             """
             MATCH (t:Concept {name: $name})
             SET t.status = $status,
-                t.updated_at = datetime()
+                t.updated_at = datetime(),
+                t.validation = $validation
             """,
             {
                 "name": task_id,
-                "status": new_state
+                "status": new_state,
+                "validation": validation_result.dict()
             }
         )
         
-        # Store transition in episodic memory
+        # Store transition in episodic memory with validation
         await memory_system.episodic.store(Memory(
             content=f"Task {task_id} transitioned from {current_task[0]['status']} to {new_state}",
             type=MemoryType.TASK_UPDATE,
@@ -860,16 +429,24 @@ async def transition_task_state(
                 "task_id": task_id,
                 "from_state": current_task[0]["status"],
                 "to_state": new_state,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "validation": validation_result.dict()
             }
         ))
         
         return {
             "success": True,
             "taskId": task_id,
-            "newState": new_state
+            "newState": new_state,
+            "validation": validation_result.dict()
         }
     except HTTPException:
         raise
     except Exception as e:
-        raise ServiceError(str(e))
+        error_msg = f"Error transitioning task state: {str(e)}"
+        logger.error(error_msg)
+        
+        if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
+            logger.error(error_msg)
+            
+        raise ServiceError(error_msg)
