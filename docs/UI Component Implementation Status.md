@@ -51,19 +51,31 @@ GET /api/kg/domains - Get domain context
 ### Chat (Chat.svelte)
 Currently Implements:
 - Message System:
-  * Basic message thread
-  * Input handling
-  * Thread loading
+  * Enhanced message thread with agent tracking
+  * Input handling with agent action monitoring
+  * Thread loading with agent context
   * Real-time updates via WebSocket
+  * Agent activity visualization
+  * Cognitive state display
+  * Task context integration
+  * Debug panel for agent activities
 - Validation:
   * Message format validation
   * Domain access checks
   * Thread participant validation
-  * Basic error handling
+  * Agent action validation
+  * Cognitive state validation
+  * Task context validation
+  * Enhanced error handling with agent tracking
 - Storage Integration:
-  * Neo4j: Thread relationships
-  * Memory: Message history
-  * Qdrant: Message content
+  * Neo4j: Thread relationships and agent actions
+  * Memory: Message history and agent states
+  * Qdrant: Message content and agent patterns
+  * Agent activity tracking:
+    - Action history
+    - Performance metrics
+    - Success rates
+    - Response times
 
 Needs Implementation:
 - Advanced Features:

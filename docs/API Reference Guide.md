@@ -1772,13 +1772,54 @@ Response Schema:
 ## Nova Operations
 
 ### POST /api/nova/ask
-Ask Nova a question.
+Ask Nova a question. This endpoint implements our core processing pipeline:
+
+Processing Flow:
+1. Input Pre-Processing:
+   - Parsing Agent: First point of contact
+     * Uses Outlines library for JSON structured parsing
+     * Converts raw input into structured format
+     * Validates input schema and structure
+     * Handles pre-processing before cognitive processing
+   - Schema Agent:
+     * Validates parsed input against schemas
+     * Ensures data consistency and format
+     * Works with parsing agent for validation
+
+2. Core Processing:
+   - Meta Agent coordinates:
+     * Context retrieval (context_agent)
+     * Memory access (memory_agent)
+     * Planning (planning_agent)
+     * Cognitive processing (belief/desire/emotion agents)
+     * Reflection (reflection_agent)
+     * Learning (learning_agent)
+
+3. Output Post-Processing:
+   - Validation:
+     * validation_agent validates response
+     * schema_agent validates output format
+     * alerting_agent handles any issues
+   - Response Generation:
+     * orchestration_agent structures response
+     * dialogue_agent generates natural language
+     * synthesis_agent creates final output
+   - Memory Storage:
+     * memory_agent stores interaction
+     * learning_agent stores new knowledge
+     * monitoring_agent tracks metrics
 
 Request Schema:
 ```typescript
 {
   content: string;
   workspace: 'personal' | 'professional';
+  debug_flags?: {
+    log_validation: boolean;
+    log_websocket: boolean;
+    log_storage: boolean;
+    strict_mode: boolean;
+  }
 }
 ```
 
@@ -1792,15 +1833,53 @@ Response Schema:
     sender_type: 'agent';
     sender_id: 'nova';
     timestamp: string;
-    metadata: Record<string, unknown>;
+    metadata: {
+      parsing: {
+        structured_input: Record<string, unknown>;
+        validation_result: Record<string, unknown>;
+      };
+      processing: {
+        context: Record<string, unknown>;
+        cognitive_state: {
+          beliefs: unknown[];
+          desires: unknown[];
+          emotions: unknown[];
+          reflections: unknown[];
+        };
+        learning: {
+          new_concepts: unknown[];
+          updated_concepts: unknown[];
+        };
+      };
+      validation: {
+        schema_valid: boolean;
+        format_valid: boolean;
+        issues: unknown[];
+      };
+      debug?: {
+        parsing_time: number;
+        processing_time: number;
+        validation_time: number;
+        total_time: number;
+      };
+    };
   };
 }
 ```
 
 Storage:
-- Neo4j: Stores thread relationships and domain context
-- Memory: Stores conversation history and validation state
-- Qdrant: Stores message embeddings for semantic search
+- Neo4j: 
+  * Stores thread relationships and domain context
+  * Manages concept relationships
+  * Tracks validation patterns
+- Memory: 
+  * Stores conversation history
+  * Manages validation state
+  * Tracks processing patterns
+- Qdrant: 
+  * Stores message embeddings
+  * Handles semantic search
+  * Manages concept embeddings
 
 ## Agent Types
 

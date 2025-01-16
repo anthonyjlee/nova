@@ -77,9 +77,25 @@ class JsonLogHandler(logging.Handler):
                 }
             }, f, indent=2)
 
-# Configure logging
+# Configure root logger for all modules
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# Configure test logger
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
+# Enable debug logging for key modules
+for module in [
+    'nia.memory.types.memory_types',
+    'nia.nova.core.base',
+    'nia.memory.chunking',
+    'nia.memory.vector_store',
+    'nia.core.neo4j.agent_store'
+]:
+    logging.getLogger(module).setLevel(logging.DEBUG)
 
 # Add JSON handler
 json_handler = JsonLogHandler(session_log)
@@ -289,26 +305,31 @@ async def test_agent_storage(results: TestResults):
         
         # Create thread with complete metadata per 0113 requirements
         memory_id = str(uuid.uuid4())  # Generate unique memory ID
+        memory_type = "thread"  # Use custom type for thread
+        
         thread_memory = Memory(
             id=memory_id,  # Use generated memory ID
             content=json.dumps(memory_content),  # Serialize content to string
-            type="episodic",
+            type=memory_type,  # Use custom type
             importance=0.8,
             timestamp=datetime.now().isoformat(),
             context={
                 "domain": "test",  # Required domain
                 "source": "test",
-                "type": MemoryType.EPISODIC.value,
+                "type": memory_type,  # Match memory type
                 "workspace": "test"  # Required workspace
             },
             metadata={
                 "thread_id": thread_id,  # Store thread ID in metadata
-                "system": False,    # Required system flag
-                "pinned": False,    # Required pinned flag
+                "type": memory_type,     # Match memory type
+                "system": False,         # Required system flag
+                "pinned": False,         # Required pinned flag
                 "description": "Test thread for agent storage",  # Required description
                 "consolidated": False
             }
         )
+        
+        logger.debug(f"Created thread memory with type: {memory_type}")
         
         # Store memory
         logger.info(f"Storing thread memory with ID: {memory_id}", 
