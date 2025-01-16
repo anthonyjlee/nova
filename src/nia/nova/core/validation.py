@@ -5,8 +5,6 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 from pydantic import ValidationError, BaseModel
 
-from nia.core.feature_flags import FeatureFlags
-
 logger = logging.getLogger(__name__)
 
 class ValidationPattern(BaseModel):
@@ -78,13 +76,11 @@ class ValidationTracker:
 validation_tracker = ValidationTracker()
 
 async def validate_message(
-    data: dict,
-    debug_flags: FeatureFlags
+    data: dict
 ) -> Optional[Message]:
     """Validate message with debug logging and pattern tracking."""
     try:
-        if await debug_flags.is_debug_enabled('log_validation'):
-            logger.debug(f"Validating message data: {data}")
+        logger.debug(f"Validating message data: {data}")
             
         # Basic schema validation
         message = Message(**data)
@@ -145,39 +141,30 @@ async def validate_message(
         # Add validation result to message
         message.validation = validation_result.dict()
         
-        if await debug_flags.is_debug_enabled('log_validation'):
-            logger.debug(f"Validation result: {validation_result.dict()}")
+        logger.debug(f"Validation result: {validation_result.dict()}")
             
-            # Log critical patterns
-            critical_patterns = validation_tracker.get_critical_patterns()
-            if critical_patterns:
-                logger.warning(f"Critical validation patterns detected: {critical_patterns}")
+        # Log critical patterns
+        critical_patterns = validation_tracker.get_critical_patterns()
+        if critical_patterns:
+            logger.warning(f"Critical validation patterns detected: {critical_patterns}")
                 
-        # Handle validation issues based on strict mode
-        if validation_issues and await debug_flags.is_debug_enabled('strict_mode'):
+        # Always raise on validation issues
+        if validation_issues:
             raise ValidationError(f"Validation failed: {validation_issues}")
             
         return message
         
     except Exception as e:
-        if await debug_flags.is_debug_enabled('log_validation'):
-            logger.error(f"Validation failed: {str(e)}")
-            
-        if await debug_flags.is_debug_enabled('strict_mode'):
-            raise
-        
-        logger.warning(f"Validation error (non-strict mode): {str(e)}")
-        return None
+        logger.error(f"Validation failed: {str(e)}")
+        raise
 
 async def validate_thread_access(
     thread_id: str,
-    user_id: str,
-    debug_flags: FeatureFlags
+    user_id: str
 ) -> ValidationResult:
     """Validate thread access with debug logging and pattern tracking."""
     try:
-        if await debug_flags.is_debug_enabled('log_validation'):
-            logger.debug(f"Validating thread access - thread: {thread_id}, user: {user_id}")
+        logger.debug(f"Validating thread access - thread: {thread_id}, user: {user_id}")
             
         validation_issues = []
         
@@ -214,22 +201,18 @@ async def validate_thread_access(
             }
         )
         
-        if await debug_flags.is_debug_enabled('log_validation'):
-            logger.debug(f"Thread access validation result: {validation_result.dict()}")
+        logger.debug(f"Thread access validation result: {validation_result.dict()}")
             
-            # Log critical patterns
-            critical_patterns = validation_tracker.get_critical_patterns()
-            if critical_patterns:
-                logger.warning(f"Critical validation patterns detected: {critical_patterns}")
+        # Log critical patterns
+        critical_patterns = validation_tracker.get_critical_patterns()
+        if critical_patterns:
+            logger.warning(f"Critical validation patterns detected: {critical_patterns}")
                 
         return validation_result
         
     except Exception as e:
-        if await debug_flags.is_debug_enabled('log_validation'):
-            logger.error(f"Thread access validation failed: {str(e)}")
-            
-        if await debug_flags.is_debug_enabled('strict_mode'):
-            raise
+        logger.error(f"Thread access validation failed: {str(e)}")
+        raise
             
         return ValidationResult(
             is_valid=False,
@@ -247,13 +230,11 @@ async def validate_thread_access(
 
 async def validate_schema(
     data: Dict[str, Any],
-    schema_type: str,
-    debug_flags: FeatureFlags
+    schema_type: str
 ) -> ValidationResult:
     """Validate data against a schema with debug logging and pattern tracking."""
     try:
-        if await debug_flags.is_debug_enabled('log_validation'):
-            logger.debug(f"Validating schema - type: {schema_type}, data: {data}")
+        logger.debug(f"Validating schema - type: {schema_type}, data: {data}")
             
         validation_issues = []
         
@@ -269,22 +250,18 @@ async def validate_schema(
             }
         )
         
-        if await debug_flags.is_debug_enabled('log_validation'):
-            logger.debug(f"Schema validation result: {validation_result.dict()}")
+        logger.debug(f"Schema validation result: {validation_result.dict()}")
             
-            # Log critical patterns
-            critical_patterns = validation_tracker.get_critical_patterns()
-            if critical_patterns:
-                logger.warning(f"Critical validation patterns detected: {critical_patterns}")
+        # Log critical patterns
+        critical_patterns = validation_tracker.get_critical_patterns()
+        if critical_patterns:
+            logger.warning(f"Critical validation patterns detected: {critical_patterns}")
                 
         return validation_result
         
     except Exception as e:
-        if await debug_flags.is_debug_enabled('log_validation'):
-            logger.error(f"Schema validation failed: {str(e)}")
-            
-        if await debug_flags.is_debug_enabled('strict_mode'):
-            raise
+        logger.error(f"Schema validation failed: {str(e)}")
+        raise
             
         return ValidationResult(
             is_valid=False,

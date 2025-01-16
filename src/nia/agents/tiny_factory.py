@@ -37,42 +37,94 @@ class TinyFactory:
             logger.info("Initializing TinyFactory")
             self._initialized = True
             
-    async def create_agent(self, agent_type: str, config: Optional[Dict[str, Any]] = None) -> BaseAgent:
-        """Create a new agent of specified type."""
+    async def create_agent(
+        self,
+        agent_type: str,
+        domain: str,
+        capabilities: List[str],
+        supervisor_id: Optional[str] = None,
+        attributes: Optional[Dict] = None
+    ) -> Dict[str, Any]:
+        """Create a new agent with specified type and capabilities.
+        
+        Args:
+            agent_type: Type of agent to create
+            domain: Operating domain for the agent
+            capabilities: List of agent capabilities
+            supervisor_id: Optional ID of supervising agent
+            attributes: Optional additional attributes
+            
+        Returns:
+            Dict[str, Any]: Dictionary containing agent info including id, type, domain, and capabilities
+        """
         if not self._initialized:
             await self.initialize()
             
         agent_id = str(uuid4())
-        agent_config = config or {}
         
-        # Map agent types to classes
-        agent_classes = {
-            "parsing": ParsingAgent,
-            "coordination": CoordinationAgent,
-            "analytics": AnalyticsAgent,
-            "orchestration": OrchestrationAgent,
-            "schema": SchemaAgent
+        # Create agent config
+        agent_config = {
+            "name": f"{agent_type}_{agent_id[:8]}",
+            "agent_type": agent_type,
+            "domain": domain,
+            "capabilities": capabilities,
+            **(attributes or {})
         }
         
-        if agent_type not in agent_classes:
-            raise ValueError(f"Unknown agent type: {agent_type}")
+        # Create agent instance
+        if agent_type == "test":
+            # Use base agent class for test agents
+            agent = BaseAgent(
+                name=agent_id,
+                agent_type=agent_type,
+                memory_system=self.memory_system,
+                world=self.world,
+                attributes=attributes
+            )
+        else:
+            # Map agent types to classes
+            agent_classes = {
+                "parsing": ParsingAgent,
+                "coordination": CoordinationAgent,
+                "analytics": AnalyticsAgent,
+                "orchestration": OrchestrationAgent,
+                "schema": SchemaAgent
+            }
             
-        agent_class = agent_classes[agent_type]
-        agent = agent_class(
-            name=agent_id,
-            memory_system=self.memory_system,
-            world=self.world,
-            attributes=agent_config
-        )
+            # Import MetaAgent at runtime to avoid circular import
+            if agent_type == "meta":
+                from .specialized.meta_agent import MetaAgent
+                agent_classes["meta"] = MetaAgent
+            
+            if agent_type not in agent_classes:
+                raise ValueError(f"Unknown agent type: {agent_type}")
+                
+            agent_class = agent_classes[agent_type]
+            agent = agent_class(
+                name=agent_id,
+                memory_system=self.memory_system,
+                world=self.world,
+                attributes=attributes
+            )
         agent.id = agent_id
         
         # Initialize agent
         await agent.initialize()
         
+        # Register agent with world if available
+        if self.world:
+            await self.world.register_agent(agent_id, capabilities)
+        
         # Store agent
         self._agents[agent_id] = agent
         
-        return agent
+        # Return object with id property
+        return {
+            "id": agent_id,
+            "type": agent_type,
+            "domain": domain,
+            "capabilities": capabilities
+        }
         
     async def get_agent(self, agent_id: str) -> Optional[BaseAgent]:
         """Get agent by ID."""
@@ -80,15 +132,32 @@ class TinyFactory:
         
     async def get_agents_by_type(self, agent_type: str) -> List[BaseAgent]:
         """Get all agents of specified type."""
-        return [
-            agent for agent in self._agents.values()
-            if isinstance(agent, self._get_agent_class(agent_type))
-        ]
+        if agent_type == "test":
+            return [
+                agent for agent in self._agents.values()
+                if agent.agent_type == "test"
+            ]
+            
+        # For specialized agents, use class-based check
+        try:
+            agent_class = self._get_agent_class(agent_type)
+            return [
+                agent for agent in self._agents.values()
+                if isinstance(agent, agent_class)
+            ]
+        except ValueError:
+            return []
         
     async def delete_agent(self, agent_id: str):
         """Delete agent by ID."""
         if agent_id in self._agents:
             agent = self._agents[agent_id]
+            
+            # Unregister from world if available
+            if self.world:
+                await self.world.unregister_agent(agent_id)
+            
+            # Cleanup and remove agent
             await agent.cleanup()
             del self._agents[agent_id]
             
@@ -101,6 +170,11 @@ class TinyFactory:
             "orchestration": OrchestrationAgent,
             "schema": SchemaAgent
         }
+        
+        # Import MetaAgent at runtime to avoid circular import
+        if agent_type == "meta":
+            from .specialized.meta_agent import MetaAgent
+            agent_classes["meta"] = MetaAgent
         
         if agent_type not in agent_classes:
             raise ValueError(f"Unknown agent type: {agent_type}")

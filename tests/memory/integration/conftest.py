@@ -1,642 +1,496 @@
-"""Shared fixtures for memory integration tests."""
+"""Tests for Nova endpoints."""
 
 import pytest
-import uuid
-import json
-import re
-import asyncio
 import logging
-from typing import Dict, List, Any, Optional
-from datetime import datetime, timezone
+import asyncio
+from fastapi import FastAPI
+import httpx
+from datetime import datetime
+from pathlib import Path
+from typing import AsyncGenerator, Any, Dict, List
+from unittest.mock import AsyncMock, MagicMock
 
-logger = logging.getLogger(__name__)
+# Import pytest-asyncio event loop fixture
+pytest_plugins = ('pytest_asyncio',)
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an instance of the default event loop for the test session."""
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+from nia.nova.core.nova_endpoints import nova_router
+from nia.world.world import World, NIAWorld
+from nia.agents.tiny_factory import TinyFactory
+from nia.agents.specialized.meta_agent import MetaAgent
+from nia.memory.two_layer import TwoLayerMemorySystem
+from nia.memory.vector_store import VectorStore
+from nia.core.feature_flags import FeatureFlags
+from nia.core.neo4j.base_store import Neo4jBaseStore
 
-from nia.core.types.memory_types import (
-    Memory, MemoryType, EpisodicMemory, MockMemory,
-    Concept, Relationship, DomainContext, BaseDomain, KnowledgeVertical,
-    ValidationSchema, CrossDomainSchema
-)
-from nia.core.neo4j.concept_store import ConceptStore
-from nia.memory.two_layer import TwoLayerMemorySystem, SemanticLayer
-from nia.memory.consolidation import ConsolidationManager
-from nia.world.environment import NIAWorld
-from nia.nova.orchestrator import Nova
-from .mock_vector_store import MockVectorStore
+# Configure logging
+LOGS_DIR = Path("logs/tests")
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+log_file = LOGS_DIR / f"test_nova_endpoints_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 
-class MockRecord:
-    """Mock Neo4j record that provides dictionary-like access."""
-    
-    def __init__(self, data: dict):
-        """Initialize with record data."""
-        self._data = data
-        
-    def __getitem__(self, key):
-        """Support dictionary-style access."""
-        return self._data[key]
-        
-    def get(self, key, default=None):
-        """Support get with default."""
-        return self._data.get(key, default)
+# Configure file handler
+file_handler = logging.FileHandler(log_file)
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
 
-class MockResult:
-    """Mock Neo4j result that never does network IO."""
-    
-    def __init__(self, records=None):
-        """Initialize with optional records."""
-        self._records = [MockRecord(r) for r in (records or [])]
-        logger.info(f"MockResult initialized with {len(self._records)} records")
-        if self._records:
-            logger.info(f"First record: {json.dumps(self._records[0]._data, indent=2)}")
-        
-    def __iter__(self):
-        """Support iteration over records."""
-        return iter(self._records)
-        
-    async def single(self, default=None):
-        """Get single record."""
-        if self._records:
-            logger.info(f"Returning single record: {json.dumps(self._records[0]._data, indent=2)}")
-            return self._records[0]
-        logger.info(f"No records found, returning default: {default}")
-        return default
-        
-    def single_record(self):
-        """Get single record synchronously."""
-        if self._records:
-            logger.info(f"Returning single record: {json.dumps(self._records[0]._data, indent=2)}")
-            return self._records[0]
-        logger.info("No records found")
-        return None
-        
-    async def consume(self):
-        """No-op consume."""
-        logger.info(f"Consuming {len(self._records)} records")
-        return {"summary": {"counters": {"nodes-created": len(self._records)}}}
-        
-    def consume_sync(self):
-        """No-op consume synchronously."""
-        logger.info(f"Consuming {len(self._records)} records")
-        return {"summary": {"counters": {"nodes-created": len(self._records)}}}
-        
-    def data(self):
-        """Get raw record data."""
-        data = [r._data for r in self._records]
-        logger.info(f"Returning {len(data)} records: {json.dumps(data, indent=2)}")
-        return data
-        
-    def validate_records(self):
-        """Validate record structure."""
-        for i, record in enumerate(self._records):
-            if not isinstance(record._data, dict):
-                logger.error(f"Record {i} is not a dictionary: {record._data}")
-                return False
-            if "n" not in record._data:
-                logger.error(f"Record {i} missing 'n' key: {record._data}")
-                return False
-            if "relationships" not in record._data:
-                logger.error(f"Record {i} missing 'relationships' key: {record._data}")
-                return False
-        logger.info("All records validated successfully")
-        return True
+# Configure logger - file only, no console output
+logger = logging.getLogger("test-nova-endpoints")
+logger.setLevel(logging.DEBUG)
+logger.addHandler(file_handler)
+logger.propagate = False  # Prevent propagation to root logger
 
-class MockSession:
-    """Mock Neo4j session that never does network IO."""
-    
-    def __init__(self, store):
-        """Initialize mock session."""
-        self.store = store
-        logger.info("MockSession initialized")
-        
-    async def __aenter__(self):
-        """Context manager entry."""
-        return self
-        
-    async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Context manager exit."""
-        pass
-        
-    async def run(self, query: str, parameters: dict = None):
-        """Mock query execution that returns results from store."""
-        logger.info(f"MockSession.run() called with query: {query}")
-        results = await self.store._query(query, parameters or {})
-        return MockResult(results)
-        
-    def close(self):
-        """No-op close."""
-        pass
+@pytest_asyncio.fixture
+async def mock_vector_store() -> AsyncMock:
+    """Mock vector store fixture."""
+    mock = AsyncMock(spec=VectorStore)
+    mock.initialize = AsyncMock(return_value=None)
+    mock.store_vector = AsyncMock(return_value=None)
+    mock.search_vectors = AsyncMock(return_value=[])
+    mock.inspect_collection = AsyncMock(return_value=None)
+    mock.id = "vector-store-id"
+    mock.name = "vector-store"
+    mock.type = "vector-store"
+    mock.status = "active"
+    mock.episodic = True
+    mock.domain = "memory"
+    mock.capabilities = ["vector-store"]
+    mock.metadata = {}
+    mock.get_state = AsyncMock(return_value={})
+    mock.update_state = AsyncMock(return_value=None)
+    return mock
 
-class MockDriver:
-    """Mock Neo4j driver that never does network IO."""
-    
-    def __init__(self, store):
-        """Initialize with store reference."""
-        self.store = store
-        logger.info("MockDriver initialized")
-        
-    def session(self, database=None, default_access_mode=None):
-        """Create a mock session with store reference."""
-        logger.info(f"MockDriver.session() called with database={database}")
-        return MockSession(self.store)
-        
-    async def close(self):
-        """No-op close."""
-        logger.info("MockDriver.close() called")
-        pass
-        
-    async def verify_connectivity(self):
-        """No-op connectivity check."""
-        logger.info("MockDriver.verify_connectivity() called")
-        return True
+@pytest_asyncio.fixture
+async def mock_world() -> AsyncMock:
+    """Mock world fixture."""
+    mock = AsyncMock(spec=World)
+    mock.initialize = AsyncMock(return_value=None)
+    mock.get_state = AsyncMock(return_value={})
+    mock.update_state = AsyncMock(return_value=None)
+    mock.execute_action = AsyncMock(return_value={"status": "success"})
+    mock.id = "world-id"
+    mock.name = "world"
+    mock.type = "world"
+    mock.status = "active"
+    mock.episodic = True
+    mock.domain = "world"
+    mock.capabilities = ["world"]
+    mock.metadata = {}
+    return mock
 
-def finalize_validation(validation: Any) -> dict:
-    """Convert validation schema to dictionary with consistent structure."""
-    # If already a dict, ensure required fields
-    if isinstance(validation, dict):
-        return {
-            "domain": validation.get("domain", "professional"),
-            "access_domain": validation.get("access_domain", "professional"),
-            "confidence": validation.get("confidence", 0.9),
-            "source": validation.get("source", "test"),
-            "approved": validation.get("approved", True),
-            "cross_domain": validation.get("cross_domain", {
-                "approved": True,
-                "requested": True,
-                "source_domain": "professional",
-                "target_domain": "professional",
-                "justification": "Test justification"
-            })
+@pytest_asyncio.fixture
+async def mock_tiny_factory() -> AsyncMock:
+    """Mock tiny factory fixture."""
+    mock = AsyncMock(spec=TinyFactory)
+    mock.initialize = AsyncMock(return_value=None)
+    mock.create_agent = AsyncMock(return_value=MagicMock(
+        id="test-agent-id",
+        name="test-agent",
+        type="test",
+        status="active",
+        episodic=True,
+        domain="test-domain",
+        capabilities=["test"],
+        metadata={},
+        initialize=AsyncMock(return_value=None),
+        process=AsyncMock(return_value={"content": "test", "metadata": {}}),
+        get_state=AsyncMock(return_value={}),
+        update_state=AsyncMock(return_value=None)
+    ))
+    mock.id = "tiny-factory-id"
+    mock.name = "tiny-factory"
+    mock.type = "factory"
+    mock.status = "active"
+    mock.episodic = True
+    mock.domain = "factory"
+    mock.capabilities = ["factory"]
+    mock.metadata = {}
+    mock.get_state = AsyncMock(return_value={})
+    mock.update_state = AsyncMock(return_value=None)
+    return mock
+
+@pytest_asyncio.fixture
+async def mock_meta_agent_with_deps(mock_world: AsyncMock, mock_tiny_factory: AsyncMock) -> AsyncMock:
+    """Create meta agent fixture with dependencies."""
+    mock = AsyncMock(spec=MetaAgent)
+    mock.initialize = AsyncMock(return_value=None)
+    mock.process_interaction = AsyncMock(return_value={
+        "content": "test response",
+        "metadata": {
+            "agent_actions": [],
+            "initialization_sequence": [],
+            "initialization_errors": {}
         }
-    
-    # If string, try to parse as JSON
-    if isinstance(validation, str):
-        try:
-            return finalize_validation(json.loads(validation))
-        except json.JSONDecodeError:
-            logger.warning(f"Failed to parse validation JSON: {validation}")
-            return finalize_validation({})
-    
-    # If ValidationSchema, convert to dict and ensure all nested schemas are also converted
-    if isinstance(validation, ValidationSchema):
-        validation_dict = validation.dict()
-        # Convert any nested schemas to dicts
-        for key, value in validation_dict.items():
-            if isinstance(value, (ValidationSchema, CrossDomainSchema)):
-                validation_dict[key] = value.dict()
-            elif isinstance(value, list):
-                validation_dict[key] = [
-                    item.dict() if isinstance(item, (ValidationSchema, CrossDomainSchema)) else item
-                    for item in value
-                ]
-        # Add required fields that might be missing
-        validation_dict.update({
-            "approved": validation_dict.get("approved", True),
-            "requested": validation_dict.get("requested", True),
-            "source_domain": validation_dict.get("source_domain", "professional"),
-            "target_domain": validation_dict.get("target_domain", "professional"),
-            "justification": validation_dict.get("justification", "Test justification")
-        })
-        return validation_dict
-    
-    # Default validation
-    return finalize_validation({})
+    })
+    mock.get_state = AsyncMock(return_value={})
+    mock.update_state = AsyncMock(return_value=None)
+    mock.id = "meta-agent-id"
+    mock.name = "meta-agent"
+    mock.type = "meta"
+    mock.status = "active"
+    mock.episodic = True
+    mock.domain = "professional"
+    mock.capabilities = ["team_coordination", "cognitive_processing", "task_management"]
+    mock.metadata = {
+        "agent_actions": [],
+        "initialization_sequence": [],
+        "initialization_errors": {}
+    }
+    mock.memory_system = None
+    mock.world = mock_world
+    mock.attributes = None
+    mock.factory = mock_tiny_factory
+    mock.initialization_sequence = []
+    mock.agent_dependencies = {}
+    mock.initialization_errors = {}
+    await mock.initialize()
+    return mock
 
-class MockNeo4jStore(ConceptStore):
-    """Mock Neo4j store for testing."""
-    
-    def __init__(self, uri="bolt://localhost:7687", *args, **kwargs):
-        """Initialize mock store."""
-        super().__init__(uri=uri)  # Initialize parent first
-        self.nodes = {}  # In-memory storage
-        self.relationships = []  # In-memory relationships
-        self._driver = None  # Initialize driver as None
-        self._uri = uri  # Store URI as protected attribute
-        logger.info(f"Initialized MockNeo4jStore with URI: {uri}")
+@pytest_asyncio.fixture
+async def mock_meta_agent_no_deps() -> AsyncMock:
+    """Create meta agent fixture without dependencies."""
+    mock = AsyncMock(spec=MetaAgent)
+    mock.initialize = AsyncMock(return_value=None)
+    mock.process_interaction = AsyncMock(return_value={"content": "test response", "metadata": {"agent_actions": [], "initialization_sequence": [], "initialization_errors": {}}})
+    mock.get_state = AsyncMock(return_value={})
+    mock.update_state = AsyncMock(return_value=None)
+    mock.id = "meta-agent-no-deps-id"
+    mock.name = "meta-agent-no-deps"
+    mock.type = "meta"
+    mock.status = "active"
+    mock.episodic = True
+    mock.domain = "professional"
+    mock.capabilities = ["team_coordination", "cognitive_processing", "task_management"]
+    mock.metadata = {"agent_actions": [], "initialization_sequence": [], "initialization_errors": {}}
+    mock.memory_system = None
+    mock.world = None
+    mock.attributes = None
+    mock.factory = None
+    mock.initialization_sequence = []
+    mock.agent_dependencies = {}
+    mock.initialization_errors = {}
+    await mock.initialize()
+    return mock
 
-    @property
-    def uri(self):
-        """Get the Neo4j URI."""
-        return self._uri
+@pytest_asyncio.fixture
+async def mock_memory_system(mock_vector_store: AsyncMock) -> AsyncMock:
+    """Mock memory system fixture."""
+    mock = AsyncMock(spec=TwoLayerMemorySystem)
+    mock.initialize = AsyncMock(return_value=None)
+    mock.store = AsyncMock(return_value=None)
+    mock.search = AsyncMock(return_value=[])
+    mock.vector_store = mock_vector_store
+    mock.id = "memory-system-id"
+    mock.name = "memory-system"
+    mock.type = "memory"
+    mock.status = "active"
+    mock.episodic = True
+    mock.domain = "memory"
+    mock.capabilities = ["memory"]
+    mock.metadata = {}
+    mock.get_state = AsyncMock(return_value={})
+    mock.update_state = AsyncMock(return_value=None)
+    return mock
 
-    @uri.setter
-    def uri(self, value):
-        """Set the Neo4j URI."""
-        self._uri = value
+@pytest_asyncio.fixture(name="test_app")
+async def test_app_fixture(
+    mock_tiny_factory: AsyncMock,
+    mock_world: AsyncMock,
+    mock_meta_agent_with_deps: AsyncMock,
+    mock_memory_system: AsyncMock
+) -> FastAPI:
+    """Create and configure FastAPI test application."""
+    logger.info("Setting up test app")
+    from nia.nova.core import dependencies
 
-    @property
-    def driver(self):
-        """Get the Neo4j driver instance."""
-        if self._driver is None:
-            self._driver = MockDriver(self)
-        return self._driver
+    tf = await mock_tiny_factory
+    w = await mock_world
+    ma = await mock_meta_agent_with_deps
+    ms = await mock_memory_system
 
-    @driver.setter
-    def driver(self, value):
-        """Set the Neo4j driver instance."""
-        self._driver = value
-        
-    async def connect(self):
-        """Override connect to prevent real connection attempts."""
-        logger.info("MockNeo4jStore.connect() called - no real connection needed")
-        return True
-        
-    async def close(self):
-        """Override close to prevent real connection cleanup."""
-        logger.info("MockNeo4jStore.close() called - no real connection to close")
-        return True
-        
-    async def disconnect(self):
-        """Alias for close() to maintain compatibility."""
-        return await self.close()
-        
-    async def _ensure_indexes(self):
-        """No-op for mock."""
-        return True
-        
-    async def store_concept(self, *args, **kwargs) -> dict | None:
-        """Store a concept with validation."""
-        # Extract parameters
-        name = kwargs.get("name")
-        type = kwargs.get("type")
-        description = kwargs.get("description", "")
-        validation = kwargs.get("validation", {})
-        
-        # Convert validation to consistent dictionary
-        validation_dict = finalize_validation(validation)
-            
-        # Store validation both as individual fields and complete JSON
-        node = {
-            # Core fields
-            "name": name,
-            "type": type,
-            "description": description,
-            
-            # Required top-level fields
-            "domain": validation_dict["domain"],
-            "domains": [validation_dict["domain"]],  # Required for pattern matching
-            "from": name,  # Required for relationship pattern matching
-            "to": name,    # Required for relationship pattern matching
-            
-            # Validation data
-            "validation": validation_dict,  # Complete JSON
-            "validation_json": json.dumps(validation_dict),  # Backup JSON string
-            
-            # Individual validation fields at top level for direct access
-            "access_domain": validation_dict["access_domain"],
-            "confidence": validation_dict["confidence"],
-            "source": validation_dict["source"],
-            "approved": validation_dict["approved"],
-            "cross_domain": validation_dict["cross_domain"],
-            
-            # Additional required fields
-            "is_consolidation": kwargs.get("is_consolidation", False),
-            "timestamp": datetime.now(timezone.utc).isoformat()
+    app = FastAPI()
+    app.dependency_overrides = {
+        dependencies.get_tiny_factory: lambda: tf,
+        dependencies.get_world: lambda: w,
+        dependencies.get_meta_agent: lambda: ma,
+        dependencies.get_memory_system: lambda: ms
+    }
+    app.include_router(nova_router)
+    return app
+
+@pytest_asyncio.fixture(name="async_client")
+async def async_client_fixture(test_app: FastAPI) -> AsyncGenerator[httpx.AsyncClient, None]:
+    """Create async test client."""
+    async with httpx.AsyncClient(app=test_app, base_url="http://test") as client:
+        yield client
+
+@pytest.mark.asyncio
+async def test_initial_processing(
+    async_client: httpx.AsyncClient,
+    mock_meta_agent_with_deps: AsyncMock,
+    mock_memory_system: AsyncMock
+) -> None:
+    """Test initial processing phase."""
+    logger.info("Testing initial processing phase")
+    response = await async_client.post("/api/nova/ask",
+        headers={"X-API-Key": "test-key"},
+        json={
+            "content": "test query",
+            "workspace": "personal"
         }
-        logger.info(f"Storing concept node: {json.dumps(node, indent=2)}")
-        
-        try:
-            # Store node
-            self.nodes[name] = node
-            logger.info(f"Successfully stored concept: {name}")
-            logger.info(f"Concept validation data: {json.dumps(node['validation'], indent=2)}")
-            
-            # Ensure validation is a dictionary
-            if isinstance(node["validation"], ValidationSchema):
-                node["validation"] = node["validation"].dict()
-            elif isinstance(node["validation"], str):
-                node["validation"] = json.loads(node["validation"])
-                
-            return {"n": node, "relationships": []}
-        except Exception as e:
-            logger.error(f"Failed to store concept {name}: {str(e)}")
-            raise
-        
-    async def store_relationship(self, source: str, target: str, rel_type: str = "RELATED_TO", bidirectional: bool = True) -> None:
-        """Store a relationship between concepts."""
-        try:
-            # Create validation data
-            validation_dict = finalize_validation({
-                "domain": "professional",
-                "approved": True,
-                "cross_domain": {
-                    "approved": True,
-                    "requested": True,
-                    "source_domain": "professional",
-                    "target_domain": "professional",
-                    "justification": "Test justification"
+    )
+    logger.debug(f"Response status: {response.status_code}")
+    logger.debug(f"Response content: {response.json()}")
+
+    logger.info("Verifying initial processing assertions")
+    assert response.status_code == 200, f"Expected status code 200, got {response.status_code}"
+    response_data = response.json()
+
+    assert "threadId" in response_data, "Response should have threadId"
+    assert "message" in response_data, "Response should have message"
+    assert "agent_actions" in response_data, "Response should have agent_actions"
+
+    message = response_data["message"]
+    assert "id" in message, "Message should have id"
+    assert "content" in message, "Message should have content"
+    assert "sender_type" in message, "Message should have sender_type"
+    assert message["sender_id"] == "nova", "Sender ID should be nova"
+    assert "timestamp" in message, "Message should have timestamp"
+    assert "metadata" in message, "Message should have metadata"
+
+    assert message["sender_type"] == "agent", "Sender type should be agent"
+
+    metadata = message["metadata"]
+    assert "agent_actions" in metadata, "Metadata should have agent_actions"
+
+    await mock_meta_agent_with_deps.process_interaction.assert_called_once()
+    await mock_memory_system.store.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_task_detection(
+    async_client: httpx.AsyncClient,
+    mock_meta_agent_with_deps: AsyncMock,
+    mock_memory_system: AsyncMock
+) -> None:
+    """Test task detection phase."""
+    logger.info("Testing task detection phase")
+
+    response = await async_client.post("/api/nova/ask",
+        headers={"X-API-Key": "test-key"},
+        json={
+            "content": "create a test",
+            "workspace": "personal"
+        }
+    )
+    logger.debug(f"Response status: {response.status_code}")
+    logger.debug(f"Response content: {response.json()}")
+
+    logger.info("Verifying task detection assertions")
+    assert response.status_code == 200, f"Expected status code 200, got {response.status_code}"
+    response_data = response.json()
+
+    assert "threadId" in response_data, "Response should have threadId"
+    assert "message" in response_data, "Response should have message"
+    assert "agent_actions" in response_data, "Response should have agent_actions"
+
+    message = response_data["message"]
+    assert "id" in message, "Message should have id"
+    assert "content" in message, "Message should have content"
+    assert "sender_type" in message, "Message should have sender_type"
+    assert message["sender_id"] == "nova", "Sender ID should be nova"
+    assert "timestamp" in message, "Message should have timestamp"
+    assert "metadata" in message, "Message should have metadata"
+
+    assert message["sender_type"] == "agent", "Sender type should be agent"
+
+    metadata = message["metadata"]
+    assert "agent_actions" in metadata, "Metadata should have agent_actions"
+
+    await mock_meta_agent_with_deps.process_interaction.assert_called_once()
+    await mock_memory_system.store.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_schema_validation_failure(async_client: httpx.AsyncClient) -> None:
+    """Test handling of schema validation failure."""
+    logger.info("Testing schema validation failure")
+
+    response = await async_client.post("/api/nova/ask",
+        headers={"X-API-Key": "test-key"},
+        json={
+            "content": "test query",
+            "workspace": "invalid"  # Invalid workspace value
+        }
+    )
+    logger.debug(f"Response status: {response.status_code}")
+    logger.debug(f"Response content: {response.json()}")
+
+    logger.info("Verifying schema validation failure assertions")
+    assert response.status_code == 422, f"Expected status code 422, got {response.status_code}"
+    response_data = response.json()
+    assert "detail" in response_data, "Response should have validation error details"
+
+@pytest.mark.asyncio
+async def test_meta_agent_no_dependencies(
+    async_client: httpx.AsyncClient,
+    mock_meta_agent_no_deps: AsyncMock
+) -> None:
+    """Test MetaAgent functioning without dependencies."""
+    logger.info("Testing MetaAgent without dependencies")
+
+    ma = await mock_meta_agent_no_deps
+    assert ma.memory_system is None, "MetaAgent should have no memory system"
+    assert ma.world is None, "MetaAgent should have no world"
+    assert ma.attributes is None, "MetaAgent should have no attributes"
+
+    response = await async_client.post("/api/nova/ask",
+        headers={"X-API-Key": "test-key"},
+        json={
+            "content": "simple query",
+            "workspace": "personal"
+        }
+    )
+    logger.debug(f"Response status: {response.status_code}")
+    logger.debug(f"Response content: {response.json()}")
+
+    assert response.status_code == 200, f"Expected status code 200, got {response.status_code}"
+    response_data = response.json()
+
+    assert "threadId" in response_data, "Response should have threadId"
+    assert "message" in response_data, "Response should have message"
+    assert "agent_actions" in response_data, "Response should have agent_actions"
+
+    message = response_data["message"]
+    assert "id" in message, "Message should have id"
+    assert "content" in message, "Message should have content"
+    assert "sender_type" in message, "Message should have sender_type"
+    assert message["sender_id"] == "nova", "Sender ID should be nova"
+    assert "timestamp" in message, "Message should have timestamp"
+    assert "metadata" in message, "Message should have metadata"
+
+    assert message["sender_type"] == "agent", "Sender type should be agent"
+
+    metadata = message["metadata"]
+    assert "agent_actions" in metadata, "Metadata should have agent_actions"
+
+    await ma.process_interaction.assert_called_once()
+
+@pytest.mark.asyncio
+async def test_initialization_error_handling(
+    async_client: httpx.AsyncClient,
+    mock_meta_agent_with_deps: AsyncMock,
+    mock_memory_system: AsyncMock,
+    mock_world: AsyncMock
+) -> None:
+    """Test error handling during initialization."""
+    logger.info("Testing initialization error handling")
+
+    ma = await mock_meta_agent_with_deps
+    ms = await mock_memory_system
+    w = await mock_world
+
+    ms.initialize.side_effect = Exception("Simulated memory system error")
+
+    response = await async_client.post("/api/nova/ask",
+        headers={"X-API-Key": "test-key"},
+        json={
+            "content": "test initialization errors",
+            "workspace": "personal",
+            "debug_flags": {
+                "trace_initialization": True,
+                "trace_dependencies": True,
+                "simulate_errors": {
+                    "memory_system": True
                 }
-            })
-            
-            # Create relationship with all required fields
-            rel = {
-                # Core fields
-                "type": rel_type,
-                
-                # Required source/target fields (both naming conventions)
-                "source": source,  # For episodic layer
-                "target": target,
-                "from": source,    # For semantic layer
-                "to": target,
-                
-                # Required domain fields
-                "domain": validation_dict["domain"],
-                "domains": ["professional"],  # Required field
-                
-                # Validation data
-                "validation": validation_dict,  # Complete JSON
-                "validation_json": json.dumps(validation_dict),  # Backup JSON string
-                
-                # Individual validation fields at top level
-                "access_domain": validation_dict["access_domain"],
-                "confidence": validation_dict["confidence"],
-                "source": validation_dict["source"],
-                "approved": validation_dict["approved"],
-                "cross_domain": validation_dict["cross_domain"],
-                
-                # Additional required fields
-                "bidirectional": bidirectional,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "is_consolidation": True  # Mark as consolidated relationship
             }
-            
-            # Ensure validation is a dictionary
-            if isinstance(rel["validation"], ValidationSchema):
-                rel["validation"] = rel["validation"].dict()
-            elif isinstance(rel["validation"], str):
-                rel["validation"] = json.loads(rel["validation"])
-            logger.info(f"Creating relationship: {json.dumps(rel, indent=2)}")
-            logger.info(f"Relationship validation data: {json.dumps(rel['validation'], indent=2)}")
-            self.relationships.append(rel)
-        
-            # Create reverse relationship if bidirectional
-            if bidirectional:
-                reverse_rel = {
-                    "source": target,  # Keep source/target for episodic layer
-                    "target": source,
-                    "from": target,    # Add from/to for semantic layer
-                    "to": source,
-                    "type": rel_type,
-                    "domains": ["professional"],  # Required field
-                    "validation": validation_dict,  # Complete JSON
-                    "validation_json": json.dumps(validation_dict),  # Backup JSON string
-                    "domain": validation_dict["domain"],  # Individual fields
-                    "access_domain": validation_dict["access_domain"],
-                    "confidence": validation_dict["confidence"],
-                    "approved": validation_dict["approved"]
-                }
-                logger.info(f"Creating reverse relationship: {json.dumps(reverse_rel, indent=2)}")
-                self.relationships.append(reverse_rel)
-                
-            logger.info(f"Successfully created relationship from {source} to {target}")
-        except Exception as e:
-            logger.error(f"Failed to create relationship from {source} to {target}: {str(e)}")
-            raise
-            
-    async def _query(self, query: str, params: dict = None) -> List[Dict]:
-        """Execute query and return results."""
-        logger.info(f"Query: {query}, params: {params}")
-        params = params or {}
-        
-        try:
-            # Handle concept search by name
-            if "WHERE c.name = $query" in query or "WHERE n.name = $query" in query:
-                name = params.get("query")
-                if name in self.nodes:
-                    node = self.nodes[name]
-                    relationships = self._get_relationships_for_node(name)
-                    logger.info(f"Found concept by name: {name}")
-                    key = "c" if "WHERE c.name" in query else "n"
-                    # Match Neo4j record structure expected by SemanticLayer
-                    processed_node = {
-                        "name": node["name"],
-                        "type": node["type"],
-                        "description": node.get("description", ""),
-                        "validation": node["validation"],
-                        "validation_json": node.get("validation_json", json.dumps(node["validation"])),
-                        "is_consolidation": node.get("is_consolidation", False),
-                        "relationships": relationships
-                    }
-                    return [processed_node]
-                return []
-            
-            # Handle concept search by pattern
-            elif "MATCH (n:Concept)" in query or "MATCH (c:Concept)" in query:
-                results = []
-                pattern = params.get("pattern", ".*")
-                logger.info(f"Searching for concepts matching pattern: {pattern}")
-                
-                for name, node in self.nodes.items():
-                    if re.match(pattern, node.get("name", "")):  # Match against node's name property
-                        logger.info(f"Found matching node: {name}")
-                        relationships = self._get_relationships_for_node(name)
-                        key = "c" if "MATCH (c:Concept)" in query else "n"
-                        
-                        # Ensure validation is a dictionary
-                        if isinstance(node.get("validation"), ValidationSchema):
-                            node["validation"] = node["validation"].dict()
-                        elif isinstance(node.get("validation"), str):
-                            node["validation"] = json.loads(node["validation"])
-                        
-                        # Ensure validation in relationships
-                        for rel in relationships:
-                            if isinstance(rel.get("validation"), ValidationSchema):
-                                rel["validation"] = rel["validation"].dict()
-                            elif isinstance(rel.get("validation"), str):
-                                rel["validation"] = json.loads(rel["validation"])
-                        
-                        # Match Neo4j record structure expected by SemanticLayer
-                        processed_node = {
-                            "name": node["name"],
-                            "type": node["type"],
-                            "description": node.get("description", ""),
-                            "validation": node["validation"],
-                            "validation_json": node.get("validation_json", json.dumps(node["validation"])),
-                            "is_consolidation": node.get("is_consolidation", False),
-                            "relationships": relationships
-                        }
-                        logger.info(f"Created result record: {json.dumps(processed_node, indent=2)}")
-                        results.append(processed_node)
-                
-                logger.info(f"Returning {len(results)} results")
-                return results
-            
-            # Handle relationship creation
-            elif "MERGE (c1:Concept" in query or "CREATE (c1:Concept" in query:
-                # Just return empty result for relationship creation
-                return []
-            
-            # Handle get concepts by type
-            elif "WHERE n.type = $type" in query or "WHERE c.type = $type" in query:
-                results = []
-                type_value = params.get("type")
-                for node in self.nodes.values():
-                    if node.get("type") == type_value:
-                        relationships = self._get_relationships_for_node(node["name"])
-                        key = "c" if "WHERE c.type" in query else "n"
-                        # Match Neo4j record structure expected by SemanticLayer
-                        processed_node = {
-                            "name": node["name"],
-                            "type": node["type"],
-                            "description": node.get("description", ""),
-                            "validation": node["validation"],
-                            "validation_json": node.get("validation_json", json.dumps(node["validation"])),
-                            "is_consolidation": node.get("is_consolidation", False),
-                            "relationships": relationships
-                        }
-                        results.append(processed_node)
-                return results
-            
-            # Default case
-            logger.info("Query did not match any known patterns")
-            return []
-            
-        except Exception as e:
-            logger.error(f"Error executing query: {str(e)}")
-            raise
-            
-    def _get_relationships_for_node(self, node_name: str) -> List[Dict]:
-        """Get relationships for a node."""
-        relationships = []
-        for rel in self.relationships:
-            if rel["source"] == node_name or rel["from"] == node_name:
-                logger.info(f"Found outgoing relationship: {rel['type']} -> {rel['to']}")
-                # Ensure validation is a dictionary
-                validation = rel["validation"]
-                if isinstance(validation, ValidationSchema):
-                    validation = validation.dict()
-                elif isinstance(validation, str):
-                    validation = json.loads(validation)
-                    
-                relationships.append({
-                    "name": rel["to"],
-                    "type": rel["type"],
-                    "domains": rel["domains"],
-                    "validation": validation,
-                    "domain_context": {
-                        "primary_domain": validation["domain"],
-                        "knowledge_vertical": "general"
-                    },
-                    "is_consolidation": True
-                })
-            elif (rel["target"] == node_name or rel["to"] == node_name) and rel.get("bidirectional", True):
-                logger.info(f"Found incoming relationship: {rel['from']} -> {rel['type']}")
-                # Ensure validation is a dictionary
-                validation = rel["validation"]
-                if isinstance(validation, ValidationSchema):
-                    validation = validation.dict()
-                elif isinstance(validation, str):
-                    validation = json.loads(validation)
-                    
-                relationships.append({
-                    "name": rel["from"],
-                    "type": rel["type"],
-                    "domains": rel["domains"],
-                    "validation": validation,
-                    "domain_context": {
-                        "primary_domain": validation["domain"],
-                        "knowledge_vertical": "general"
-                    },
-                    "is_consolidation": True
-                })
-        return relationships
+        }
+    )
 
-@pytest.fixture(scope="function")
-def mock_vector_store():
-    """Mock vector store for testing."""
-    return MockVectorStore()
+    assert response.status_code == 422, "Should return 422 when agent initialization fails"
+    error_data = response.json()
 
-@pytest.fixture(scope="function")
-def mock_neo4j_store():
-    """Mock Neo4j store fixture."""
-    return MockNeo4jStore()
+    assert "detail" in error_data, "Should include error details"
+    assert isinstance(error_data["detail"], list), "Error details should be a list"
+    assert len(error_data["detail"]) > 0, "Should include error messages"
 
-@pytest.fixture(scope="function", autouse=True)
-async def memory_system(mock_vector_store, mock_neo4j_store, event_loop):
-    """Create memory system with mock stores."""
-    # Use mock store's URI property
-    system = TwoLayerMemorySystem(neo4j_uri=mock_neo4j_store.uri, vector_store=mock_vector_store)
-    system.semantic = SemanticLayer(mock_neo4j_store)
-    system.consolidation_manager = ConsolidationManager(system.episodic, system.semantic)
-    
-    # Set up stores
-    system.episodic.store = mock_vector_store
-    system.semantic.driver = mock_neo4j_store
-    
-    # Initialize system
-    await system.initialize()
-    
-    logger.info(f"Created memory system with mock stores. Neo4j URI: {mock_neo4j_store.uri}")
-    yield system
-    
-    # Cleanup
-    await system.cleanup()
+    ms.initialize.side_effect = None
 
-@pytest.fixture(scope="function", autouse=True)
-async def world(memory_system, event_loop):
-    """Create world environment for testing."""
-    world = NIAWorld(memory_system=memory_system)
-    yield world
+    recovery_response = await async_client.post("/api/nova/ask",
+        headers={"X-API-Key": "test-key"},
+        json={
+            "content": "test recovery",
+            "workspace": "personal",
+            "debug_flags": {
+                "trace_initialization": True,
+                "trace_dependencies": True
+            }
+        }
+    )
 
-@pytest.fixture(scope="function", autouse=True)
-async def nova(memory_system, world, event_loop):
-    """Create Nova orchestrator for testing."""
-    nova = Nova(memory_system=memory_system, world=world)
-    
-    # Set up mock memory behaviors
-    def create_memory_mock(content, memory_type="episodic", context=None, metadata=None, concepts=None, relationships=None):
-        """Create a mock memory using MockMemory class."""
-        # Create validation with consistent structure
-        validation_dict = finalize_validation({
-            "domain": "professional",
-            "access_domain": "professional",
-            "confidence": 0.9,
-            "source": "professional",
-            "supported_by": [],
-            "contradicted_by": [],
-            "needs_verification": [],
-            "cross_domain": {
-                "approved": True,
-                "requested": True,
-                "source_domain": "professional",
-                "target_domain": "professional",
-                "justification": "Test justification"
-            },
-            "approved": True
-        })
+    assert recovery_response.status_code == 200, "Should recover after initialization errors"
+    recovery_data = recovery_response.json()
 
-        # Create validation schema from dict
-        validation = ValidationSchema(**validation_dict)
+    assert "threadId" in recovery_data, "Response should have threadId"
+    assert "message" in recovery_data, "Response should have message"
+    assert "agent_actions" in recovery_data, "Response should have agent_actions"
 
-        # Create domain context
-        domain_context = DomainContext(
-            primary_domain="professional",
-            knowledge_vertical="general",
-            validation=validation
-        )
+    message = recovery_data["message"]
+    assert "id" in message, "Message should have id"
+    assert "content" in message, "Message should have content"
+    assert "sender_type" in message, "Message should have sender_type"
+    assert "sender_id" in message, "Message should have sender_id"
+    assert "timestamp" in message, "Message should have timestamp"
+    assert "metadata" in message, "Message should have metadata"
 
-        # Create memory instance
-        memory = MockMemory(
-            content=content,
-            type=memory_type,
-            timestamp=datetime.now(timezone.utc),
-            context=context or {},
-            metadata=metadata or {},
-            concepts=concepts or [],
-            relationships=relationships or [],
-            consolidated=False,
-            domain_context=domain_context,
-            validation=validation,
-            validation_data=validation_dict  # Use finalized validation dict
-        )
+    assert message["sender_type"] == "agent", "Sender type should be agent"
+    assert message["sender_id"] == "nova", "Sender ID should be nova"
 
-        memory.id = f"memory_{datetime.now(timezone.utc).isoformat()}"
-        return memory
-    
-    nova.create_memory_mock = create_memory_mock
-    return nova
+    metadata = recovery_data["metadata"]
+    assert "agent_actions" in metadata, "Metadata should have agent_actions"
+    assert "debug_info" in metadata, "Metadata should have debug_info"
+
+    debug_info = metadata["debug_info"]
+    assert "initialization_sequence" in debug_info, "Debug info should have initialization sequence"
+    assert "agent_dependencies" in debug_info, "Debug info should have agent dependencies"
+
+    await ms.initialize.assert_called()
+    await w.initialize.assert_called()
+    await ma.initialize.assert_called()
+
+@pytest.mark.asyncio
+async def test_debug_flags(
+    async_client: httpx.AsyncClient,
+    mock_meta_agent_with_deps: AsyncMock,
+    mock_memory_system: AsyncMock
+) -> None:
+    """Test debug flags functionality."""
+    logger.info("Testing debug flags")
+    response = await async_client.post("/api/nova/ask",
+        headers={"X-API-Key": "test-key"},
+        json={
+            "content": "test debug flags",
+            "workspace": "personal",
+            "debug_flags": {
+                "trace_initialization": True,
+                "trace_dependencies": True
+            }
+        }
+    )
+    logger.debug(f"Response status: {response.status_code}")
+    logger.debug(f"Response content: {response.json()}")
+
+    assert response.status_code == 200, f"Expected status code 200, got {response.status_code}"
+    response_data = response.json()
+
+    assert "threadId" in response_data, "Response should have threadId"
+    assert "message" in response_data, "Response should have message"
+    assert "agent_actions" in response_data, "Response should have agent_actions"
+
+    message = response_data["message"]
+    assert "metadata" in message, "Message should have metadata"
+
+    metadata = message["metadata"]
+    assert "debug_info" in metadata, "Metadata should have debug_info"
+
+    debug_info = metadata["debug_info"]
+    assert "initialization_sequence" in debug_info, "Debug info should have initialization sequence"
+    assert "agent_dependencies" in debug_info, "Debug info should have agent dependencies"
+
+    await mock_meta_agent_with_deps.process_interaction.assert_called_once()

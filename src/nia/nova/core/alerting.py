@@ -5,7 +5,6 @@ from typing import Dict, Any, Optional, List, Union
 from datetime import datetime
 from pydantic import BaseModel
 
-from nia.core.feature_flags import FeatureFlags
 from .validation import ValidationPattern, ValidationResult, ValidationTracker
 
 logger = logging.getLogger(__name__)
@@ -47,8 +46,7 @@ class AlertingAgent:
         self,
         content: Dict[str, Any],
         alerting_type: str,
-        metadata: Optional[Dict] = None,
-        debug_flags: Optional[FeatureFlags] = None
+        metadata: Optional[Dict] = None
     ) -> AlertingResult:
         """Process alerts with domain and validation awareness."""
         try:
@@ -56,16 +54,14 @@ class AlertingAgent:
             metadata = metadata or {}
             metadata["domain"] = self.domain
             
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.debug(f"Processing alerts - type: {alerting_type}, content: {content}")
+            logger.debug(f"Processing alerts - type: {alerting_type}, content: {content}")
                 
             # Get similar alerting if vector store available
             similar_alerting = []
             if self.vector_store:
                 similar_alerting = await self._get_similar_alerting(
                     content,
-                    alerting_type,
-                    debug_flags
+                    alerting_type
                 )
             
             # Analyze with LLM if available
@@ -84,14 +80,13 @@ class AlertingAgent:
                 alerting = await self._basic_alerting(
                     content,
                     alerting_type,
-                    similar_alerting,
-                    debug_flags
+                    similar_alerting
                 )
                 
             # Extract and validate components with validation tracking
-            alerting_result = await self._extract_alerting(alerting, debug_flags)
-            alerts = await self._extract_alerts(alerting, debug_flags)
-            issues = await self._extract_issues(alerting, debug_flags)
+            alerting_result = await self._extract_alerting(alerting)
+            alerts = await self._extract_alerts(alerting)
+            issues = await self._extract_issues(alerting)
             
             # Track validation patterns
             validation_issues = []
@@ -105,8 +100,7 @@ class AlertingAgent:
                 }
                 validation_issues.append(issue)
                 
-                if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                    logger.warning(f"Missing alerts detected: {issue}")
+                logger.warning(f"Missing alerts detected: {issue}")
                     
             # Validate alerting structure
             required_structure = ["rules", "channels"]
@@ -119,8 +113,7 @@ class AlertingAgent:
                     }
                     validation_issues.append(issue)
                     
-                    if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                        logger.warning(f"Missing structure detected: {issue}")
+                    logger.warning(f"Missing structure detected: {issue}")
                         
             # Create validation result
             validation_result = ValidationResult(
@@ -156,26 +149,21 @@ class AlertingAgent:
                 validation=validation_result
             )
             
-            if debug_flags:
-                if await debug_flags.is_debug_enabled('log_validation'):
-                    logger.debug(f"Alerting result: {result.dict()}")
+            logger.debug(f"Alerting result: {result.dict()}")
                     
-                    # Log critical patterns
-                    critical_patterns = self.validation_tracker.get_critical_patterns()
-                    if critical_patterns:
-                        logger.warning(f"Critical alerting patterns detected: {critical_patterns}")
+            # Log critical patterns
+            critical_patterns = self.validation_tracker.get_critical_patterns()
+            if critical_patterns:
+                logger.warning(f"Critical alerting patterns detected: {critical_patterns}")
                         
-                if not result.validation.is_valid and await debug_flags.is_debug_enabled('strict_mode'):
-                    raise ValueError(f"Alerting validation failed: {validation_issues}")
+            if not result.validation.is_valid:
+                raise ValueError(f"Alerting validation failed: {validation_issues}")
                     
             return result
             
         except Exception as e:
             error_msg = f"Alerting error: {str(e)}"
             logger.error(error_msg)
-            
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.error(error_msg)
                 
             return AlertingResult(
                 is_valid=False,
@@ -204,13 +192,11 @@ class AlertingAgent:
     async def _get_similar_alerting(
         self,
         content: Dict[str, Any],
-        alerting_type: str,
-        debug_flags: Optional[FeatureFlags] = None
+        alerting_type: str
     ) -> List[Dict]:
         """Get similar alerting from vector store with validation."""
         try:
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.debug(f"Finding similar alerting for type: {alerting_type}")
+            logger.debug(f"Finding similar alerting for type: {alerting_type}")
                 
             if "content" in content:
                 results = await self.vector_store.search(
@@ -223,17 +209,13 @@ class AlertingAgent:
                     }
                 )
                 
-                if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                    logger.debug(f"Found {len(results)} similar alerting patterns")
+                logger.debug(f"Found {len(results)} similar alerting patterns")
                     
                 return results
                 
         except Exception as e:
             error_msg = f"Error getting similar alerting: {str(e)}"
             logger.error(error_msg)
-            
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.error(error_msg)
                 
         return []
             
@@ -241,8 +223,7 @@ class AlertingAgent:
         self,
         content: Dict[str, Any],
         alerting_type: str,
-        similar_alerting: List[Dict],
-        debug_flags: Optional[FeatureFlags] = None
+        similar_alerting: List[Dict]
     ) -> Dict:
         """Basic alert processing with validation tracking."""
         alerting = {}
@@ -331,8 +312,7 @@ class AlertingAgent:
                         }
                         validation_issues.append(issue)
                         
-                        if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                            logger.warning(f"Missing rule detected: {issue}")
+                        logger.warning(f"Missing rule detected: {issue}")
                         
             else:
                 issue = {
@@ -342,8 +322,7 @@ class AlertingAgent:
                 }
                 validation_issues.append(issue)
                 
-                if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                    logger.error(f"Invalid format detected: {issue}")
+                logger.error(f"Invalid format detected: {issue}")
                 
             # Add similar alerting as reference
             if similar_alerting:
@@ -402,8 +381,7 @@ class AlertingAgent:
         
     async def _extract_alerting(
         self,
-        alerting: Dict,
-        debug_flags: Optional[FeatureFlags] = None
+        alerting: Dict
     ) -> Dict:
         """Extract and validate alerting result with debug logging."""
         try:
@@ -467,25 +445,20 @@ class AlertingAgent:
                 )
                 self.validation_tracker.add_issue(pattern.dict())
                 
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                if validation_issues:
-                    logger.warning(f"Alerting validation issues: {validation_issues}")
+            if validation_issues:
+                logger.warning(f"Alerting validation issues: {validation_issues}")
                     
             return valid_alerting
             
         except Exception as e:
             error_msg = f"Error extracting alerting: {str(e)}"
             logger.error(error_msg)
-            
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.error(error_msg)
                 
             return {}
         
     async def _extract_alerts(
         self,
-        alerting: Dict,
-        debug_flags: Optional[FeatureFlags] = None
+        alerting: Dict
     ) -> List[Dict]:
         """Extract and validate alerting alerts with debug logging."""
         try:
@@ -535,25 +508,20 @@ class AlertingAgent:
                 )
                 self.validation_tracker.add_issue(pattern.dict())
                 
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                if validation_issues:
-                    logger.warning(f"Alert validation issues: {validation_issues}")
+            if validation_issues:
+                logger.warning(f"Alert validation issues: {validation_issues}")
                     
             return valid_alerts
             
         except Exception as e:
             error_msg = f"Error extracting alerts: {str(e)}"
             logger.error(error_msg)
-            
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.error(error_msg)
                 
             return []
         
     async def _extract_issues(
         self,
-        alerting: Dict,
-        debug_flags: Optional[FeatureFlags] = None
+        alerting: Dict
     ) -> List[Dict]:
         """Extract and validate alerting issues with debug logging."""
         try:
@@ -602,18 +570,14 @@ class AlertingAgent:
                 )
                 self.validation_tracker.add_issue(pattern.dict())
                 
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                if validation_issues:
-                    logger.warning(f"Issue validation issues: {validation_issues}")
+            if validation_issues:
+                logger.warning(f"Issue validation issues: {validation_issues}")
                     
             return valid_issues
             
         except Exception as e:
             error_msg = f"Error extracting issues: {str(e)}"
             logger.error(error_msg)
-            
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.error(error_msg)
                 
             return []
         

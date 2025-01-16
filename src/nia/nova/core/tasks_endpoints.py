@@ -6,7 +6,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 import uuid
 
-from .dependencies import get_memory_system, get_feature_flags
+from .dependencies import get_memory_system
 from .auth import get_permission
 from .error_handling import ServiceError
 from .validation import ValidationResult, ValidationPattern
@@ -15,7 +15,6 @@ from .models import (
     SubTask, Comment, TaskPriority
 )
 from nia.core.types.memory_types import Memory, MemoryType
-from nia.core.feature_flags import FeatureFlags
 
 logger = logging.getLogger(__name__)
 
@@ -42,13 +41,11 @@ async def validate_state_transition(
     current_state: TaskState,
     new_state: TaskState,
     task_id: str,
-    memory_system: Any,
-    debug_flags = None
+    memory_system: Any
 ) -> ValidationResult:
     """Validate if a state transition is allowed with debug logging."""
     try:
-        if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-            logger.debug(f"Validating state transition - from: {current_state}, to: {new_state}, task: {task_id}")
+        logger.debug(f"Validating state transition - from: {current_state}, to: {new_state}, task: {task_id}")
             
         validation_issues = []
         
@@ -62,8 +59,7 @@ async def validate_state_transition(
             }
             validation_issues.append(issue)
             
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.warning(f"Invalid state transition detected: {issue}")
+            logger.warning(f"Invalid state transition detected: {issue}")
                 
         # Additional validation for BLOCKED state
         if new_state == TaskState.BLOCKED:
@@ -84,8 +80,7 @@ async def validate_state_transition(
                 }
                 validation_issues.append(issue)
                 
-                if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                    logger.warning(f"Invalid block attempt detected: {issue}")
+                logger.warning(f"Invalid block attempt detected: {issue}")
                     
         # Create validation result
         result = ValidationResult(
@@ -99,36 +94,28 @@ async def validate_state_transition(
             }
         )
         
-        if debug_flags:
-            if await debug_flags.is_debug_enabled('log_validation'):
-                logger.debug(f"State transition validation result: {result.dict()}")
+        logger.debug(f"State transition validation result: {result.dict()}")
                 
-            if not result.is_valid and await debug_flags.is_debug_enabled('strict_mode'):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=validation_issues[0]["description"]
-                )
+        if not result.is_valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=validation_issues[0]["description"]
+            )
                 
         return result
         
     except Exception as e:
         error_msg = f"Error validating state transition: {str(e)}"
         logger.error(error_msg)
-        
-        if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-            logger.error(error_msg)
-            
         raise
 
 async def validate_domain_access(
     domain: str,
-    memory_system: Any,
-    debug_flags = None
+    memory_system: Any
 ) -> ValidationResult:
     """Validate domain access permissions with debug logging."""
     try:
-        if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-            logger.debug(f"Validating domain access - domain: {domain}")
+        logger.debug(f"Validating domain access - domain: {domain}")
             
         validation_issues = []
         
@@ -143,8 +130,7 @@ async def validate_domain_access(
             }
             validation_issues.append(issue)
             
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.warning(f"Domain access validation failed: {issue}")
+            logger.warning(f"Domain access validation failed: {issue}")
                 
         # Create validation result
         result = ValidationResult(
@@ -156,36 +142,28 @@ async def validate_domain_access(
             }
         )
         
-        if debug_flags:
-            if await debug_flags.is_debug_enabled('log_validation'):
-                logger.debug(f"Domain access validation result: {result.dict()}")
+        logger.debug(f"Domain access validation result: {result.dict()}")
                 
-            if not result.is_valid and await debug_flags.is_debug_enabled('strict_mode'):
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=validation_issues[0]["description"]
-                )
+        if not result.is_valid:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=validation_issues[0]["description"]
+            )
                 
         return result
         
     except Exception as e:
         error_msg = f"Error validating domain access: {str(e)}"
         logger.error(error_msg)
-        
-        if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-            logger.error(error_msg)
-            
         raise
 
 async def validate_task(
     task: TaskNode,
-    memory_system: Any,
-    debug_flags = None
+    memory_system: Any
 ) -> ValidationResult:
     """Validate task data with debug logging."""
     try:
-        if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-            logger.debug(f"Validating task data: {task.dict()}")
+        logger.debug(f"Validating task data: {task.dict()}")
             
         validation_issues = []
         
@@ -243,25 +221,19 @@ async def validate_task(
             }
         )
         
-        if debug_flags:
-            if await debug_flags.is_debug_enabled('log_validation'):
-                logger.debug(f"Task validation result: {result.dict()}")
+        logger.debug(f"Task validation result: {result.dict()}")
                 
-            if not result.is_valid and await debug_flags.is_debug_enabled('strict_mode'):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=validation_issues[0]["description"]
-                )
+        if not result.is_valid:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=validation_issues[0]["description"]
+            )
                 
         return result
         
     except Exception as e:
         error_msg = f"Error validating task: {str(e)}"
         logger.error(error_msg)
-        
-        if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-            logger.error(error_msg)
-            
         raise
 
 tasks_router = APIRouter(
@@ -273,13 +245,12 @@ tasks_router = APIRouter(
 @tasks_router.post("", response_model=None)
 async def create_task(
     task: TaskNode,
-    memory_system: Any = Depends(get_memory_system),
-    debug_flags = Depends(get_feature_flags, use_cache=True)
+    memory_system: Any = Depends(get_memory_system)
 ) -> Dict[str, Any]:
     """Create a new task with validation."""
     try:
         # Validate task data
-        validation_result = await validate_task(task, memory_system, debug_flags)
+        validation_result = await validate_task(task, memory_system)
         if not validation_result.is_valid:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -290,8 +261,7 @@ async def create_task(
         if task.domain:
             domain_result = await validate_domain_access(
                 task.domain,
-                memory_system,
-                debug_flags
+                memory_system
             )
             if not domain_result.is_valid:
                 raise HTTPException(
@@ -351,18 +321,13 @@ async def create_task(
     except Exception as e:
         error_msg = f"Error creating task: {str(e)}"
         logger.error(error_msg)
-        
-        if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-            logger.error(error_msg)
-            
         raise ServiceError(error_msg)
 
 @tasks_router.post("/{task_id}/transition", response_model=None)
 async def transition_task_state(
     task_id: str,
     new_state: TaskState,
-    memory_system: Any = Depends(get_memory_system),
-    debug_flags = Depends(get_feature_flags, use_cache=True)
+    memory_system: Any = Depends(get_memory_system)
 ) -> Dict[str, Any]:
     """Transition a task to a new state with validation."""
     try:
@@ -386,8 +351,7 @@ async def transition_task_state(
             TaskState(current_task[0]["status"]),
             new_state,
             task_id,
-            memory_system,
-            debug_flags
+            memory_system
         )
         
         if not validation_result.is_valid:
@@ -400,8 +364,7 @@ async def transition_task_state(
         if current_task[0]["domain"]:
             domain_result = await validate_domain_access(
                 current_task[0]["domain"],
-                memory_system,
-                debug_flags
+                memory_system
             )
             
             if not domain_result.is_valid:
@@ -449,8 +412,4 @@ async def transition_task_state(
     except Exception as e:
         error_msg = f"Error transitioning task state: {str(e)}"
         logger.error(error_msg)
-        
-        if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-            logger.error(error_msg)
-            
         raise ServiceError(error_msg)

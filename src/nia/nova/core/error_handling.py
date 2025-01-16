@@ -48,6 +48,11 @@ class ServiceError(NovaError):
     def __init__(self, message: str):
         super().__init__("SERVICE_ERROR", message)
 
+class InitializationError(NovaError):
+    """Error during initialization."""
+    def __init__(self, message: str):
+        super().__init__("INITIALIZATION_ERROR", message)
+
 # Error handlers
 async def handle_nova_error(request: Request, exc: NovaError) -> JSONResponse:
     """Handle Nova errors."""
@@ -124,6 +129,7 @@ def get_status_code(error: Exception) -> int:
         AuthorizationError: 403,
         ResourceNotFoundError: 404,
         RateLimitError: 429,
+        InitializationError: 422,
         ServiceError: 500
     }
     return status_codes.get(type(error), 500)

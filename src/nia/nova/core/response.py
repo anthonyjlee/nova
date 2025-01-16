@@ -5,7 +5,6 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 from pydantic import BaseModel
 
-from nia.core.feature_flags import FeatureFlags
 from .validation import ValidationPattern, ValidationResult, ValidationTracker
 
 logger = logging.getLogger(__name__)
@@ -44,8 +43,7 @@ class ResponseAgent:
     async def analyze_response(
         self,
         content: Dict[str, Any],
-        metadata: Optional[Dict] = None,
-        debug_flags: Optional[FeatureFlags] = None
+        metadata: Optional[Dict] = None
     ) -> ResponseResult:
         """Analyze response with domain and validation awareness."""
         try:
@@ -53,15 +51,13 @@ class ResponseAgent:
             metadata = metadata or {}
             metadata["domain"] = self.domain
             
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.debug(f"Analyzing response - content: {content}")
+            logger.debug(f"Analyzing response - content: {content}")
                 
             # Get similar responses if vector store available
             similar_responses = []
             if self.vector_store:
                 similar_responses = await self._get_similar_responses(
-                    content,
-                    debug_flags
+                    content
                 )
             
             # Analyze with LLM if available
@@ -78,13 +74,12 @@ class ResponseAgent:
             else:
                 analysis = await self._basic_analysis(
                     content,
-                    similar_responses,
-                    debug_flags
+                    similar_responses
                 )
                 
             # Extract and validate components with validation tracking
-            components = await self._extract_components(analysis, debug_flags)
-            structure = await self._extract_structure(analysis, debug_flags)
+            components = await self._extract_components(analysis)
+            structure = await self._extract_structure(analysis)
             
             # Track validation patterns
             validation_issues = []
@@ -98,8 +93,7 @@ class ResponseAgent:
                 }
                 validation_issues.append(issue)
                 
-                if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                    logger.warning(f"Missing components detected: {issue}")
+                logger.warning(f"Missing components detected: {issue}")
                     
             # Validate structure
             required_structure = ["sequence", "dependencies"]
@@ -112,8 +106,7 @@ class ResponseAgent:
                     }
                     validation_issues.append(issue)
                     
-                    if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                        logger.warning(f"Missing structure detected: {issue}")
+                    logger.warning(f"Missing structure detected: {issue}")
                         
             # Create validation result
             validation_result = ValidationResult(
@@ -147,26 +140,21 @@ class ResponseAgent:
                 validation=validation_result
             )
             
-            if debug_flags:
-                if await debug_flags.is_debug_enabled('log_validation'):
-                    logger.debug(f"Response analysis result: {result.dict()}")
+            logger.debug(f"Response analysis result: {result.dict()}")
                     
-                    # Log critical patterns
-                    critical_patterns = self.validation_tracker.get_critical_patterns()
-                    if critical_patterns:
-                        logger.warning(f"Critical response patterns detected: {critical_patterns}")
+            # Log critical patterns
+            critical_patterns = self.validation_tracker.get_critical_patterns()
+            if critical_patterns:
+                logger.warning(f"Critical response patterns detected: {critical_patterns}")
                         
-                if not result.validation.is_valid and await debug_flags.is_debug_enabled('strict_mode'):
-                    raise ValueError(f"Response validation failed: {validation_issues}")
+            if not result.validation.is_valid:
+                raise ValueError(f"Response validation failed: {validation_issues}")
                     
             return result
             
         except Exception as e:
             error_msg = f"Response analysis error: {str(e)}"
             logger.error(error_msg)
-            
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.error(error_msg)
                 
             return ResponseResult(
                 components=[],
@@ -188,13 +176,11 @@ class ResponseAgent:
             
     async def _get_similar_responses(
         self,
-        content: Dict[str, Any],
-        debug_flags: Optional[FeatureFlags] = None
+        content: Dict[str, Any]
     ) -> List[Dict]:
         """Get similar responses from vector store with validation."""
         try:
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.debug(f"Finding similar responses for content: {content}")
+            logger.debug(f"Finding similar responses for content: {content}")
                 
             if "content" in content:
                 results = await self.vector_store.search(
@@ -206,25 +192,20 @@ class ResponseAgent:
                     }
                 )
                 
-                if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                    logger.debug(f"Found {len(results)} similar responses")
+                logger.debug(f"Found {len(results)} similar responses")
                     
                 return results
                 
         except Exception as e:
             error_msg = f"Error getting similar responses: {str(e)}"
             logger.error(error_msg)
-            
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.error(error_msg)
                 
         return []
             
     async def _basic_analysis(
         self,
         content: Dict[str, Any],
-        similar_responses: List[Dict],
-        debug_flags: Optional[FeatureFlags] = None
+        similar_responses: List[Dict]
     ) -> Dict:
         """Basic response analysis with validation tracking."""
         components = []
@@ -271,8 +252,7 @@ class ResponseAgent:
                     }
                     validation_issues.append(issue)
                     
-                    if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                        logger.warning(f"Empty component detected: {issue}")
+                    logger.warning(f"Empty component detected: {issue}")
                     
         # Add similar responses as structure with validation
         if similar_responses:
@@ -292,8 +272,7 @@ class ResponseAgent:
             }
             validation_issues.append(issue)
             
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.info(f"No similar responses: {issue}")
+            logger.info(f"No similar responses: {issue}")
                 
         return {
             "components": components,
@@ -303,8 +282,7 @@ class ResponseAgent:
         
     async def _extract_components(
         self,
-        analysis: Dict,
-        debug_flags: Optional[FeatureFlags] = None
+        analysis: Dict
     ) -> List[Dict]:
         """Extract and validate components with debug logging."""
         try:
@@ -343,8 +321,7 @@ class ResponseAgent:
                     }
                     validation_issues.append(issue)
                     
-                    if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                        logger.warning(f"Invalid component detected: {issue}")
+                    logger.warning(f"Invalid component detected: {issue}")
                         
             # Track validation patterns
             for issue in validation_issues:
@@ -367,16 +344,12 @@ class ResponseAgent:
         except Exception as e:
             error_msg = f"Error extracting components: {str(e)}"
             logger.error(error_msg)
-            
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.error(error_msg)
                 
             return []
         
     async def _extract_structure(
         self,
-        analysis: Dict,
-        debug_flags: Optional[FeatureFlags] = None
+        analysis: Dict
     ) -> Dict:
         """Extract and validate structure with debug logging."""
         try:
@@ -490,18 +463,14 @@ class ResponseAgent:
                 )
                 self.validation_tracker.add_issue(pattern.dict())
                 
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                if validation_issues:
-                    logger.warning(f"Structure validation issues: {validation_issues}")
+            if validation_issues:
+                logger.warning(f"Structure validation issues: {validation_issues}")
                     
             return valid_structure
             
         except Exception as e:
             error_msg = f"Error extracting structure: {str(e)}"
             logger.error(error_msg)
-            
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.error(error_msg)
                 
             return {}
         

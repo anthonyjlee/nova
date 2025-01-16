@@ -3,6 +3,7 @@
 import os
 import sys
 import pytest
+import pytest_asyncio
 from typing import Dict, List
 import asyncio
 from datetime import datetime
@@ -15,6 +16,9 @@ from nia.core.types.memory_types import KnowledgeVertical
 # Add src directory to Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
 
+# Configure pytest-asyncio
+pytest_plugins = ["pytest_asyncio"]
+
 # Configure pytest
 def pytest_configure(config):
     """Configure pytest."""
@@ -22,15 +26,15 @@ def pytest_configure(config):
         "markers", "asyncio: mark test as async"
     )
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create an instance of the default event loop for the test session."""
+@pytest_asyncio.fixture
+async def event_loop():
+    """Create an instance of the default event loop for each test."""
     loop = asyncio.get_event_loop_policy().new_event_loop()
     yield loop
     loop.close()
 
-@pytest.fixture
-def mock_memory_system():
+@pytest_asyncio.fixture
+async def mock_memory_system():
     """Provide a mock memory system."""
     memory_system = MagicMock(spec=TwoLayerMemorySystem)
     
@@ -119,8 +123,8 @@ def mock_memory_system():
     
     return memory_system
 
-@pytest.fixture
-def mock_world():
+@pytest_asyncio.fixture
+async def mock_world():
     """Provide a mock world environment."""
     world = MagicMock(spec=NIAWorld)
     world.get_domain_access = MagicMock(return_value=True)
@@ -151,8 +155,8 @@ def base_agent_config():
         }
     }
 
-@pytest.fixture
-def mock_agent(mock_memory_system, mock_world, base_agent_config, request):
+@pytest_asyncio.fixture
+async def mock_agent(mock_memory_system, mock_world, base_agent_config, request):
     """Provide a base mock agent."""
     agent = MagicMock()
     

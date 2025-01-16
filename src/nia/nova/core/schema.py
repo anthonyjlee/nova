@@ -5,7 +5,6 @@ from typing import Dict, Any, Optional, List, Union
 from datetime import datetime
 from pydantic import BaseModel, ValidationError, create_model
 
-from nia.core.feature_flags import FeatureFlags
 from .validation import ValidationPattern, ValidationResult, ValidationTracker
 
 logger = logging.getLogger(__name__)
@@ -47,8 +46,7 @@ class SchemaAgent:
         self,
         content: Dict[str, Any],
         schema_type: str,
-        metadata: Optional[Dict] = None,
-        debug_flags: Optional[FeatureFlags] = None
+        metadata: Optional[Dict] = None
     ) -> SchemaResult:
         """Analyze schema with domain and validation awareness."""
         try:
@@ -56,16 +54,14 @@ class SchemaAgent:
             metadata = metadata or {}
             metadata["domain"] = self.domain
             
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.debug(f"Analyzing schema - type: {schema_type}, content: {content}")
+            logger.debug(f"Analyzing schema - type: {schema_type}, content: {content}")
                 
             # Get similar schemas if vector store available
             similar_schemas = []
             if self.vector_store:
                 similar_schemas = await self._get_similar_schemas(
                     content,
-                    schema_type,
-                    debug_flags
+                    schema_type
                 )
             
             # Analyze with LLM if available
@@ -84,14 +80,13 @@ class SchemaAgent:
                 analysis = self._basic_analysis(
                     content,
                     schema_type,
-                    similar_schemas,
-                    debug_flags
+                    similar_schemas
                 )
                 
             # Extract and validate components
-            schema = await self._extract_schema(analysis, debug_flags)
-            validations = await self._extract_validations(analysis, debug_flags)
-            issues = await self._extract_issues(analysis, debug_flags)
+            schema = await self._extract_schema(analysis)
+            validations = await self._extract_validations(analysis)
+            issues = await self._extract_issues(analysis)
             
             # Track validation patterns
             for issue in issues:
@@ -132,26 +127,21 @@ class SchemaAgent:
                 patterns=self.validation_tracker.get_patterns()
             )
             
-            if debug_flags:
-                if await debug_flags.is_debug_enabled('log_validation'):
-                    logger.debug(f"Schema analysis result: {result.dict()}")
+            logger.debug(f"Schema analysis result: {result.dict()}")
                     
-                    # Log critical patterns
-                    critical_patterns = self.validation_tracker.get_critical_patterns()
-                    if critical_patterns:
-                        logger.warning(f"Critical schema patterns detected: {critical_patterns}")
+            # Log critical patterns
+            critical_patterns = self.validation_tracker.get_critical_patterns()
+            if critical_patterns:
+                logger.warning(f"Critical schema patterns detected: {critical_patterns}")
                         
-                if not is_valid and await debug_flags.is_debug_enabled('strict_mode'):
-                    raise ValidationError(f"Schema validation failed: {issues}")
+            if not is_valid:
+                raise ValidationError(f"Schema validation failed: {issues}")
                     
             return result
             
         except Exception as e:
             error_msg = f"Schema analysis error: {str(e)}"
             logger.error(error_msg)
-            
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.error(error_msg)
                 
             return SchemaResult(
                 is_valid=False,
@@ -173,13 +163,11 @@ class SchemaAgent:
     async def _get_similar_schemas(
         self,
         content: Dict[str, Any],
-        schema_type: str,
-        debug_flags: Optional[FeatureFlags] = None
+        schema_type: str
     ) -> List[Dict]:
         """Get similar schemas from vector store with validation."""
         try:
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.debug(f"Finding similar schemas for type: {schema_type}")
+            logger.debug(f"Finding similar schemas for type: {schema_type}")
                 
             if "content" in content:
                 results = await self.vector_store.search(
@@ -192,17 +180,13 @@ class SchemaAgent:
                     }
                 )
                 
-                if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                    logger.debug(f"Found {len(results)} similar schemas")
+                logger.debug(f"Found {len(results)} similar schemas")
                     
                 return results
                 
         except Exception as e:
             error_msg = f"Error getting similar schemas: {str(e)}"
             logger.error(error_msg)
-            
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.error(error_msg)
                 
         return []
             
@@ -210,8 +194,7 @@ class SchemaAgent:
         self,
         content: Dict[str, Any],
         schema_type: str,
-        similar_schemas: List[Dict],
-        debug_flags: Optional[FeatureFlags] = None
+        similar_schemas: List[Dict]
     ) -> Dict:
         """Basic schema analysis with validation tracking."""
         schema = {}
@@ -389,8 +372,7 @@ class SchemaAgent:
         
     async def _extract_schema(
         self,
-        analysis: Dict,
-        debug_flags: Optional[FeatureFlags] = None
+        analysis: Dict
     ) -> Dict:
         """Extract and validate schema with debug logging."""
         try:
@@ -435,16 +417,12 @@ class SchemaAgent:
         except Exception as e:
             error_msg = f"Error extracting schema: {str(e)}"
             logger.error(error_msg)
-            
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.error(error_msg)
                 
             return {}
         
     async def _extract_validations(
         self,
-        analysis: Dict,
-        debug_flags: Optional[FeatureFlags] = None
+        analysis: Dict
     ) -> List[Dict]:
         """Extract and validate schema validations with debug logging."""
         try:
@@ -476,16 +454,12 @@ class SchemaAgent:
         except Exception as e:
             error_msg = f"Error extracting validations: {str(e)}"
             logger.error(error_msg)
-            
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.error(error_msg)
                 
             return []
         
     async def _extract_issues(
         self,
-        analysis: Dict,
-        debug_flags: Optional[FeatureFlags] = None
+        analysis: Dict
     ) -> List[Dict]:
         """Extract and validate schema issues with debug logging."""
         try:
@@ -517,9 +491,6 @@ class SchemaAgent:
         except Exception as e:
             error_msg = f"Error extracting issues: {str(e)}"
             logger.error(error_msg)
-            
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.error(error_msg)
                 
             return []
         
@@ -609,13 +580,11 @@ class SchemaAgent:
     async def generate_pydantic_model(
         self,
         schema: Dict[str, Any],
-        model_name: str = "DynamicModel",
-        debug_flags: Optional[FeatureFlags] = None
+        model_name: str = "DynamicModel"
     ) -> type[BaseModel]:
         """Generate a Pydantic model from schema definition with validation."""
         try:
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.debug(f"Generating Pydantic model: {model_name}")
+            logger.debug(f"Generating Pydantic model: {model_name}")
                 
             # Extract field definitions
             fields = {}
@@ -632,17 +601,13 @@ class SchemaAgent:
                 **fields
             )
             
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.debug(f"Generated model: {model}")
+            logger.debug(f"Generated model: {model}")
                 
             return model
             
         except Exception as e:
             error_msg = f"Error generating Pydantic model: {str(e)}"
             logger.error(error_msg)
-            
-            if debug_flags and await debug_flags.is_debug_enabled('log_validation'):
-                logger.error(error_msg)
                 
             raise
             

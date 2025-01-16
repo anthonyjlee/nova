@@ -8,7 +8,7 @@ from uuid import uuid4
 logger = logging.getLogger(__name__)
 
 class World:
-    """World environment for agents."""
+    """Base world environment for agents."""
     
     def __init__(self):
         """Initialize world."""
@@ -191,3 +191,44 @@ class World:
             # Reset agent status
             if agent.name in self._state["agents"]:
                 self._state["agents"][agent.name]["status"] = "idle"
+
+class NIAWorld(World):
+    """NIA-specific world environment for agents."""
+    
+    async def execute_action(self, agent: Any, action: str, **kwargs) -> Any:
+        """Execute an NIA-specific action in the world.
+        
+        Args:
+            agent: Agent executing the action
+            action: Action to execute
+            **kwargs: Additional action parameters
+            
+        Returns:
+            Result of the action
+        """
+        # First try base world actions
+        result = await super().execute_action(agent, action, **kwargs)
+        if result is not None:
+            return result
+            
+        # Handle NIA-specific actions
+        if action == "spawn_agent":
+            # Stub implementation for spawn_agent
+            agent_id = kwargs.get("agent_id", str(uuid4()))
+            agent_type = kwargs.get("agent_type", "test")
+            return {
+                "id": agent_id,
+                "type": agent_type,
+                "status": "active"
+            }
+        elif action == "create_agent":
+            # Stub implementation for create_agent
+            return {
+                "id": str(uuid4()),
+                "name": kwargs.get("name", "test_agent"),
+                "type": "agent",
+                "status": "active"
+            }
+        else:
+            # Return None for unknown actions
+            return None

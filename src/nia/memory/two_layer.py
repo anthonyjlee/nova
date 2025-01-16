@@ -61,8 +61,15 @@ class EpisodicLayer:
     async def get_consolidation_candidates(self) -> List[Dict]:
         """Get memories that are candidates for consolidation."""
         try:
+            # Create filter condition for unconsolidated memories
+            filter_condition = models.FieldCondition(
+                key="metadata_consolidated",
+                match=models.MatchValue(value=False)
+            )
+            
             result = await self.store.search_vectors(
-                filter={"metadata.consolidated": False}
+                content={},  # Empty content since we're only filtering by metadata
+                filter_conditions=[filter_condition]
             )
             return result
         except Exception as e:
@@ -458,18 +465,36 @@ class TwoLayerMemorySystem:
             if not self._initialized:
                 raise Exception("Memory system not initialized")
                 
-            content_filter = query.get("content", {})
-            metadata_filter = query.get("filter", {})
+            # Create filter conditions list
+            filter_conditions = []
             
-            # Combine filters
-            combined_filter = {**content_filter}
+            # Add content filter if present
+            content_filter = query.get("content", {})
+            if content_filter:
+                for key, value in content_filter.items():
+                    filter_conditions.append(
+                        models.FieldCondition(
+                            key=f"metadata_{key}",
+                            match=models.MatchValue(value=value)
+                        )
+                    )
+            
+            # Add metadata filter if present
+            metadata_filter = query.get("filter", {})
             if metadata_filter:
-                combined_filter["metadata"] = metadata_filter
+                for key, value in metadata_filter.items():
+                    filter_conditions.append(
+                        models.FieldCondition(
+                            key=f"metadata_{key}",
+                            match=models.MatchValue(value=value)
+                        )
+                    )
                 
             result = await self.vector_store.search_vectors(
-                content=combined_filter,
+                content=query.get("content", ""),  # Pass content as string
                 limit=query.get("limit", 100),
-                score_threshold=query.get("score_threshold", 0.7)
+                score_threshold=query.get("score_threshold", 0.7),
+                filter_conditions=filter_conditions if filter_conditions else None
             )
             memories = result if result else []
             
@@ -520,8 +545,15 @@ class TwoLayerMemorySystem:
             raise Exception("Memory system not initialized")
         
         # Get consolidation candidates
+        # Create filter condition for unconsolidated memories
+        filter_condition = models.FieldCondition(
+            key="metadata_consolidated",
+            match=models.MatchValue(value=False)
+        )
+        
         result = await self.episodic.store.search_vectors(
-            filter={"metadata.consolidated": False}
+            content={},  # Empty content since we're only filtering by metadata
+            filter_conditions=[filter_condition]
         )
         candidates = result if result else []
         

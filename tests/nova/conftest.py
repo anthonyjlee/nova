@@ -1,6 +1,7 @@
 """Shared fixtures for Nova integration tests."""
 
 import pytest
+import pytest_asyncio
 import asyncio
 import uuid
 from datetime import datetime, timezone
@@ -121,7 +122,7 @@ def test_domain():
         **TEST_DOMAINS["development"]
     }
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def mock_vector_store():
     """Create mock vector store."""
     store = AsyncMock()
@@ -141,7 +142,7 @@ async def mock_vector_store():
     store.update_metadata = AsyncMock(return_value=True)
     return store
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def mock_neo4j_store():
     """Create mock Neo4j store."""
     store = AsyncMock()
@@ -165,7 +166,7 @@ async def mock_neo4j_store():
     store.close = AsyncMock()
     return store
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def memory_system(mock_vector_store, mock_neo4j_store):
     """Create memory system with mock stores."""
     vector_store = await mock_vector_store
@@ -181,7 +182,89 @@ async def memory_system(mock_vector_store, mock_neo4j_store):
     await system.initialize()
     return system
 
-@pytest.fixture
+@pytest_asyncio.fixture
+async def mock_meta_agent_with_deps(mock_world: AsyncMock, mock_tiny_factory: AsyncMock) -> AsyncMock:
+    """Create meta agent fixture with dependencies."""
+    mock = AsyncMock()
+    mock.initialize = AsyncMock(return_value=None)
+    
+    # Return a dictionary that matches what the endpoint expects
+    mock.process_interaction = AsyncMock(return_value={
+        "content": "test response",
+        "agent_actions": [],
+        "cognitive_state": {},
+        "task_context": {},
+        "debug_info": {
+            "initialization_sequence": ["MetaAgent"],
+            "initialization_errors": {}
+        }
+    })
+    mock.get_state = AsyncMock(return_value={})
+    mock.update_state = AsyncMock(return_value=None)
+    mock.id = "meta-agent-id"
+    mock.name = "meta-agent"
+    mock.type = "meta"
+    mock.status = "active"
+    mock.episodic = True
+    mock.domain = "professional"
+    mock.capabilities = ["team_coordination", "cognitive_processing", "task_management"]
+    mock.metadata = {
+        "agent_actions": [],
+        "initialization_sequence": ["MetaAgent"],
+        "initialization_errors": {}
+    }
+    mock.memory_system = None
+    mock.world = mock_world
+    mock.attributes = None
+    mock.factory = mock_tiny_factory
+    mock.initialization_sequence = ["MetaAgent"]
+    mock.agent_dependencies = {}
+    mock.initialization_errors = {}
+    await mock.initialize()
+    return mock
+
+@pytest_asyncio.fixture
+async def mock_meta_agent_no_deps() -> AsyncMock:
+    """Create meta agent fixture without dependencies."""
+    mock = AsyncMock()
+    mock.initialize = AsyncMock(return_value=None)
+    
+    # Return a dictionary that matches what the endpoint expects
+    mock.process_interaction = AsyncMock(return_value={
+        "content": "test response",
+        "agent_actions": [],
+        "cognitive_state": {},
+        "task_context": {},
+        "debug_info": {
+            "initialization_sequence": ["MetaAgent"],
+            "initialization_errors": {}
+        }
+    })
+    mock.get_state = AsyncMock(return_value={})
+    mock.update_state = AsyncMock(return_value=None)
+    mock.id = "meta-agent-no-deps-id"
+    mock.name = "meta-agent-no-deps"
+    mock.type = "meta"
+    mock.status = "active"
+    mock.episodic = True
+    mock.domain = "professional"
+    mock.capabilities = ["team_coordination", "cognitive_processing", "task_management"]
+    mock.metadata = {
+        "agent_actions": [],
+        "initialization_sequence": ["MetaAgent"],
+        "initialization_errors": {}
+    }
+    mock.memory_system = None
+    mock.world = None
+    mock.attributes = None
+    mock.factory = None
+    mock.initialization_sequence = ["MetaAgent"]
+    mock.agent_dependencies = {}
+    mock.initialization_errors = {}
+    await mock.initialize()
+    return mock
+
+@pytest_asyncio.fixture
 async def mock_analytics_agent():
     """Create mock analytics agent."""
     agent = AsyncMock()
@@ -337,7 +420,7 @@ async def mock_analytics_agent():
     agent.process_analytics = AsyncMock(side_effect=process_analytics)
     return agent
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def llm_interface():
     """Create mock LLM interface."""
     interface = AsyncMock()
@@ -345,7 +428,7 @@ async def llm_interface():
     interface.get_embedding = AsyncMock(return_value=[0.1] * 384)
     return interface
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def world(memory_system):
     """Create world environment."""
     mem_sys = await memory_system
@@ -354,7 +437,7 @@ async def world(memory_system):
     # Cleanup
     await world.cleanup()
 
-@pytest.fixture(autouse=True)
+@pytest_asyncio.fixture(autouse=True)
 async def cleanup_after_test():
     """Cleanup after each test."""
     yield
