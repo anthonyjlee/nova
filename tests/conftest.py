@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 
 from nia.memory.two_layer import TwoLayerMemorySystem
 from nia.world.environment import NIAWorld
+from nia.core.types.memory_types import KnowledgeVertical
 
 # Add src directory to Python path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
@@ -132,6 +133,7 @@ def base_agent_config():
     return {
         "name": "test_agent",
         "domain": "professional",
+        "knowledge_vertical": KnowledgeVertical.GENERAL,
         "attributes": {
             "type": "execution",
             "role": "Advanced Action Executor",

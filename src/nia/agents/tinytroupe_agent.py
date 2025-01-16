@@ -9,7 +9,7 @@ from .tiny_person import TinyPerson
 from .base import BaseAgent as MemoryBaseAgent
 from ..world.environment import NIAWorld
 from ..memory.two_layer import TwoLayerMemorySystem
-from ..core.types.memory_types import Memory, EpisodicMemory, SemanticMemory, AgentResponse, MemoryType
+from ..core.types.memory_types import Memory, EpisodicMemory, SemanticMemory, AgentResponse, MemoryType, KnowledgeVertical
 from ..config import validate_agent_config
 
 logger = logging.getLogger(__name__)
@@ -24,16 +24,34 @@ class TinyTroupeAgent(TinyPerson, MemoryBaseAgent):
         world: Optional[NIAWorld] = None,
         attributes: Optional[Dict] = None,
         agent_type: str = "base",
-        domain: str = "professional"
+        domain: str = "professional",
+        config: Optional[Dict] = None
     ):
         """Initialize agent with both TinyTroupe and memory capabilities."""
-        # Validate configuration
-        config = {
-            "name": name,
-            "agent_type": agent_type,
-            "domain": "professional"
-        }
-        validate_agent_config(agent_type, config)
+        # Create default config if none provided
+        if config is None:
+            config = {
+                "name": name,
+                "agent_type": agent_type,
+                "domain": domain,
+                "knowledge_vertical": KnowledgeVertical.GENERAL,
+                "skills": []
+            }
+        else:
+            # Ensure required fields are present in provided config
+            if "name" not in config:
+                config["name"] = name
+            if "agent_type" not in config:
+                config["agent_type"] = agent_type
+            if "domain" not in config:
+                config["domain"] = domain
+            if "knowledge_vertical" not in config:
+                config["knowledge_vertical"] = KnowledgeVertical.GENERAL
+            if "skills" not in config:
+                config["skills"] = []
+
+        # Validate agent config
+        validate_agent_config(config)
         
         # Initialize TinyPerson
         TinyPerson.__init__(self, name)
@@ -325,7 +343,7 @@ class TinyFactory:
         self.world = world
         self.agents = {}  # agent_id -> agent instance
         
-    def create_agent(
+    async def create_agent(
         self,
         agent_type: str,
         domain: str,
@@ -362,13 +380,24 @@ class TinyFactory:
             base_attributes.update(attributes)
             
         # Create agent instance
-        agent = TinyTroupeAgent(
-            name=f"{agent_type}_{agent_id[:8]}",
-            memory_system=self.memory_system,
-            world=self.world,
-            attributes=base_attributes,
-            agent_type=agent_type
-        )
+        if agent_type == "belief":
+            # Import here to avoid circular imports
+            from .specialized.belief_agent import BeliefAgent
+            agent = await BeliefAgent.create(
+                name=f"{agent_type}_{agent_id[:8]}",
+                memory_system=self.memory_system,
+                world=self.world,
+                attributes=base_attributes,
+                domain=domain
+            )
+        else:
+            agent = TinyTroupeAgent(
+                name=f"{agent_type}_{agent_id[:8]}",
+                memory_system=self.memory_system,
+                world=self.world,
+                attributes=base_attributes,
+                agent_type=agent_type
+            )
         
         # Store agent
         self.agents[agent_id] = agent
@@ -378,7 +407,7 @@ class TinyFactory:
             supervisor = self.agents[supervisor_id]
             # Record supervision relationship in memory
             if self.memory_system and hasattr(self.memory_system, "semantic"):
-                self.memory_system.semantic.store.create_relationship(
+                await self.memory_system.semantic.store.create_relationship(
                     supervisor_id,
                     agent_id,
                     "SUPERVISES",

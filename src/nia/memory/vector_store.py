@@ -36,6 +36,9 @@ class VectorStore:
         # Initialize lock if needed
         if VectorStore._client_lock is None:
             VectorStore._client_lock = asyncio.Lock()
+            
+        # Initialize current_collection
+        self.current_collection = None
         
     @property
     async def client(self):
@@ -126,7 +129,7 @@ class VectorStore:
                 logger.info(f"Creating index for {field_name}")
                 try:
                     client.create_payload_index(
-                        collection_name=self.current_collection,
+                        collection_name=collection_name,
                         field_name=field_name,
                         field_schema=field_schema,
                         wait=True  # Wait for index to be created
@@ -136,7 +139,7 @@ class VectorStore:
                     time.sleep(0.5)  # Give time for index to be ready
                     
                     # Verify index exists
-                    collection_info = client.get_collection(self.current_collection)
+                    collection_info = client.get_collection(collection_name)
                     if field_name not in collection_info.payload_schema:
                         raise Exception(f"Index {field_name} not found after creation")
                         
@@ -209,10 +212,16 @@ class VectorStore:
             # Store point using singleton client and current collection
             client = await self.client
             
+            # Get current collection info
+            collection_info = await self.inspect_collection()
+            collection_name = collection_info[0].collection_name if collection_info else None
+            if not collection_name:
+                raise ValueError("No collection available")
+            
             # Log vector details for verification
             logger.info(
                 f"Storing vector:\n"
-                f"- Collection: {self.current_collection}\n"
+                f"- Collection: {collection_name}\n"
                 f"- ID: {point.id}\n"
                 f"- Dimension: {len(point.vector)}\n"
                 f"- Content: {content_str[:100]}...\n"
@@ -220,14 +229,14 @@ class VectorStore:
             )
             
             result = client.upsert(
-                collection_name=self.current_collection,
+                collection_name=collection_name,
                 points=[point],
                 wait=True
             )
             
             # Verify stored vector
             stored = client.retrieve(
-                collection_name=self.current_collection,
+                collection_name=collection_name,
                 ids=[point.id],
                 with_vectors=True
             )
@@ -324,8 +333,11 @@ class VectorStore:
             
             # Construct search parameters
             # Use current collection if none specified
+            # Get current collection if none specified
+            current_collection = (await self.inspect_collection())[0].collection_name if not collection_name else collection_name
+            
             search_params = {
-                "collection_name": collection_name or self.current_collection,
+                "collection_name": current_collection,
                 "query_vector": query_vector,
                 "limit": limit,
                 "score_threshold": score_threshold,
@@ -356,7 +368,7 @@ class VectorStore:
                 )
                 
                 exact_results = client.search(
-                    collection_name=collection_name or self.current_collection,
+                    collection_name=collection_name or (await self.inspect_collection())[0].collection_name,
                     query_vector=query_vector,
                     query_filter=exact_filter,
                     limit=limit,
@@ -455,8 +467,11 @@ class VectorStore:
             # Get singleton client instance
             client = await self.client
             
+            # Get current collection if none specified
+            current_collection = (await self.inspect_collection())[0].collection_name if not collection_name else collection_name
+            
             client.set_payload(
-                collection_name=collection_name or self.current_collection,
+                collection_name=current_collection,
                 points=[vector_id],
                 payload=payload,
                 wait=True  # Wait for operation to complete
@@ -531,8 +546,11 @@ class VectorStore:
             # Get singleton client instance
             client = await self.client
             
+            # Get current collection if none specified
+            current_collection = (await self.inspect_collection())[0].collection_name if not collection_name else collection_name
+            
             client.delete(
-                collection_name=collection_name or self.current_collection,
+                collection_name=current_collection,
                 points_selector=models.PointIdsList(
                     points=vector_ids
                 ),

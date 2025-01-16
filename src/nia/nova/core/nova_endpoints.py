@@ -2,12 +2,11 @@
 
 import uuid
 import logging
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, Any, List, Optional, Union
 from pydantic import BaseModel, Field, validator, root_validator
 from fastapi import APIRouter, Depends, HTTPException
-
 from .dependencies import (
     get_memory_system,
     get_agent_store,
@@ -33,8 +32,7 @@ from .dependencies import (
     get_synthesis_agent,
     get_alerting_agent,
     get_monitoring_agent,
-    get_schema_agent,
-    get_feature_flags
+    get_schema_agent
 )
 from .auth import get_permission
 from .error_handling import ServiceError
@@ -47,6 +45,8 @@ from nia.core.types import (
 )
 from nia.core.types.memory_types import TaskState, DomainTransfer
 from nia.core.neo4j.agent_store import AgentStore
+
+logger = logging.getLogger(__name__)
 
 # Message Models
 class AgentAction(BaseModel):
@@ -90,16 +90,6 @@ class NovaRequest(BaseModel):
     """Request model for Nova's ask endpoint."""
     content: str
     workspace: str = Field(default="personal", pattern="^(personal|professional)$")
-    debug_flags: Optional[Dict[str, bool]] = Field(
-        default=None,
-        description="Debug flags for validation and logging",
-        example={
-            "log_validation": True,
-            "log_websocket": True,
-            "log_storage": True,
-            "strict_mode": False
-        }
-    )
 
     model_config = {
         "populate_by_name": True
@@ -119,19 +109,6 @@ class NovaRequest(BaseModel):
             raise ValueError("Workspace must be 'personal' or 'professional'")
         return v
 
-    @validator("debug_flags")
-    def validate_debug_flags(cls, v):
-        """Validate debug flags."""
-        if v is None:
-            return {}
-        valid_flags = {
-            "log_validation", "log_websocket",
-            "log_storage", "strict_mode"
-        }
-        invalid_flags = set(v.keys()) - valid_flags
-        if invalid_flags:
-            raise ValueError(f"Invalid debug flags: {invalid_flags}")
-        return v
 
 class NovaResponse(BaseModel):
     """Response model for Nova's ask endpoint."""
@@ -324,34 +301,18 @@ async def get_agent_metrics(
 async def ask_nova(
     request: NovaRequest,
     _: None = Depends(get_permission("write")),
-    meta_agent: Any = Depends(get_meta_agent),
-    feature_flags = Depends(get_feature_flags, use_cache=True)
+    meta_agent: Any = Depends(get_meta_agent)
 ) -> NovaResponse:
     """Ask Nova a question through the meta agent's cognitive architecture."""
     try:
-        # Enable debug flags if requested
-        debug_flags = request.debug_flags or {}
-        for flag, enabled in debug_flags.items():
-            if enabled:
-                await feature_flags.enable_debug(flag)
-
-        # Log validation if enabled
-        if await feature_flags.is_debug_enabled('log_validation'):
-            logger.debug(f"Validating request: {request.dict()}")
-
         # Let meta_agent handle the complete cognitive flow
         response = await meta_agent.process_interaction(
             content=request.content,
             metadata={
                 "type": "user_query",
-                "workspace": request.workspace,
-                "debug_flags": debug_flags
+                "workspace": request.workspace
             }
         )
-
-        # Log response if validation logging enabled
-        if await feature_flags.is_debug_enabled('log_validation'):
-            logger.debug(f"Meta agent response: {response.dict()}")
         
         # Create message from response
         message = Message(
@@ -367,10 +328,6 @@ async def ask_nova(
                 debug_info=response.debug_info
             )
         )
-
-        # Log final message if validation logging enabled
-        if await feature_flags.is_debug_enabled('log_validation'):
-            logger.debug(f"Final message: {message.dict()}")
 
         return NovaResponse(
             threadId="nova",

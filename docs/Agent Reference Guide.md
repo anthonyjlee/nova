@@ -102,6 +102,226 @@ Agents interact with a dual memory system:
    - Semantic layer for consolidated knowledge
    - Cross-domain validation
 
+## Agent Initialization Patterns
+
+All specialized agents must follow these initialization patterns to ensure proper setup and error handling:
+
+### 1. Base Initialization Pattern
+
+All agents inherit from BaseAgent which provides core initialization safety mechanisms:
+
+```python
+class BaseAgent:
+    def __init__(self, name: str = None, ...):
+        # Basic setup (no connections)
+        self._initialized = False
+        self._initializing = False
+        
+    async def initialize(self):
+        """Base initialization with safety mechanisms."""
+        if self._initialized:
+            return
+        if self._initializing:
+            return
+            
+        self._initializing = True
+        try:
+            # Initialize core components
+            if self._memory_system:
+                await self._memory_system.initialize()
+                
+            if self._world:
+                await self._world.initialize()
+                
+            self._initialized = True
+            
+        except Exception as e:
+            self._initialized = False
+            raise
+        finally:
+            self._initializing = False
+            
+    @classmethod
+    async def create(cls, name: str = None, ...) -> 'BaseAgent':
+        """Factory method for safe initialization."""
+        agent = cls(name=name, ...)
+        await agent.initialize()
+        return agent
+```
+
+### 2. Specialized Agent Initialization
+
+Specialized agents inherit the base safety mechanisms and only need to handle their specific initialization concerns:
+
+```python
+class SpecializedAgent(BaseAgent):
+    async def initialize(self):
+        """Initialize with specialized components.
+        
+        The base class handles:
+        - Memory system initialization
+        - World initialization
+        - Safety mechanisms (flags, error handling)
+        - Logging
+        
+        Specialized agents only need to:
+        1. Call super().initialize() first
+        2. Initialize their specific components
+        3. Handle specialized errors
+        """
+        # Get core initialization from base
+        await super().initialize()
+        
+        try:
+            # Initialize specialized components
+            await self._initialize_specialized()
+            self.logger.debug(f"Specialized components initialized for {self.name}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to initialize specialized components: {str(e)}")
+            self.logger.error(f"Stack trace: {traceback.format_exc()}")
+            raise
+```
+
+This clean separation of concerns means:
+- Base class handles core safety and infrastructure
+- Specialized agents focus on their unique initialization needs
+- No duplication of initialization safety code
+- Clear initialization order and error handling
+
+
+1. Initialization Order:
+```
+TinyFactory.create_agent()
+  └─> SpecializedAgent.__init__()
+       ├─> TinyTroupeAgent.__init__()  # Base initialization
+       └─> NovaAgent.__init__()        # Nova-specific initialization
+  └─> SpecializedAgent.initialize()
+       ├─> Memory System               # Initialize first if needed
+       ├─> Base Components            # Initialize parent components
+       └─> Specialized Components     # Initialize agent-specific components
+```
+
+2. Safety Mechanisms:
+- Use initialization flags to prevent recursion:
+  ```python
+  if getattr(self, '_initializing', False):
+      return  # Prevent recursive initialization
+  self._initializing = True
+  try:
+      # Perform initialization
+      self._initialized = True
+  finally:
+      self._initializing = False
+  ```
+- Clear initialization order:
+  ```python
+  async def initialize(self):
+      """Initialize in correct order with safety checks."""
+      if self._initialized:
+          return
+      if self._initializing:
+          return
+          
+      self._initializing = True
+      try:
+          # 1. Initialize memory system first
+          if self._memory_system and not getattr(self._memory_system, '_initialized', False):
+              await self._memory_system.initialize()
+              
+          # 2. Initialize base components
+          await super().initialize()
+              
+          # 3. Initialize specialized components
+          await self._initialize_specialized()
+              
+          self._initialized = True
+      finally:
+          self._initializing = False
+  ```
+- Proper error handling and state reset
+- Clear logging of initialization steps
+
+3. Implementation Notes:
+- Keep initialization logic in specialized agents
+- Use clear initialization flags
+- Document initialization requirements
+- Implement proper state validation
+- Use locking mechanisms where needed
+
+### 2. Initialization Implementation
+```python
+# Factory method pattern for async initialization
+@classmethod
+async def create(
+    cls,
+    name: str,
+    memory_system: Optional[TwoLayerMemorySystem] = None,
+    world: Optional[NIAWorld] = None,
+    attributes: Optional[Dict] = None,
+    domain: Optional[str] = None
+) -> 'SpecializedAgent':
+    """Factory method to create and initialize a specialized agent."""
+    agent = cls(
+        name=name,
+        memory_system=memory_system,
+        world=world,
+        attributes=attributes,
+        domain=domain
+    )
+    await agent.initialize()
+    return agent
+
+async def initialize(self):
+    """Initialize agent connections."""
+    try:
+        if self._memory_system:
+            # Initialize memory system first if needed
+            if not getattr(self._memory_system, '_initialized', False):
+                await self._memory_system.initialize()
+                logger.debug(f"Memory system initialized for agent {self.name}")
+                
+            # Initialize base components
+            await super().initialize()
+            logger.debug(f"Base initialization complete for agent {self.name}")
+                
+            # Initialize any remaining connections
+            if self._memory_system.episodic:
+                await self._memory_system.episodic.initialize()
+                logger.debug(f"Episodic layer initialized for agent {self.name}")
+                
+            logger.info(f"Agent {self.name} initialization complete")
+        self._initialized = True
+    except Exception as e:
+        logger.error(f"Failed to initialize agent {self.name}: {str(e)}")
+        logger.error(f"Stack trace: {traceback.format_exc()}")
+        self._initialized = False
+        raise
+```
+
+### 2. State Management
+- Track initialization state with `_initialized` flag
+- Lazy initialization in key methods:
+```python
+async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None):
+    """Process content with initialization check."""
+    if not getattr(self, '_initialized', False):
+        logger.warning(f"Agent {self.name} not initialized, initializing now...")
+        await self.initialize()
+```
+
+### 3. Error Handling
+- Comprehensive error handling with stack traces
+- Clear error messages
+- State reset on initialization failure
+- Graceful fallbacks where appropriate
+
+### 4. Logging
+- Debug logging for initialization steps
+- Error logging with stack traces
+- Status logging for key operations
+- Warning logging for lazy initialization
+
 ## Core Agent Types
 
 ### Pre-Processing Agents

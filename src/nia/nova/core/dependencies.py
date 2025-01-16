@@ -5,11 +5,11 @@ from pathlib import Path
 import uuid
 import asyncio
 import logging
-
 from fastapi import Depends
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
+
 from nia.memory.two_layer import TwoLayerMemorySystem
 from nia.core.neo4j.concept_manager import ConceptManager
 from nia.core.neo4j.graph_store import GraphStore
@@ -71,7 +71,21 @@ _analytics_agent: Optional[AnalyticsAgent] = None
 _orchestration_agent: Optional[OrchestrationAgent] = None
 _dialogue_agent: Optional[DialogueAgent] = None
 _context_agent: Optional[ContextAgent] = None
-_validation_agent: Optional[ValidationAgent] = None
+_validation_agent: Optional[ValidationAgent] = No# Infrastructure
+_tiny_factory: Optional[TinyFactory] = None
+_graph_store: Optional[GraphStore] = None
+_agent_store: Optional[AgentStore] = None
+_profile_store: Optional[ProfileStore] = None
+_thread_manager: Optional[ThreadManager] = None
+_concept_manager: Optional[ConceptManager] = None
+
+async def get_concept_manager() -> ConceptManager:
+    """Get or create concept manager instance."""
+    global _concept_manager
+    if _concept_manager is None:
+        _concept_manager = ConceptManager()
+        await initialize_with_retry(_concept_manager, "Concept Manager")
+    return _concept_managerne
 _synthesis_agent: Optional[SynthesisAgent] = None
 _alerting_agent: Optional[AlertingAgent] = None
 _monitoring_agent: Optional[MonitoringAgent] = None
@@ -288,7 +302,12 @@ async def get_meta_agent() -> MetaAgent:
     """Get or create meta agent instance."""
     global _meta_agent
     if _meta_agent is None:
-        _meta_agent = MetaAgent()
+        memory_system = await get_memory_system()
+        world = await get_world()
+        _meta_agent = MetaAgent(
+            memory_system=memory_system,
+            world=world
+        )
         await initialize_with_retry(_meta_agent, "Meta Agent")
     return _meta_agent
 
@@ -408,5 +427,3 @@ async def get_response_agent() -> ResponseAgent:
         _response_agent = ResponseAgent()
         await initialize_with_retry(_response_agent, "Response Agent")
     return _response_agent
-
-from ...core.feature_flags import get_feature_flags

@@ -10,17 +10,20 @@ from .specialized.parsing_agent import ParsingAgent
 from .specialized.coordination_agent import CoordinationAgent
 from .specialized.analytics_agent import AnalyticsAgent
 from .specialized.orchestration_agent import OrchestrationAgent
+from .specialized.schema_agent import SchemaAgent
 
 logger = logging.getLogger(__name__)
 
 class TinyFactory:
     """Factory for creating and managing tiny agents."""
     
-    def __init__(self):
+    def __init__(self, memory_system=None, world=None):
         """Initialize factory."""
         self._agents: Dict[str, BaseAgent] = {}
         self._initialized = False
         self._init_lock = asyncio.Lock()
+        self.memory_system = memory_system
+        self.world = world
         
     async def initialize(self):
         """Initialize factory."""
@@ -47,14 +50,20 @@ class TinyFactory:
             "parsing": ParsingAgent,
             "coordination": CoordinationAgent,
             "analytics": AnalyticsAgent,
-            "orchestration": OrchestrationAgent
+            "orchestration": OrchestrationAgent,
+            "schema": SchemaAgent
         }
         
         if agent_type not in agent_classes:
             raise ValueError(f"Unknown agent type: {agent_type}")
             
         agent_class = agent_classes[agent_type]
-        agent = agent_class()
+        agent = agent_class(
+            name=agent_id,
+            memory_system=self.memory_system,
+            world=self.world,
+            attributes=agent_config
+        )
         agent.id = agent_id
         
         # Initialize agent
@@ -89,7 +98,8 @@ class TinyFactory:
             "parsing": ParsingAgent,
             "coordination": CoordinationAgent,
             "analytics": AnalyticsAgent,
-            "orchestration": OrchestrationAgent
+            "orchestration": OrchestrationAgent,
+            "schema": SchemaAgent
         }
         
         if agent_type not in agent_classes:

@@ -19,13 +19,121 @@ class BaseAgent:
         world: Optional['NIAWorld'] = None,
         attributes: Optional[Dict] = None
     ):
-        """Initialize agent."""
+        """Initialize agent.
+        
+        This performs basic setup but does not initialize connections.
+        Use initialize() for async initialization of connections.
+        
+        Args:
+            name: Agent name
+            agent_type: Type of agent
+            memory_system: Optional memory system
+            world: Optional world environment
+            attributes: Optional attributes dictionary
+        """
         self.name = name or agent_type
         self.agent_type = agent_type or name
         self.logger = logging.getLogger(f"agent.{self.name}")
-        self.memory_system = memory_system
-        self.world = world
-        self.attributes = attributes or {}
+        self._memory_system = memory_system
+        self._world = world
+        self._attributes = attributes or {}
+        
+        # Initialization flags
+        self._initialized = False
+        self._initializing = False
+        
+    async def initialize(self):
+        """Initialize agent connections.
+        
+        This method ensures proper initialization of all components:
+        1. Memory system initialization if needed
+        2. Base component initialization
+        3. Specialized component initialization
+        
+        This implementation provides core initialization with safety mechanisms.
+        Subclasses should call super().initialize() and add their own initialization.
+        
+        Raises:
+            Exception: If initialization fails, with detailed error logging
+        """
+        # Prevent recursive initialization
+        if self._initialized:
+            return
+        if self._initializing:
+            return
+            
+        self._initializing = True
+        try:
+            if self._memory_system:
+                # Initialize memory system first if needed
+                if not getattr(self._memory_system, '_initialized', False):
+                    await self._memory_system.initialize()
+                    self.logger.debug(f"Memory system initialized for {self.name}")
+                    
+            # Initialize world if needed
+            if self._world and not getattr(self._world, '_initialized', False):
+                await self._world.initialize()
+                self.logger.debug(f"World initialized for {self.name}")
+                
+            self._initialized = True
+            self.logger.info(f"Base initialization complete for {self.name}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to initialize {self.name}: {str(e)}")
+            self.logger.error(f"Stack trace: {traceback.format_exc()}")
+            self._initialized = False
+            raise
+        finally:
+            self._initializing = False
+            
+    @classmethod
+    async def create(
+        cls,
+        name: str = None,
+        agent_type: str = None,
+        memory_system: Optional['TwoLayerMemorySystem'] = None,
+        world: Optional['NIAWorld'] = None,
+        attributes: Optional[Dict] = None
+    ) -> 'BaseAgent':
+        """Factory method to create and initialize an agent.
+        
+        This provides a standard way to create and initialize agents.
+        Subclasses should extend this if they need additional parameters.
+        
+        Args:
+            name: Agent name
+            agent_type: Type of agent
+            memory_system: Optional memory system
+            world: Optional world environment
+            attributes: Optional attributes dictionary
+            
+        Returns:
+            Initialized agent instance
+        """
+        agent = cls(
+            name=name,
+            agent_type=agent_type,
+            memory_system=memory_system,
+            world=world,
+            attributes=attributes
+        )
+        await agent.initialize()
+        return agent
+        
+    @property
+    def memory_system(self):
+        """Get memory system."""
+        return self._memory_system
+        
+    @property
+    def world(self):
+        """Get world environment."""
+        return self._world
+        
+    @property
+    def attributes(self):
+        """Get agent attributes."""
+        return self._attributes
         
     async def store_memory(
         self,

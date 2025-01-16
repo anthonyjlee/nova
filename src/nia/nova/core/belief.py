@@ -36,6 +36,27 @@ class BeliefAgent:
         self.store = store
         self.vector_store = vector_store
         self.domain = domain or "professional"  # Default to professional domain
+        self._initialized = False
+        
+    async def initialize(self):
+        """Initialize connections."""
+        if not self._initialized:
+            try:
+                # Initialize vector store if available
+                if self.vector_store and hasattr(self.vector_store, 'connect'):
+                    await self.vector_store.connect()
+                    logger.debug("Vector store initialized")
+                    
+                # Initialize store if available
+                if self.store and hasattr(self.store, 'connect'):
+                    await self.store.connect()
+                    logger.debug("Store initialized")
+                    
+                self._initialized = True
+                logger.debug("BeliefAgent initialization complete")
+            except Exception as e:
+                logger.error(f"Failed to initialize BeliefAgent: {str(e)}")
+                raise
         
     async def analyze_beliefs(
         self,
@@ -44,6 +65,10 @@ class BeliefAgent:
     ) -> BeliefResult:
         """Analyze beliefs with domain awareness."""
         try:
+            # Ensure initialized
+            if not self._initialized:
+                await self.initialize()
+                
             # Add domain to metadata
             metadata = metadata or {}
             metadata["domain"] = self.domain

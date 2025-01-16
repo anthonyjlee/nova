@@ -46,6 +46,17 @@ class EpisodicLayer:
             logger.error(f"Failed to initialize EpisodicLayer: {str(e)}")
             logger.error(traceback.format_exc())
             raise
+            
+    async def initialize(self):
+        """Initialize vector store connection."""
+        try:
+            logger.debug("Initializing EpisodicLayer vector store")
+            await self.store.connect()
+            logger.debug("EpisodicLayer vector store initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize EpisodicLayer vector store: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
 
     async def get_consolidation_candidates(self) -> List[Dict]:
         """Get memories that are candidates for consolidation."""
@@ -184,8 +195,11 @@ class TwoLayerMemorySystem:
                             logger.warning(f"Neo4j connection attempt {retry_count} failed: {str(e)}")
                             await asyncio.sleep(1)
                 
-                # Vector store is already initialized in constructor
-                logger.debug("Vector store initialized")
+                # Initialize vector store and episodic layer
+                logger.debug("Initializing vector store and episodic layer...")
+                await self.vector_store.connect()
+                await self.episodic.initialize()
+                logger.debug("Vector store and episodic layer initialized")
                     
                 self._initialized = True
                 logger.info("Memory system initialization complete")
