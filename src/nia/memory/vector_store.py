@@ -37,8 +37,8 @@ class VectorStore:
         if VectorStore._client_lock is None:
             VectorStore._client_lock = asyncio.Lock()
             
-        # Initialize current_collection
-        self.current_collection = None
+        # Initialize collection name
+        self._collection_name = None
         
     @property
     async def client(self):
@@ -105,9 +105,9 @@ class VectorStore:
                     )
                 )
             
-            # Store current collection name
-            self.current_collection = collection_name
-            logger.info(f"Using collection: {self.current_collection}")
+            # Store collection name
+            self._collection_name = collection_name
+            logger.info(f"Using collection: {self._collection_name}")
             
             # Define required indexes with all metadata fields
             required_indexes = [
@@ -494,7 +494,7 @@ class VectorStore:
         """
         try:
             # Use current collection if none specified
-            target_collection = collection_name or self.current_collection
+            target_collection = collection_name or self._collection_name
             logger.info(f"Inspecting collection: {target_collection}")
             
             # Get singleton client instance

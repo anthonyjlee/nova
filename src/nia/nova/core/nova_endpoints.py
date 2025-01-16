@@ -5,7 +5,7 @@ import logging
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Union
-from pydantic import BaseModel, Field, validator, root_validator
+from pydantic import BaseModel, Field, validator, model_validator
 from fastapi import APIRouter, Depends, HTTPException
 from .dependencies import (
     get_memory_system,
@@ -86,10 +86,21 @@ class Message(BaseModel):
     }
 
 # Request/Response Models
+class DebugFlags(BaseModel):
+    """Debug flags for testing and development."""
+    trace_initialization: bool = Field(default=False, description="Enable initialization tracing")
+    trace_dependencies: bool = Field(default=False, description="Enable dependency tracing")
+    simulate_errors: Optional[Dict[str, bool]] = Field(default=None, description="Simulate initialization errors")
+
+    model_config = {
+        "populate_by_name": True
+    }
+
 class NovaRequest(BaseModel):
     """Request model for Nova's ask endpoint."""
     content: str
     workspace: str = Field(default="personal", pattern="^(personal|professional)$")
+    debug_flags: Optional[DebugFlags] = None
 
     model_config = {
         "populate_by_name": True
@@ -108,6 +119,15 @@ class NovaRequest(BaseModel):
         if v not in ["personal", "professional"]:
             raise ValueError("Workspace must be 'personal' or 'professional'")
         return v
+
+    @model_validator(mode='after')
+    def validate_debug_flags(self) -> 'NovaRequest':
+        """Validate debug flags are only used in test environment."""
+        if self.debug_flags:
+            # Only allow debug flags in test environment
+            if not logger.getEffectiveLevel() == logging.DEBUG:
+                raise ValueError("Debug flags can only be used in test environment")
+        return self
 
 
 class NovaResponse(BaseModel):
@@ -301,18 +321,47 @@ async def get_agent_metrics(
 async def ask_nova(
     request: NovaRequest,
     _: None = Depends(get_permission("write")),
-    meta_agent: Any = Depends(get_meta_agent)
+    meta_agent: Any = Depends(get_meta_agent),
+    memory_system: Any = Depends(get_memory_system)
 ) -> NovaResponse:
     """Ask Nova a question through the meta agent's cognitive architecture."""
     try:
+        # Handle debug flags
+        debug_metadata = {}
+        if request.debug_flags:
+            debug_metadata = {
+                "trace_initialization": request.debug_flags.trace_initialization,
+                "trace_dependencies": request.debug_flags.trace_dependencies
+            }
+            
+            # Handle simulated errors
+            if request.debug_flags.simulate_errors:
+                for component, should_error in request.debug_flags.simulate_errors.items():
+                    if should_error:
+                        if component == "memory_system" and memory_system:
+                            memory_system._simulate_error = True
+                        elif hasattr(meta_agent, f"_simulate_{component}_error"):
+                            setattr(meta_agent, f"_simulate_{component}_error", True)
+        
         # Let meta_agent handle the complete cognitive flow
         response = await meta_agent.process_interaction(
             content=request.content,
             metadata={
                 "type": "user_query",
-                "workspace": request.workspace
+                "workspace": request.workspace,
+                "debug_flags": debug_metadata
             }
         )
+        
+        # Collect initialization data if tracing
+        if request.debug_flags and request.debug_flags.trace_initialization:
+            init_sequence = getattr(meta_agent, 'initialization_sequence', [])
+            debug_metadata["initialization_sequence"] = init_sequence
+            
+        # Collect dependency data if tracing
+        if request.debug_flags and request.debug_flags.trace_dependencies:
+            dependencies = getattr(meta_agent, 'agent_dependencies', {})
+            debug_metadata["agent_dependencies"] = dependencies
         
         # Create message from response
         message = Message(
@@ -325,7 +374,10 @@ async def ask_nova(
                 agent_actions=response.agent_actions,
                 cognitive_state=response.cognitive_state,
                 task_context=response.task_context,
-                debug_info=response.debug_info
+                debug_info={
+                    **(response.debug_info or {}),
+                    **debug_metadata
+                }
             )
         )
 
@@ -335,4 +387,13 @@ async def ask_nova(
             agent_actions=response.agent_actions
         )
     except Exception as e:
+        # Enhance error details for initialization errors
+        if request.debug_flags and request.debug_flags.simulate_errors:
+            error_data = {
+                "error": str(e),
+                "initialization_errors": {}
+            }
+            if hasattr(meta_agent, 'initialization_errors'):
+                error_data["initialization_errors"] = meta_agent.initialization_errors
+            raise HTTPException(status_code=500, detail=error_data)
         raise ServiceError(str(e))

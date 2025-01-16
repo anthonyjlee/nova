@@ -67,7 +67,7 @@ class TinyTroupeAgent(TinyPerson, MemoryBaseAgent):
         )
         
         # Store additional attributes
-        self.world = world
+        self._world = world  # Use protected attribute from BaseAgent
         self._initialize_attributes(attributes)
         
     def _initialize_attributes(self, attributes: Optional[Dict] = None):
@@ -342,6 +342,27 @@ class TinyFactory:
         self.memory_system = memory_system
         self.world = world
         self.agents = {}  # agent_id -> agent instance
+        self._initialized = False
+        
+    async def initialize(self):
+        """Initialize factory and its dependencies."""
+        if self._initialized:
+            return
+            
+        try:
+            # Initialize memory system if needed
+            if self.memory_system and not getattr(self.memory_system, '_initialized', False):
+                await self.memory_system.initialize()
+                
+            # Initialize world if needed
+            if self.world and not getattr(self.world, '_initialized', False):
+                await self.world.initialize()
+                
+            self._initialized = True
+            
+        except Exception as e:
+            logger.error(f"Failed to initialize TinyFactory: {str(e)}")
+            raise
         
     async def create_agent(
         self,

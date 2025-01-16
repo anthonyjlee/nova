@@ -71,7 +71,14 @@ _analytics_agent: Optional[AnalyticsAgent] = None
 _orchestration_agent: Optional[OrchestrationAgent] = None
 _dialogue_agent: Optional[DialogueAgent] = None
 _context_agent: Optional[ContextAgent] = None
-_validation_agent: Optional[ValidationAgent] = No# Infrastructure
+_validation_agent: Optional[ValidationAgent] = None
+_synthesis_agent: Optional[SynthesisAgent] = None
+_alerting_agent: Optional[AlertingAgent] = None
+_monitoring_agent: Optional[MonitoringAgent] = None
+_schema_agent: Optional[SchemaAgent] = None
+_response_agent: Optional[ResponseAgent] = None
+
+# Infrastructure
 _tiny_factory: Optional[TinyFactory] = None
 _graph_store: Optional[GraphStore] = None
 _agent_store: Optional[AgentStore] = None
@@ -85,19 +92,7 @@ async def get_concept_manager() -> ConceptManager:
     if _concept_manager is None:
         _concept_manager = ConceptManager()
         await initialize_with_retry(_concept_manager, "Concept Manager")
-    return _concept_managerne
-_synthesis_agent: Optional[SynthesisAgent] = None
-_alerting_agent: Optional[AlertingAgent] = None
-_monitoring_agent: Optional[MonitoringAgent] = None
-_schema_agent: Optional[SchemaAgent] = None
-_response_agent: Optional[ResponseAgent] = None
-
-# Infrastructure
-_tiny_factory: Optional[TinyFactory] = None
-_graph_store: Optional[GraphStore] = None
-_agent_store: Optional[AgentStore] = None
-_profile_store: Optional[ProfileStore] = None
-_thread_manager: Optional[ThreadManager] = None
+    return _concept_manager
 
 # Model configurations
 CHAT_MODEL = "gpt-4"

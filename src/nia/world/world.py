@@ -145,3 +145,49 @@ class World:
                 await callback(updates)
             except Exception as e:
                 logger.error(f"Error notifying observer: {str(e)}")
+                
+    async def execute_action(self, agent: Any, action: str, **kwargs) -> Any:
+        """Execute an action in the world.
+        
+        Args:
+            agent: Agent executing the action
+            action: Action to execute
+            **kwargs: Additional action parameters
+            
+        Returns:
+            Result of the action
+        """
+        if not self._initialized:
+            await self.initialize()
+            
+        # Log action
+        logger.debug(f"Agent {agent.name} executing action: {action}")
+        
+        # Update agent status
+        if agent.name in self._state["agents"]:
+            self._state["agents"][agent.name]["status"] = "executing"
+            
+        try:
+            # Handle different action types
+            if action == "query_state":
+                return await self.get_state()
+            elif action == "update_state":
+                await self.update_state(kwargs.get("updates", {}))
+                return True
+            elif action == "register":
+                await self.register_agent(
+                    agent.name,
+                    kwargs.get("capabilities", [])
+                )
+                return True
+            elif action == "unregister":
+                await self.unregister_agent(agent.name)
+                return True
+            else:
+                logger.warning(f"Unknown action: {action}")
+                return None
+                
+        finally:
+            # Reset agent status
+            if agent.name in self._state["agents"]:
+                self._state["agents"][agent.name]["status"] = "idle"

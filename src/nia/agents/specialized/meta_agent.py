@@ -61,8 +61,70 @@ class MetaAgent(TinyTroupeAgent):
         self._active_teams = {}
         self._active_tasks = {}
         
-        # Store domain from config
-        self._domain = config["domain"]
+        # Store domain and other attributes from config
+        self._domain = config.get("domain", "professional")
+        self._knowledge_vertical = config.get("knowledge_vertical", KnowledgeVertical.GENERAL)
+        self._skills = config.get("skills", [])
+        
+        # Initialize tracking for tests
+        self.initialization_sequence = []
+        self.agent_dependencies = {}
+        self.initialization_errors = {}
+        
+        # Error simulation flags
+        self._simulate_memory_system_error = False
+        self._simulate_belief_agent_error = False
+        self._simulate_schema_agent_error = False
+        
+    async def initialize(self):
+        """Initialize meta agent with tracing support."""
+        try:
+            # Track initialization start
+            self.initialization_sequence.append({
+                "component": "meta_agent",
+                "status": "starting",
+                "timestamp": datetime.now().isoformat()
+            })
+            
+            # Initialize base components
+            await super().initialize()
+            
+            # Track memory system initialization
+            if self._memory_system:
+                if self._simulate_memory_system_error:
+                    raise Exception("Simulated memory system error")
+                    
+                self.initialization_sequence.append({
+                    "component": "memory_system",
+                    "status": "initialized",
+                    "timestamp": datetime.now().isoformat()
+                })
+                
+            # Initialize factory
+            await self.factory.initialize()
+            self.initialization_sequence.append({
+                "component": "tiny_factory",
+                "status": "initialized",
+                "timestamp": datetime.now().isoformat()
+            })
+            
+            # Track successful completion
+            self.initialization_sequence.append({
+                "component": "meta_agent",
+                "status": "completed",
+                "timestamp": datetime.now().isoformat()
+            })
+            
+        except Exception as e:
+            # Track initialization error
+            self.initialization_sequence.append({
+                "component": "meta_agent",
+                "status": "error",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            })
+            self.initialization_errors["meta_agent"] = str(e)
+            raise
         
     async def spawn_agent(
         self,
@@ -72,33 +134,80 @@ class MetaAgent(TinyTroupeAgent):
         attributes: Optional[Dict] = None
     ) -> str:
         """Spawn a new agent using TinyFactory."""
-        # Create base attributes
-        base_attributes = {
-            "occupation": f"{agent_type.title()} Agent",
-            "desires": ["Complete assigned tasks", "Collaborate effectively"],
-            "emotions": {"baseline": "focused"},
-            "capabilities": capabilities,
-            "domain": domain
-        }
-        
-        # Merge with provided attributes
-        if attributes:
-            base_attributes.update(attributes)
+        try:
+            # Check for simulated errors
+            error_flag = f"_simulate_{agent_type}_error"
+            if hasattr(self, error_flag) and getattr(self, error_flag):
+                raise Exception(f"Simulated {agent_type} error")
+                
+            # Track initialization
+            self.initialization_sequence.append({
+                "component": f"{agent_type}_agent",
+                "status": "starting",
+                "timestamp": datetime.now().isoformat()
+            })
             
-        # Create agent config
-        agent_config = {
-            "domain": domain,
-            "capabilities": capabilities,
-            **base_attributes
-        }
-        
-        # Create agent
-        agent = await self.factory.create_agent(
-            agent_type=agent_type,
-            config=agent_config
-        )
-        
-        return agent.id
+            # Create base attributes
+            base_attributes = {
+                "occupation": f"{agent_type.title()} Agent",
+                "desires": ["Complete assigned tasks", "Collaborate effectively"],
+                "emotions": {"baseline": "focused"},
+                "capabilities": capabilities,
+                "domain": domain
+            }
+            
+            # Merge with provided attributes
+            if attributes:
+                base_attributes.update(attributes)
+                
+            # Create agent config
+            agent_config = {
+                "domain": domain,
+                "capabilities": capabilities,
+                **base_attributes
+            }
+            
+            # Track dependencies
+            if agent_type not in self.agent_dependencies:
+                self.agent_dependencies[agent_type] = []
+                
+            # Add memory system dependency
+            if self._memory_system:
+                self.agent_dependencies[agent_type].append("memory_system")
+                
+            # Add dependencies based on capabilities
+            for capability in capabilities:
+                if capability in ["schema_validation", "domain_validation"]:
+                    self.agent_dependencies[agent_type].append("validation_system")
+                elif capability in ["memory_access", "knowledge_query"]:
+                    self.agent_dependencies[agent_type].append("memory_system")
+            
+            # Create agent
+            agent = await self.factory.create_agent(
+                agent_type=agent_type,
+                config=agent_config
+            )
+            
+            # Track successful initialization
+            self.initialization_sequence.append({
+                "component": f"{agent_type}_agent",
+                "status": "initialized",
+                "agent_id": agent.id,
+                "timestamp": datetime.now().isoformat()
+            })
+            
+            return agent.id
+            
+        except Exception as e:
+            # Track initialization error
+            self.initialization_sequence.append({
+                "component": f"{agent_type}_agent",
+                "status": "error",
+                "error": str(e),
+                "timestamp": datetime.now().isoformat()
+            })
+            self.initialization_errors[agent_type] = str(e)
+            raise
         
     @property
     def domain(self) -> str:
@@ -108,7 +217,18 @@ class MetaAgent(TinyTroupeAgent):
     @domain.setter
     def domain(self, value: str):
         """Set agent domain."""
+        validate_domain_config(value)  # Validate domain before setting
         self._domain = value
+        
+    @property
+    def knowledge_vertical(self) -> str:
+        """Get knowledge vertical."""
+        return self._knowledge_vertical
+        
+    @property
+    def skills(self) -> List[str]:
+        """Get agent skills."""
+        return self._skills
         
     async def process_interaction(
         self,
