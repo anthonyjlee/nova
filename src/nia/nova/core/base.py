@@ -4,13 +4,13 @@ import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
-from ...memory.types.memory_types import AgentResponse, DialogueMessage
-from ...memory.prompts import AGENT_PROMPTS
+from nia.core.types import AgentResponse, DialogueMessage, DomainContext
+from ...core.interfaces.prompts import AGENT_PROMPTS
 from ...memory.chunking import chunk_content
 
 logger = logging.getLogger(__name__)
 
-class BaseAgent:
+class NovaAgent:
     """Base agent with core Nova functionality."""
     
     def __init__(self, llm, store, vector_store, agent_type: str):

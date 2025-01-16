@@ -4,16 +4,28 @@ import logging
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
-from ...nova.core.validation import ValidationAgent as NovaValidationAgent, ValidationResult
+from dataclasses import dataclass
+from typing import Dict, Any, Optional, List
+
+from ...nova.core.base import NovaAgent
 from ..tinytroupe_agent import TinyTroupeAgent
 from ...world.environment import NIAWorld
 from ...memory.two_layer import TwoLayerMemorySystem
 from ...core.types.memory_types import AgentResponse
 from ...config import validate_agent_config
 
+@dataclass
+class ValidationResult:
+    """Result of a validation operation."""
+    is_valid: bool
+    validations: List[Any]
+    confidence: float
+    metadata: Dict[str, Any]
+    issues: List[Dict[str, Any]]
+
 logger = logging.getLogger(__name__)
 
-class ValidationAgent(NovaValidationAgent, TinyTroupeAgent):
+class ValidationAgent(NovaAgent, TinyTroupeAgent):
     """Validation agent with TinyTroupe and memory capabilities."""
     
     def __init__(
@@ -36,13 +48,13 @@ class ValidationAgent(NovaValidationAgent, TinyTroupeAgent):
         }
         validate_agent_config("validation", config)
         
-        # Initialize NovaValidationAgent first
-        NovaValidationAgent.__init__(
+        # Initialize NovaAgent first
+        NovaAgent.__init__(
             self,
             llm=memory_system.llm if memory_system else None,
             store=memory_system.semantic.store if memory_system else None,
             vector_store=memory_system.episodic.store if memory_system else None,
-            domain=self.domain
+            agent_type="validation"
         )
         
         # Store memory system reference

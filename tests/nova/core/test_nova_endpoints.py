@@ -1,12 +1,38 @@
 """Tests for Nova endpoints."""
 
 import pytest
+import logging
 from unittest.mock import AsyncMock, MagicMock
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from datetime import datetime
+from pathlib import Path
+
+# Configure logging
+LOGS_DIR = Path("logs/tests")
+LOGS_DIR.mkdir(parents=True, exist_ok=True)
+log_file = LOGS_DIR / f"test_nova_endpoints_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+
+# Configure file handler
+file_handler = logging.FileHandler(log_file)
+file_handler.setLevel(logging.DEBUG)
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+
+# Configure logger - file only, no console output
+logger = logging.getLogger("test-nova-endpoints")
+logger.setLevel(logging.DEBUG)
+logger.addHandler(file_handler)
+logger.propagate = False  # Prevent propagation to root logger
+
+# Import for breakpoint()
+import pdb
 
 from nia.nova.core.nova_endpoints import nova_router, NovaRequest, NovaResponse
+from nia.core.feature_flags import FeatureFlags
+from nia.core.types.memory_types import (
+    Memory, MemoryType, DomainContext, TaskState,
+    ValidationSchema, DomainTransfer
+)
 from nia.nova.core.dependencies import (
     get_memory_system,
     get_agent_store,
@@ -208,28 +234,56 @@ def mock_dependencies(
     app.dependency_overrides[get_synthesis_agent] = lambda: mock_agents["synthesis_agent"]
 
 @pytest.fixture
-def client(mock_dependencies):
+async def feature_flags():
+    """Setup feature flags for testing."""
+    flags = FeatureFlags()
+    # Enable debug flags for testing
+    await flags.enable_debug('log_validation')
+    await flags.enable_debug('log_websocket')
+    await flags.enable_debug('log_storage')
+    return flags
+
+@pytest.fixture
+def client(mock_dependencies, feature_flags):
     """Test client with mocked dependencies."""
+    logger.info("Setting up test client with mocked dependencies")
     return TestClient(app)
 
 @pytest.mark.asyncio
-async def test_initial_processing(client, mock_agents):
+async def test_initial_processing(client, mock_agents, feature_flags):
     """Test initial processing phase."""
-    response = await client.post("/api/nova/ask", json={
-        "content": "test query",
-        "workspace": "personal"
-    })
+    logger.info("Testing initial processing phase")
+    # Breakpoint before schema validation
+    breakpoint()
+    try:
+        response = await client.post("/api/nova/ask", json={
+            "content": "test query",
+            "workspace": "personal",
+            "debug_flags": {
+                "log_validation": True,
+                "log_websocket": True,
+                "log_storage": True
+            }
+        })
+        logger.debug(f"Response status: {response.status_code}")
+        logger.debug(f"Response content: {response.json()}")
     
-    assert response.status_code == 200
+    except Exception as e:
+        logger.error(f"Error in initial processing test: {str(e)}")
+        raise
+
+    logger.info("Verifying initial processing assertions")
+    assert response.status_code == 200, f"Expected status code 200, got {response.status_code}"
     mock_agents["schema_agent"].validate_schema.assert_called_once()
     mock_agents["parsing_agent"].parse_text.assert_called_once()
     mock_agents["context_agent"].get_context.assert_called_once()
     mock_agents["memory_agent"].retrieve_relevant_memories.assert_called_once()
 
 @pytest.mark.asyncio
-async def test_task_detection(client, mock_agents):
+async def test_task_detection(client, mock_agents, feature_flags):
     """Test task detection phase."""
-    # Setup mock to detect task
+    logger.info("Testing task detection phase")
+    logger.debug("Setting up mock task detection")
     mock_agents["analysis_agent"].detect_task.return_value = MagicMock(
         is_task=True,
         task_type="test_task",
@@ -246,24 +300,51 @@ async def test_task_detection(client, mock_agents):
         dict=lambda: {"task": "detected"}
     )
     
-    response = await client.post("/api/nova/ask", json={
-        "content": "create a test",
-        "workspace": "personal"
-    })
+    try:
+        response = await client.post("/api/nova/ask", json={
+            "content": "create a test",
+            "workspace": "personal",
+            "debug_flags": {
+                "log_validation": True,
+                "log_websocket": True,
+                "log_storage": True
+            }
+        })
+        logger.debug(f"Response status: {response.status_code}")
+        logger.debug(f"Response content: {response.json()}")
     
-    assert response.status_code == 200
+    except Exception as e:
+        logger.error(f"Error in task detection test: {str(e)}")
+        raise
+
+    logger.info("Verifying task detection assertions")
+    assert response.status_code == 200, f"Expected status code 200, got {response.status_code}"
     mock_agents["analysis_agent"].detect_task.assert_called_once()
     mock_agents["planning_agent"].create_plan.assert_called_once()
 
 @pytest.mark.asyncio
-async def test_cognitive_processing(client, mock_agents):
+async def test_cognitive_processing(client, mock_agents, feature_flags):
     """Test cognitive processing phase."""
-    response = await client.post("/api/nova/ask", json={
-        "content": "test query",
-        "workspace": "personal"
-    })
+    logger.info("Testing cognitive processing phase")
+    try:
+        response = await client.post("/api/nova/ask", json={
+            "content": "test query",
+            "workspace": "personal",
+            "debug_flags": {
+                "log_validation": True,
+                "log_websocket": True,
+                "log_storage": True
+            }
+        })
+        logger.debug(f"Response status: {response.status_code}")
+        logger.debug(f"Response content: {response.json()}")
     
-    assert response.status_code == 200
+    except Exception as e:
+        logger.error(f"Error in cognitive processing test: {str(e)}")
+        raise
+
+    logger.info("Verifying cognitive processing assertions")
+    assert response.status_code == 200, f"Expected status code 200, got {response.status_code}"
     mock_agents["belief_agent"].analyze_beliefs.assert_called_once()
     mock_agents["desire_agent"].analyze_desires.assert_called_once()
     mock_agents["emotion_agent"].analyze_emotion.assert_called_once()
@@ -271,14 +352,28 @@ async def test_cognitive_processing(client, mock_agents):
     mock_agents["meta_agent"].process_interaction.assert_called_once()
 
 @pytest.mark.asyncio
-async def test_response_generation(client, mock_agents):
+async def test_response_generation(client, mock_agents, feature_flags):
     """Test response generation phase."""
-    response = await client.post("/api/nova/ask", json={
-        "content": "test query",
-        "workspace": "personal"
-    })
+    logger.info("Testing response generation phase")
+    try:
+        response = await client.post("/api/nova/ask", json={
+            "content": "test query",
+            "workspace": "personal",
+            "debug_flags": {
+                "log_validation": True,
+                "log_websocket": True,
+                "log_storage": True
+            }
+        })
+        logger.debug(f"Response status: {response.status_code}")
+        logger.debug(f"Response content: {response.json()}")
     
-    assert response.status_code == 200
+    except Exception as e:
+        logger.error(f"Error in response generation test: {str(e)}")
+        raise
+
+    logger.info("Verifying response generation assertions")
+    assert response.status_code == 200, f"Expected status code 200, got {response.status_code}"
     mock_agents["integration_agent"].integrate.assert_called_once()
     mock_agents["validation_agent"].validate.assert_called_once()
     mock_agents["orchestration_agent"].process_request.assert_called_once()
@@ -286,34 +381,64 @@ async def test_response_generation(client, mock_agents):
     mock_agents["synthesis_agent"].synthesize.assert_called_once()
 
 @pytest.mark.asyncio
-async def test_schema_validation_failure(client, mock_agents):
+async def test_schema_validation_failure(client, mock_agents, feature_flags):
     """Test handling of schema validation failure."""
-    # Setup mock to fail validation
+    logger.info("Testing schema validation failure")
+    logger.debug("Setting up mock validation failure")
+    # Breakpoint before validation failure test
+    breakpoint()
     mock_agents["schema_agent"].validate_schema.return_value = MagicMock(
         is_valid=False,
         issues=["Invalid schema"],
         dict=lambda: {"validation": "failed", "issues": ["Invalid schema"]}
     )
     
-    # Test with strict mode
-    response = await client.post("/api/nova/ask", json={
-        "content": "test query",
-        "workspace": "personal",
-        "debug_flags": {"strict_mode": True}
-    })
+    try:
+        # Test with strict mode
+        response = await client.post("/api/nova/ask", json={
+            "content": "test query",
+            "workspace": "personal",
+            "debug_flags": {
+                "strict_mode": True,
+                "log_validation": True
+            }
+        })
+        logger.debug(f"Response status: {response.status_code}")
+        logger.debug(f"Response content: {response.json()}")
     
-    assert response.status_code == 400
-    assert "Schema validation failed" in response.json()["detail"]
+    except Exception as e:
+        logger.error(f"Error in schema validation failure test: {str(e)}")
+        raise
+
+    logger.info("Verifying schema validation failure assertions")
+    assert response.status_code == 400, f"Expected status code 400, got {response.status_code}"
+    assert "Schema validation failed" in response.json()["detail"], "Expected validation failure message not found"
 
 @pytest.mark.asyncio
-async def test_memory_storage(client, mock_memory_system):
+async def test_memory_storage(client, mock_memory_system, feature_flags):
     """Test memory storage operations."""
-    response = await client.post("/api/nova/ask", json={
-        "content": "test query",
-        "workspace": "personal"
-    })
+    logger.info("Testing memory storage operations")
+    # Breakpoint before memory operations
+    breakpoint()
+    try:
+        response = await client.post("/api/nova/ask", json={
+            "content": "test query",
+            "workspace": "personal",
+            "debug_flags": {
+                "log_validation": True,
+                "log_websocket": True,
+                "log_storage": True
+            }
+        })
+        logger.debug(f"Response status: {response.status_code}")
+        logger.debug(f"Response content: {response.json()}")
     
-    assert response.status_code == 200
+    except Exception as e:
+        logger.error(f"Error in memory storage test: {str(e)}")
+        raise
+
+    logger.info("Verifying memory storage assertions")
+    assert response.status_code == 200, f"Expected status code 200, got {response.status_code}"
     mock_memory_system.store_ephemeral.assert_called()
     mock_memory_system.query_episodic.assert_called()
     mock_memory_system.episodic.store_memory.assert_called()

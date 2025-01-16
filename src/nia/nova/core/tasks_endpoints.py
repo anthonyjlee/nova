@@ -6,7 +6,7 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 import uuid
 
-from .dependencies import get_memory_system
+from .dependencies import get_memory_system, get_feature_flags
 from .auth import get_permission
 from .error_handling import ServiceError
 from .validation import ValidationResult, ValidationPattern
@@ -34,12 +34,16 @@ class TaskValidationPattern(ValidationPattern):
     state_to: Optional[str] = None
     domain: Optional[str] = None
 
+    model_config = {
+        "populate_by_name": True
+    }
+
 async def validate_state_transition(
     current_state: TaskState,
     new_state: TaskState,
     task_id: str,
     memory_system: Any,
-    debug_flags: Optional[FeatureFlags] = None
+    debug_flags = None
 ) -> ValidationResult:
     """Validate if a state transition is allowed with debug logging."""
     try:
@@ -119,7 +123,7 @@ async def validate_state_transition(
 async def validate_domain_access(
     domain: str,
     memory_system: Any,
-    debug_flags: Optional[FeatureFlags] = None
+    debug_flags = None
 ) -> ValidationResult:
     """Validate domain access permissions with debug logging."""
     try:
@@ -176,7 +180,7 @@ async def validate_domain_access(
 async def validate_task(
     task: TaskNode,
     memory_system: Any,
-    debug_flags: Optional[FeatureFlags] = None
+    debug_flags = None
 ) -> ValidationResult:
     """Validate task data with debug logging."""
     try:
@@ -266,11 +270,11 @@ tasks_router = APIRouter(
     dependencies=[Depends(get_permission("write"))]
 )
 
-@tasks_router.post("", response_model=Dict[str, Any])
+@tasks_router.post("", response_model=None)
 async def create_task(
     task: TaskNode,
     memory_system: Any = Depends(get_memory_system),
-    debug_flags: Optional[FeatureFlags] = None
+    debug_flags = Depends(get_feature_flags, use_cache=True)
 ) -> Dict[str, Any]:
     """Create a new task with validation."""
     try:
@@ -353,12 +357,12 @@ async def create_task(
             
         raise ServiceError(error_msg)
 
-@tasks_router.post("/{task_id}/transition", response_model=Dict[str, Any])
+@tasks_router.post("/{task_id}/transition", response_model=None)
 async def transition_task_state(
     task_id: str,
     new_state: TaskState,
     memory_system: Any = Depends(get_memory_system),
-    debug_flags: Optional[FeatureFlags] = None
+    debug_flags = Depends(get_feature_flags, use_cache=True)
 ) -> Dict[str, Any]:
     """Transition a task to a new state with validation."""
     try:

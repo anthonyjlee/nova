@@ -7,6 +7,7 @@ import logging
 import asyncio
 import aiohttp
 import subprocess
+import pdb
 from pathlib import Path
 from datetime import datetime
 
@@ -19,16 +20,24 @@ LOGS_DIR = project_root / "logs" / "server"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 log_file = LOGS_DIR / f"server_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 
-# Configure file handler
+# Configure file handler with detailed formatting
 file_handler = logging.FileHandler(log_file)
-file_handler.setLevel(logging.INFO)
-file_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+file_handler.setLevel(logging.DEBUG)  # Set to DEBUG for more detailed logs
+file_handler.setFormatter(logging.Formatter(
+    '%(asctime)s - %(name)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s'
+))
 
 # Configure logger
 logger = logging.getLogger("nova-server")
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.DEBUG)  # Set to DEBUG for more detailed logs
 logger.addHandler(file_handler)
 logger.propagate = False  # Prevent propagation to root logger
+
+# Configure uvicorn logger to write to our log file
+uvicorn_logger = logging.getLogger("uvicorn")
+uvicorn_logger.setLevel(logging.DEBUG)
+uvicorn_logger.addHandler(file_handler)
+uvicorn_logger.propagate = False
 
 async def start_docker_services():
     """Start all required Docker services."""
@@ -132,21 +141,25 @@ async def main():
         port = int(os.getenv("NOVA_PORT", "8000"))
         reload = os.getenv("NOVA_RELOAD", "true").lower() == "true"
         
-        # Run server with minimal logging
+        # Run server with detailed logging
         config = uvicorn.Config(
             "nia.nova.core.app:app",
             host=host,
             port=port,
             reload=reload,
-            log_level="error",
-            access_log=False,
-            timeout_keep_alive=30
+            log_level="debug",  # Set to debug for more detailed logs
+            access_log=True,
+            timeout_keep_alive=30,
+            log_config=None  # Disable default uvicorn logging config
         )
         server = uvicorn.Server(config)
         print(f"✓ Server starting on http://{host}:{port}")
         await server.serve()
     except Exception as e:
+        logger.error(f"Server failed to start: {str(e)}")
+        logger.error("Full traceback:", exc_info=True)
         print(f"❌ Server failed to start: {str(e)}")
+        print("Check logs for full traceback")
         sys.exit(1)
 
 if __name__ == "__main__":

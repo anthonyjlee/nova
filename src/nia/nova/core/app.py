@@ -88,8 +88,9 @@ from .websocket_endpoints import ws_router
 from .user_endpoints import user_router
 from .channel_endpoints import channel_router
 from .debug_endpoints import router as debug_router
-from .dependencies import get_memory_system, get_thread_manager
+from .dependencies import get_memory_system, get_thread_manager, get_feature_flags
 from nia.core.feature_flags import FeatureFlags
+from nia.core.types import DomainContext
 
 # Create FastAPI app
 app = FastAPI(
@@ -320,7 +321,7 @@ async def startup_event():
         logger.info("Application starting up...")
         
         # Initialize Redis for feature flags
-        feature_flags = FeatureFlags()
+        feature_flags = await get_feature_flags()
         app.state.feature_flags = feature_flags
         
         # Enable debug flags for development

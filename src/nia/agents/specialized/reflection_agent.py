@@ -1,7 +1,7 @@
 """TinyTroupe reflection agent implementation."""
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 from ...nova.core.reflection import ReflectionAgent as NovaReflectionAgent

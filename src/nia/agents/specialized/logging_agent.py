@@ -4,7 +4,7 @@ import logging
 from typing import Dict, Any, Optional
 from datetime import datetime
 
-from ...nova.core.logging import LoggingAgent as NovaLoggingAgent
+from ...nova.core.base import NovaAgent
 from ..tinytroupe_agent import TinyTroupeAgent
 from ...world.environment import NIAWorld
 from ...memory.two_layer import TwoLayerMemorySystem
@@ -12,7 +12,7 @@ from ...core.types.memory_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
-class LoggingAgent(NovaLoggingAgent, TinyTroupeAgent):
+class LoggingAgent(NovaAgent, TinyTroupeAgent):
     """Logging agent with TinyTroupe and memory capabilities."""
     
     def __init__(
@@ -27,13 +27,14 @@ class LoggingAgent(NovaLoggingAgent, TinyTroupeAgent):
         # Set domain before initialization
         self.domain = domain or "professional"  # Default to professional domain
         
-        # Initialize NovaLoggingAgent first
-        NovaLoggingAgent.__init__(
+        # Initialize NovaAgent first
+        NovaAgent.__init__(
             self,
             llm=memory_system.llm if memory_system else None,
             store=memory_system.semantic.store if memory_system else None,
             vector_store=memory_system.episodic.store if memory_system else None,
-            domain=self.domain
+            domain=self.domain,
+            agent_type="logging"
         )
         
         # Initialize TinyTroupeAgent
@@ -201,10 +202,12 @@ class LoggingAgent(NovaLoggingAgent, TinyTroupeAgent):
             self._update_rotation_policies(policies)
             
         # Process logs
-        result = await self.process_logs(
+        result = await self.process(
             content,
-            logging_type,
-            metadata={"domain": target_domain or self.domain}
+            metadata={
+                "type": logging_type,
+                "domain": target_domain or self.domain
+            }
         )
         
         # Store logging results with enhanced metadata

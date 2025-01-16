@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field, validator
 from typing import Dict, Any, Optional, List, Union, Literal
 from datetime import datetime
 from enum import Enum
+from nia.core.types import DomainContext, ValidationSchema
 
 class TaskState(str, Enum):
     """Task states for Kanban-style interface."""
@@ -452,8 +453,9 @@ class AgentResponse(BaseModel):
         """Convert system workspace to personal for frontend compatibility."""
         return "personal" if v == "system" else v
 
-    class Config:
-        allow_population_by_field_name = True
+    model_config = {
+        "populate_by_name": True
+    }
 
 class GraphPruneResponse(BaseModel):
     nodes_removed: int
@@ -544,24 +546,9 @@ class ThreadMessage(BaseModel):
     workspace: str = "personal"
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
-class ThreadValidation(BaseModel):
+class ThreadValidation(ValidationSchema):
     """Thread validation model."""
-    domain: str
-    access_domain: str
-    confidence: float
-    source: str
-    timestamp: str
-    supported_by: List[str] = Field(default_factory=list)
-    contradicted_by: List[str] = Field(default_factory=list)
-    needs_verification: List[str] = Field(default_factory=list)
-    cross_domain: Dict[str, Any] = Field(
-        default_factory=lambda: {
-            "approved": False,
-            "requested": False,
-            "source_domain": "",
-            "target_domain": ""
-        }
-    )
+    pass
 
 class ThreadResponse(BaseModel):
     """Response model for thread operations."""

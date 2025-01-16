@@ -19,7 +19,7 @@ class SchemaValidationPattern(ValidationPattern):
 class SchemaResult(BaseModel):
     """Container for schema operation results."""
     is_valid: bool
-    schema: Dict[str, Any]
+    result_schema: Dict[str, Any]  # Renamed from schema to avoid conflict with BaseModel
     validations: List[Dict[str, Any]]
     confidence: float
     metadata: Dict[str, Any] = {}
@@ -118,7 +118,7 @@ class SchemaAgent:
             # Create result
             result = SchemaResult(
                 is_valid=is_valid,
-                schema=schema,
+                result_schema=schema,
                 validations=validations,
                 confidence=confidence,
                 metadata={
@@ -155,7 +155,7 @@ class SchemaAgent:
                 
             return SchemaResult(
                 is_valid=False,
-                schema={},
+                result_schema={},
                 validations=[],
                 confidence=0.0,
                 metadata={
