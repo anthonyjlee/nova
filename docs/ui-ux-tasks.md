@@ -1,161 +1,162 @@
-# UI/UX Development Tasks
+# UI/UX Implementation Tasks
 
-## Overview
-NIA's frontend will be built using SvelteKit, featuring a three-panel layout with real-time updates via WebSocket integration. The UI must respect the two-layer memory architecture and domain boundaries.
+## Immediate Priority: Debug Validation
+
+### 1. Add Debug UI
+- [ ] Message Validation Panel:
+  * Show validation attempts
+  * Display schema errors
+  * Show data at each step
+  * Toggle debug modes
+
+### 2. Debug Existing Components
+✅ Core Components:
+  * Chat.svelte - Basic chat interface
+  * MessageInput.svelte - Input handling
+  * MessageList.svelte - Message display
+  * ErrorBoundary.svelte - Error handling
+
+- [ ] Add Debug Features:
+  * Add validation logging
+  * Show schema errors
+  * Display data flow
+  * Add retry options
+
+### 3. Test Basic Flow
+- [ ] Simple Message Flow:
+  * Send test message
+  * Check validation
+  * Verify WebSocket
+  * Check storage
+
+### 4. WebSocket Integration
+- [ ] Real-time Updates:
+  * Connect to WebSocket
+  * Handle messages
+  * Show connection status
+  * Handle reconnection
+
+### 5. Error Handling
+- [ ] Error States:
+  * Validation errors
+  * Connection errors
+  * LM Studio errors
+  * Storage errors
 
 ## Core Components
 
-### 1. Layout Structure ✓
-- [x] Three-panel layout:
-  * Chat Interface (Left/Main Panel)
-  * Graph Visualization (Right Panel)
-  * Control Panel (Top/Bottom Panel)
-- [x] Responsive design
-- [x] Collapsible/Expandable panels
-- [x] Dark/Light theme support
-
-### 2. Chat Interface (Slack-like) ✓
+### 1. Chat Interface (Priority)
 Files:
-- [x] frontend/src/routes/threads/[id]/+page.svelte
-- [x] frontend/src/lib/components/AgentDetailsPanel.svelte
-- [x] frontend/src/lib/components/AgentTeamView.svelte
-- [x] frontend/src/lib/components/ThreadValidation.svelte
+- [ ] frontend/src/lib/components/Chat.svelte
+- [ ] frontend/src/lib/components/MessageInput.svelte
+- [ ] frontend/src/lib/components/Message.svelte
+- [ ] frontend/src/lib/components/ErrorDisplay.svelte
 
 Features:
-- [x] Real-time message updates via WebSocket
-- [x] Thread support with domain context
-- [x] Message components with memory integration
-- [x] Input area with domain validation
-- [x] Thread navigation
-- [x] Thread validation and verification
+- [ ] Basic message display
+- [ ] Simple input handling
+- [ ] Error presentation
+- [ ] Loading states
 
-### 3. Graph Visualization (In Progress)
+### 2. WebSocket Client
 Files:
-- [x] frontend/src/lib/components/GraphPanel.svelte
-- [x] frontend/src/lib/services/graph.ts
-- [x] frontend/src/lib/stores/workspace.ts
+- [ ] frontend/src/lib/websocket/client.ts
+- [ ] frontend/src/lib/stores/messages.ts
 
 Features:
-- [x] Integration with both memory layers
-- [x] Node types with domain labels
-- [x] Edge types preserving domain context
-- [x] Real-time updates
+- [ ] Basic connection
+- [ ] Message handling
+- [ ] Error handling
+- [ ] Reconnection logic
 
-### 4. Control Panel ✓
+### 3. Schema Validation
+Files:
+- [ ] frontend/src/lib/validation/schemas.ts
+- [ ] frontend/src/lib/validation/messages.ts
+
 Features:
-- [x] Domain management
-- [x] Memory system monitoring
-- [x] Task/Agent management with domain context
-
-## Technical Requirements
-
-### 1. Memory System Integration ✓
-- [x] Proper distribution of UI data
-- [x] Domain boundary enforcement
-- [x] Memory consolidation progress
-- [x] Validation status tracking
-
-### 2. WebSocket Integration ✓
-Features:
-- [x] Real-time updates
-- [x] Domain-aware event handling
-- [x] Error handling
-- [x] Reconnection logic
-
-### 3. Data Management ✓
-Features:
-- [x] Domain-aware state management
-- [x] Two-layer memory synchronization
-- [x] Thread validation and storage
-- [x] Real-time validation feedback
-
-### 4. UI Components ✓
-Requirements:
-- [x] Domain-aware components
-- [x] Memory system integration
-- [x] Validation status display
-- [x] Cross-domain operation UI
-
-## Implementation Phases
-
-### Phase 1: Memory Integration ✓
-1. [x] Implement two-layer memory integration
-2. [x] Add domain boundary enforcement
-3. [x] Create validation system UI
-4. [x] Set up real-time updates
-
-### Phase 2: Core Layout ✓
-1. [x] Implement three-panel layout
-2. [x] Add domain-aware routing
-3. [x] Create memory status displays
-4. [x] Add validation feedback UI
-
-### Phase 3: Chat Interface ✓
-1. [x] Build domain-aware components
-2. [x] Implement thread system
-3. [x] Add validation feedback
-4. [x] Create domain boundary indicators
-
-### Phase 4: Graph Visualization ✓
-1. [x] Integrate with both memory layers
-2. [x] Implement domain-aware rendering
-3. [x] Add validation status display
-4. [x] Create memory consolidation visualization
-
-### Phase 5: Control Panel and Integration ✓
-1. [x] Create domain management UI
-2. [x] Implement memory system monitoring
-3. [x] Add validation controls
-4. [x] Create profile adaptation UI
+- [ ] Message schemas
+- [ ] Error handling
+- [ ] Validation feedback
+- [ ] Recovery options
 
 ## Testing Strategy
 
-### 1. Memory Integration Tests ✓
-- [x] Two-layer memory operations
-- [x] Domain boundary enforcement
-- [x] Validation system
-- [x] Profile adaptations
+### 1. Component Tests
+- [ ] Message display
+- [ ] Input handling
+- [ ] Error states
+- [ ] Loading states
 
-### 2. UI Integration Tests ✓
-- [x] Domain-aware components
-- [x] Memory system integration
-- [x] Validation feedback
-- [x] Cross-domain operations
+### 2. Integration Tests
+- [ ] WebSocket connection
+- [ ] Message flow
+- [ ] Error handling
+- [ ] Schema validation
 
-## Performance Considerations
+### 3. End-to-End Tests
+- [ ] Basic chat flow
+- [ ] Error scenarios
+- [ ] Validation cases
+- [ ] Loading states
 
-### 1. Memory System Performance ✓
-- [x] Efficient two-layer data distribution
-- [x] Optimized domain validation
-- [x] Smart consolidation visualization
-- [x] Cached validation results
+## Success Criteria
 
-### 2. UI Performance (Current Focus)
-- [x] Efficient domain boundary checking
-- [x] Optimized memory layer access
-- [ ] Smart validation feedback
-- [ ] Cached domain context
+### 1. Basic Functionality
+- Can send message
+- Can receive response
+- Shows errors clearly
+- Handles loading states
 
-## Documentation
+### 2. Error Handling
+- Shows validation errors
+- Handles connection issues
+- Provides recovery options
+- Clear error messages
 
-### 1. Architecture Documentation ✓
-- [x] Two-layer memory system
-- [x] Domain boundary system
-- [x] Validation system
-- [x] Profile adaptation system
-
-### 2. UI Documentation (Current Focus)
-- [x] Domain-aware features
-- [x] Memory system integration
-- [ ] Validation feedback
-- [ ] Cross-domain operations
+### 3. User Experience
+- Clear loading states
+- Responsive input
+- Error feedback
+- Connection status
 
 ## Next Steps
-1. [x] Complete memory consolidation visualization
-2. [x] Implement smart validation feedback
-3. [x] Add cached domain context
-4. [ ] Complete WebSocket real-time updates optimization
-5. [ ] Finalize frontend/backend type synchronization
-6. [ ] Complete schema validation across stack
-7. [ ] Refine component state management
-8. [ ] Add CORS headers to channel endpoints
+
+### 1. Core Chat
+- [ ] Implement basic Chat.svelte
+- [ ] Add MessageInput.svelte
+- [ ] Create Message.svelte
+- [ ] Add ErrorDisplay.svelte
+
+### 2. WebSocket
+- [ ] Set up WebSocket client
+- [ ] Add message store
+- [ ] Handle connection
+- [ ] Add error handling
+
+### 3. Validation
+- [ ] Add Zod schemas
+- [ ] Implement validation
+- [ ] Add error handling
+- [ ] Show feedback
+
+## Future Enhancements
+(After basic chat working)
+
+### 1. Enhanced Chat
+- Thread support
+- Message formatting
+- File attachments
+- Code highlighting
+
+### 2. Advanced Features
+- Message search
+- Thread management
+- User preferences
+- Theme support
+
+### 3. Performance
+- Message caching
+- Lazy loading
+- Virtual scrolling
+- Connection optimization

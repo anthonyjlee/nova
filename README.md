@@ -1,19 +1,51 @@
 # NIA (Nova Intelligence Architecture)
 
-> **Project Status (2025-01-16)**: 
-> - 🟢 Neo4j: Database issues fixed, thread storage working
-> - 🟢 Frontend: Three-panel layout complete with Slack-like design
-> - 🟢 WebSocket: Integration complete with real-time updates
-> - 🟢 Components: Validation and error handling implemented
-> - 🟢 Search: Basic implementation complete
-> - 🟡 In Progress: Search optimization (caching, infinite scroll)
-> - 🟡 Next: Complete documentation and performance improvements
+> **Project Status (2025-01-19)**: 
+> - 🟢 Memory System: Two-layer architecture implemented
+> - 🟢 LM Studio: Integration implemented in llm.py
+> - 🟢 Frontend: Core components implemented
+> - 🟡 Validation: Adding debug tools for schema issues
+> - 🟡 Testing: Need to verify message flow
+> - 🟡 Next: Get basic chat working with validation
 
 NIA is a sophisticated multi-agent system that combines:
 - Two-layer memory architecture (episodic/semantic)
 - Profile-based task adaptations
 - Domain-aware processing
 - Swarm-based agent collaboration
+
+## Documentation
+
+NIA's documentation is organized into core guides:
+
+1. **System Architecture and Implementation**
+   - Two-layer memory architecture (Qdrant + Neo4j)
+   - Storage patterns and implementation
+   - WebSocket integration
+   - Error handling
+
+2. **Integration Patterns and User Flows**
+   - Component interactions
+   - Message flow patterns
+   - Storage patterns
+   - Error handling
+
+3. **Schema Debug Guide**
+   - Feature flags for debugging
+   - Validation logging
+   - WebSocket debugging
+   - Debug UI panel
+
+4. **API Reference Guide**
+   - Endpoint specifications
+   - Request/response schemas
+   - WebSocket message types
+   - Schema validation rules
+
+Additional documentation:
+- Documentation Guide (navigation and usage)
+- Documentation Alignment (consistency analysis)
+- Development Logs (in docs/devlog)
 
 ## Why NIA?
 
@@ -213,8 +245,9 @@ sequential_config = {
 
 ### Prerequisites
 - Python 3.9+
-- Docker Desktop
-- LMStudio (for LLM inference)
+- Docker Desktop (for Neo4j and Qdrant)
+- LM Studio (running on port 1234)
+- Node.js 18+ (for frontend)
 
 ### Installation
 ```bash
@@ -222,20 +255,27 @@ sequential_config = {
 git clone https://github.com/yourusername/NIA.git
 cd NIA
 
-# Install dependencies
-pip install -r requirements.txt
+# Install Python dependencies
+pdm install
 
-# Start services
-python scripts/manage.py start
+# Install frontend dependencies
+cd frontend && npm install
+
+# Configure TinyTroupe
+# This will create a default config.ini if not present
+python scripts/manage.py check-workspace
 ```
 
-### Development
+### Development Commands
 ```bash
-# Start all services (Neo4j, Qdrant, FastAPI, Frontend)
+# Start all services
 python scripts/manage.py start
 
-# Check service status
+# Check service status (includes workspace/domain status)
 python scripts/manage.py status
+
+# Validate workspace configuration
+python scripts/manage.py check-workspace
 
 # Stop all services
 python scripts/manage.py stop
@@ -243,53 +283,75 @@ python scripts/manage.py stop
 # Restart all services
 python scripts/manage.py restart
 
+# Clean up all data stores (Neo4j, Qdrant, Redis)
+python scripts/manage.py cleanup
+
 # Run tests
 pytest tests/memory/integration/  # Memory tests
 pytest tests/nova/               # Nova tests
 ```
 
-### Service Dependencies
+### Service Architecture
 
-1. **Neo4j (Graph Database)**
-   - Purpose: Semantic memory storage
-   - Port: 7474 (HTTP), 7687 (Bolt)
-   - Status Check: http://localhost:7474
+1. **Storage Layer**
+   - Neo4j (Graph Database)
+     * Purpose: Semantic memory storage
+     * Port: 7474 (HTTP), 7687 (Bolt)
+     * Status: http://localhost:7474
 
-2. **Qdrant (Vector Store)**
-   - Purpose: Ephemeral memory & embeddings
-   - Port: 6333
-   - Status Check: http://localhost:6333/dashboard
+   - Qdrant (Vector Store)
+     * Purpose: Ephemeral memory & embeddings
+     * Port: 6333
+     * Status: http://localhost:6333/dashboard
 
-3. **LMStudio (LLM Server)**
-   - Purpose: Local LLM inference
-   - Port: 1234
-   - Status Check: http://localhost:1234/v1/models
+   - Redis (Cache/Queue)
+     * Purpose: Caching and message queues
+     * Port: 6379
+     * Used by: Celery, FastAPI
 
-4. **FastAPI Server**
-   - Purpose: Main application server
-   - Port: 8000
-   - Status Check: http://localhost:8000/docs
+2. **Processing Layer**
+   - LMStudio (LLM Server)
+     * Purpose: Local LLM inference
+     * Port: 1234
+     * Status: http://localhost:1234/v1/models
 
-5. **Frontend Server**
-   - Purpose: SvelteKit web interface
-   - Port: 5173
-   - Status Check: http://localhost:5173
-   - Features:
-     * Slack-inspired three-panel layout
-     * Real-time graph visualization
-     * WebSocket integration with validation
-     * Dark theme support
-     * Component validation with Zod schemas
-     * Error boundaries and recovery
-     * State transition validation
-     * Search functionality with filters
-     * Task management with drag-and-drop
-     * Domain-aware components
-     * Real-time updates via WebSocket
-     * Thread support with domain context
-     * Memory system integration
-     * Validation status display
-     * Cross-domain operation UI
+   - Celery (Task Queue)
+     * Purpose: Asynchronous task processing
+     * Workers: Memory consolidation, batch operations
+     * Broker: Redis
+
+3. **Application Layer**
+   - FastAPI Server
+     * Purpose: Main application server
+     * Port: 8000
+     * Status: http://localhost:8000/docs
+     * Features:
+       - TinyTroupe integration
+       - Domain-aware processing
+       - WebSocket support
+       - Task orchestration
+
+   - Frontend (SvelteKit)
+     * Purpose: Web interface
+     * Port: 5173
+     * Status: http://localhost:5173
+     * Features:
+       - Slack-inspired three-panel layout
+       - Real-time updates via WebSocket
+       - Domain-aware components
+       - Task management
+       - Search with caching
+       - Dark theme support
+
+4. **Workspace Configuration**
+   - Personal Workspace
+     * Default enabled
+     * General purpose domain
+
+   - Professional Workspace
+     * Configurable domains (retail, finance, etc.)
+     * Domain-specific memory thresholds
+     * Cross-domain validation
 
 ## Architecture Diagram
 
@@ -297,22 +359,27 @@ pytest tests/nova/               # Nova tests
                     NIA Architecture
                     ================
 
-+-------------+        +-----------------+
-|  Interface  |  <-->  |  Nova System   |
-|  (FastAPI)  |        |  (Orchestrator)|
-+-------------+        +-----------------+
-                              |
-                              v
-+------------------+  +----------------+  +-----------------+
-|   Memory System  |  |  Agent System  |  |  Graph System  |
-| +--------------+|  |  (Inheritance) |  | +--------------+|
-| |   Episodic   ||  |  BaseAgent    |  | |     DAG      ||
-| |   (Vector)   ||  |  TinyTroupe   |  | |   (Runtime)  ||
-| +--------------+|  |  Specialized  |  | +--------------+|
-| |   Semantic   ||  +----------------+  | |    Neo4j     ||
-| |   (Neo4j)    ||                     | |  (Storage)   ||
-| +--------------+|                     | +--------------+|
-+------------------+                    +-----------------+
++-------------+     +-----------------+     +-------------+
+|  Frontend   |<--->|    FastAPI     |<--->|  LMStudio  |
+| (SvelteKit) |     |    Server      |     |  Server    |
++-------------+     +-----------------+     +-------------+
+                           ^
+                           |
+              +-----------+ +-----------+
+              |           | |           |
+        +-----+-----+ +---+-+---+ +----+----+
+        |  Celery   | |  Redis  | | TinyTroupe|
+        |  Workers  | |  Queue  | | Config   |
+        +-----------+ +---------+ +---------+
+              ^           ^           ^
+              |           |           |
+        +-----+-----+-----+-----+-----+----+
+        |     Storage Layer           |
+        | +----------+  +---------+   |
+        | |  Qdrant  |  |  Neo4j  |   |
+        | |(Episodic)|  |(Semantic)|  |
+        | +----------+  +---------+   |
+        +----------------------------+
 ```
 
 ## Common Issues & Solutions
