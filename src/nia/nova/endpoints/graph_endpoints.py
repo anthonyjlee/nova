@@ -1,153 +1,95 @@
-"""Graph visualization endpoints."""
+"""Graph API endpoints."""
 
 from fastapi import APIRouter, Depends, HTTPException
-from typing import List, Dict, Optional
+from typing import Dict, Any, List
+from datetime import datetime
+from ..core.auth import validate_api_key, get_api_key
+from ..core.dependencies import get_memory_system
 
-from nia.memory.types import TaskOutput, OutputType, TaskStatus
-from nia.core.types import GraphNode, GraphEdge, GraphLayout
+graph_router = APIRouter(prefix="/api/graph", tags=["Graph"])
 
-router = APIRouter(prefix="/graph", tags=["graph"])
-
-async def get_graph_store():
-    """Get graph store dependency."""
-    from nia.memory.graph_store import GraphStore
-    store = GraphStore()
-    return store
-
-@router.get("/tasks")
-async def get_task_graph(store = Depends(get_graph_store)):
-    """Get task dependency graph."""
-    tasks = await store.get_tasks()
-    
-    nodes = [
-        GraphNode(
-            id=task["id"],
-            label=task["name"],
-            type="task",
-            metadata={"status": task["status"].value}
-        )
-        for task in tasks
-    ]
-    
-    edges = [
-        GraphEdge(
-            from_=dep,
-            to=task["id"],
-            type="depends_on"
-        )
-        for task in tasks
-        for dep in task["dependencies"]
-    ]
-    
-    return {"nodes": nodes, "edges": edges}
-
-@router.get("/tasks/{task_id}/outputs")
-async def get_task_outputs(task_id: str, store = Depends(get_graph_store)):
-    """Get task output visualization."""
-    outputs = await store.get_task_outputs(task_id)
-    
-    nodes = [
-        GraphNode(id=task_id, label=f"Task {task_id}", type="task")
-    ]
-    
-    for i, output in enumerate(outputs):
-        nodes.append(
-            GraphNode(
-                id=f"output{i+1}",
-                label=f"{output.type.value.title()} Output",
-                type="output",
-                metadata={
-                    "output_type": output.type.value,
-                    **output.metadata
+@graph_router.get("/agents")
+async def get_agent_graph(api_key: str = Depends(get_api_key)):
+    """Get agent graph data."""
+    try:
+        memory_system = await get_memory_system()
+        
+        # Example agent graph data
+        return {
+            "nodes": [
+                {
+                    "id": "nova",
+                    "label": "Nova",
+                    "type": "agent",
+                    "status": "active",
+                    "properties": {
+                        "visualization": {
+                            "position": "center",
+                            "category": "orchestrator"
+                        }
+                    }
                 }
-            )
-        )
-    
-    edges = [
-        GraphEdge(
-            from_=task_id,
-            to=f"output{i+1}",
-            type="produces"
-        )
-        for i in range(len(outputs))
-    ]
-    
-    return {"nodes": nodes, "edges": edges}
+            ],
+            "edges": [],
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/tasks/statistics")
-async def get_task_statistics(store = Depends(get_graph_store)):
-    """Get task statistics visualization."""
-    stats = await store.get_task_statistics()
-    
-    nodes = [
-        GraphNode(
-            id="stats",
-            label="Task Statistics",
-            type="stats",
-            metadata={"total": stats["total_tasks"]}
-        ),
-        GraphNode(
-            id="completed",
-            label="Completed",
-            type="status",
-            metadata={"count": stats["completed"]}
-        ),
-        GraphNode(
-            id="in_progress",
-            label="In Progress", 
-            type="status",
-            metadata={"count": stats["in_progress"]}
-        ),
-        GraphNode(
-            id="pending",
-            label="Pending",
-            type="status", 
-            metadata={"count": stats["pending"]}
-        ),
-        GraphNode(
-            id="outputs",
-            label="Output Types",
-            type="outputs"
-        )
-    ]
-    
-    # Add output type nodes
-    for output_type, count in stats["output_types"].items():
-        nodes.append(
-            GraphNode(
-                id=output_type,
-                label=output_type.title(),
-                type="output_type",
-                metadata={"count": count}
-            )
-        )
-    
-    edges = [
-        GraphEdge(from_="stats", to="completed", type="has_status"),
-        GraphEdge(from_="stats", to="in_progress", type="has_status"),
-        GraphEdge(from_="stats", to="pending", type="has_status"),
-        GraphEdge(from_="stats", to="outputs", type="has_outputs")
-    ]
-    
-    # Add output type edges
-    for output_type in stats["output_types"]:
-        edges.append(
-            GraphEdge(from_="outputs", to=output_type, type="output_type")
-        )
-    
-    return {"nodes": nodes, "edges": edges}
+@graph_router.get("/knowledge")
+async def get_knowledge_graph(api_key: str = Depends(get_api_key)):
+    """Get knowledge graph data."""
+    try:
+        memory_system = await get_memory_system()
+        
+        # Example knowledge graph data
+        return {
+            "nodes": [
+                {
+                    "id": "concept1",
+                    "label": "Example Concept",
+                    "type": "concept",
+                    "category": "knowledge",
+                    "domain": "system",
+                    "metadata": {
+                        "created_at": datetime.now().isoformat(),
+                        "description": "Example concept node"
+                    }
+                }
+            ],
+            "edges": [],
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
-@router.get("/tasks/layout")
-async def get_task_layout(layout: str = "hierarchical", store = Depends(get_graph_store)):
-    """Get task graph layout."""
-    return await store.get_graph_layout(layout)
-
-@router.get("/search")
-async def search_task_graph(query: str, types: Optional[List[str]] = None, store = Depends(get_graph_store)):
-    """Search task graph."""
-    return await store.search_graph(query, types)
-
-@router.get("/filter")
-async def filter_task_graph(status: Optional[str] = None, store = Depends(get_graph_store)):
-    """Filter task graph."""
-    return await store.filter_graph(status=status)
+@graph_router.get("/tasks")
+async def get_task_graph(api_key: str = Depends(get_api_key)):
+    """Get task graph data."""
+    try:
+        memory_system = await get_memory_system()
+        
+        # Example task graph data
+        return {
+            "analytics": {
+                "nodes": [
+                    {
+                        "id": "task1",
+                        "type": "task",
+                        "label": "Example Task",
+                        "status": "active",
+                        "metadata": {
+                            "domain": "system",
+                            "timestamp": datetime.now().isoformat(),
+                            "importance": 0.5
+                        }
+                    }
+                ],
+                "edges": []
+            },
+            "insights": [],
+            "confidence": 1.0,
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

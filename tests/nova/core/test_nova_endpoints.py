@@ -42,6 +42,15 @@ TEST_CHANNEL = "test-channel"
 WEBSOCKET_TIMEOUT = 61  # 60 seconds + 1 second buffer
 
 
+def validate_message_schema(message: dict) -> None:
+    """Validate WebSocket message schema."""
+    assert "type" in message, "Message should have type"
+    assert "timestamp" in message, "Message should have timestamp"
+    assert "client_id" in message, "Message should have client_id"
+    assert "data" in message, "Message should have data"
+    # channel is optional, so we don't assert it
+
+
 @pytest.fixture
 def test_app() -> FastAPI:
     """Create FastAPI test application."""
@@ -62,18 +71,29 @@ async def test_websocket_success(test_app: FastAPI) -> None:
         # Send auth message
         websocket.send_json({
             "type": "auth",
-            "api_key": TEST_API_KEY
+            "timestamp": datetime.now().isoformat(),
+            "client_id": TEST_CLIENT_ID,
+            "channel": None,
+            "data": {
+                "api_key": TEST_API_KEY
+            }
         })
         
         # Get auth response
         auth_response = websocket.receive_json()
+        validate_message_schema(auth_response)
         assert auth_response["type"] == "connection_success"
         
         # Send test message
         websocket.send_json({
             "type": "chat_message",
-            "content": "test query",
-            "workspace": "personal"
+            "timestamp": datetime.now().isoformat(),
+            "client_id": TEST_CLIENT_ID,
+            "channel": None,
+            "data": {
+                "content": "test query",
+                "workspace": "personal"
+            }
         })
         
         # Get response
@@ -81,9 +101,8 @@ async def test_websocket_success(test_app: FastAPI) -> None:
         logger.debug(f"Response content: {response}")
         
         # Verify response structure
-        assert "type" in response, "Response should have type"
+        validate_message_schema(response)
         assert response["type"] == "chat_message", "Response type should be chat_message"
-        assert "data" in response, "Response should have data"
         
         data = response["data"]
         assert "content" in data, "Response data should have content"
@@ -103,7 +122,12 @@ async def test_websocket_invalid_auth(test_app: FastAPI) -> None:
         ) as websocket:
             websocket.send_json({
                 "type": "auth",
-                "api_key": "invalid-key"
+                "timestamp": datetime.now().isoformat(),
+                "client_id": TEST_CLIENT_ID,
+                "channel": None,
+                "data": {
+                    "api_key": "invalid-key"
+                }
             })
 
 @pytest.mark.asyncio
@@ -119,11 +143,17 @@ async def test_websocket_missing_auth(test_app: FastAPI) -> None:
         # Skip auth message
         websocket.send_json({
             "type": "chat_message",
-            "content": "test query"
+            "timestamp": datetime.now().isoformat(),
+            "client_id": TEST_CLIENT_ID,
+            "channel": None,
+            "data": {
+                "content": "test query"
+            }
         })
         
         # Should get error response
         response = websocket.receive_json()
+        validate_message_schema(response)
         assert response["type"] == "error"
         assert "authentication required" in response["data"]["message"].lower()
 
@@ -140,21 +170,44 @@ async def test_websocket_channel_operations(test_app: FastAPI) -> None:
         # Authenticate
         websocket.send_json({
             "type": "auth",
-            "api_key": TEST_API_KEY
+            "timestamp": datetime.now().isoformat(),
+            "client_id": TEST_CLIENT_ID,
+            "channel": None,
+            "data": {
+                "api_key": TEST_API_KEY
+            }
         })
-        assert websocket.receive_json()["type"] == "connection_success"
+        response = websocket.receive_json()
+        validate_message_schema(response)
+        assert response["type"] == "connection_success"
         
         # Join channel
         websocket.send_json({
             "type": "subscribe",
-            "channel": TEST_CHANNEL
+            "timestamp": datetime.now().isoformat(),
+            "client_id": TEST_CLIENT_ID,
+            "channel": None,
+            "data": {
+                "channel": TEST_CHANNEL
+            }
         })
+        response = websocket.receive_json()
+        validate_message_schema(response)
+        assert response["type"] == "subscription_success"
         
         # Leave channel
         websocket.send_json({
             "type": "unsubscribe",
-            "channel": TEST_CHANNEL
+            "timestamp": datetime.now().isoformat(),
+            "client_id": TEST_CLIENT_ID,
+            "channel": None,
+            "data": {
+                "channel": TEST_CHANNEL
+            }
         })
+        response = websocket.receive_json()
+        validate_message_schema(response)
+        assert response["type"] == "unsubscription_success"
 
 @pytest.mark.asyncio
 async def test_websocket_invalid_message(test_app: FastAPI) -> None:
@@ -169,18 +222,31 @@ async def test_websocket_invalid_message(test_app: FastAPI) -> None:
         # Authenticate first
         websocket.send_json({
             "type": "auth",
-            "api_key": TEST_API_KEY
+            "timestamp": datetime.now().isoformat(),
+            "client_id": TEST_CLIENT_ID,
+            "channel": None,
+            "data": {
+                "api_key": TEST_API_KEY
+            }
         })
-        assert websocket.receive_json()["type"] == "connection_success"
+        response = websocket.receive_json()
+        validate_message_schema(response)
+        assert response["type"] == "connection_success"
         
         # Send invalid message type
         websocket.send_json({
             "type": "invalid_type",
-            "content": "test"
+            "timestamp": datetime.now().isoformat(),
+            "client_id": TEST_CLIENT_ID,
+            "channel": None,
+            "data": {
+                "content": "test"
+            }
         })
         
         # Should get error response
         response = websocket.receive_json()
+        validate_message_schema(response)
         assert response["type"] == "error"
         assert "invalid message type" in response["data"]["message"].lower()
 
@@ -197,9 +263,16 @@ async def test_websocket_timeout(test_app: FastAPI) -> None:
         # Authenticate
         websocket.send_json({
             "type": "auth",
-            "api_key": TEST_API_KEY
+            "timestamp": datetime.now().isoformat(),
+            "client_id": TEST_CLIENT_ID,
+            "channel": None,
+            "data": {
+                "api_key": TEST_API_KEY
+            }
         })
-        assert websocket.receive_json()["type"] == "connection_success"
+        response = websocket.receive_json()
+        validate_message_schema(response)
+        assert response["type"] == "connection_success"
         
         # Wait longer than the timeout period
         await asyncio.sleep(WEBSOCKET_TIMEOUT)
@@ -208,7 +281,12 @@ async def test_websocket_timeout(test_app: FastAPI) -> None:
         with pytest.raises(WebSocketDisconnect) as exc_info:
             websocket.send_json({
                 "type": "chat_message",
-                "content": "test"
+                "timestamp": datetime.now().isoformat(),
+                "client_id": TEST_CLIENT_ID,
+                "channel": None,
+                "data": {
+                    "content": "test"
+                }
             })
             
         assert exc_info.value.code == 1000  # Normal closure

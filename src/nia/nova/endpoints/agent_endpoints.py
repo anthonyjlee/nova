@@ -5,15 +5,15 @@ from typing import Dict, Any, List
 from datetime import datetime
 import uuid
 
-from .dependencies import get_memory_system
-from .auth import get_permission
-from .error_handling import ServiceError
-from .models import (
+from ..core.dependencies import get_memory_system
+from ..core.auth import get_permission
+from ..core.error_handling import ServiceError
+from ..core.models import (
     AgentMetrics, AgentInteraction, AgentInfo, AgentResponse
 )
 
 agent_router = APIRouter(
-    prefix="/api/nova/agents",
+    prefix="/api/agents",
     tags=["Agents"],
     dependencies=[Depends(get_permission("write"))]
 )

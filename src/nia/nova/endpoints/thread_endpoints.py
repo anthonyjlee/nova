@@ -9,12 +9,12 @@ from nia.memory.two_layer import TwoLayerMemorySystem
 from nia.agents.specialized.orchestration_agent import OrchestrationAgent
 from nia.agents.specialized.coordination_agent import CoordinationAgent
 
-from .auth import (
+from ..core.auth import (
     check_rate_limit,
     check_domain_access,
     get_permission
 )
-from .error_handling import (
+from ..core.error_handling import (
     NovaError,
     ValidationError,
     ResourceNotFoundError,
@@ -22,7 +22,7 @@ from .error_handling import (
     retry_on_error,
     validate_request
 )
-from .endpoints import (
+from ..core.dependencies import (
     get_memory_system,
     get_orchestration_agent,
     get_coordination_agent
@@ -160,7 +160,19 @@ async def list_threads(
 ) -> Dict:
     """List all threads."""
     try:
-        threads = await coordination_agent.list_threads(domain)
+        # Query all threads from memory system
+        if coordination_agent.memory_system and coordination_agent.memory_system.semantic:
+            result = await coordination_agent.memory_system.semantic.run_query(
+                """
+                MATCH (t:Thread)
+                WHERE t.domain = $domain OR $domain IS NULL
+                RETURN t
+                """,
+                {"domain": domain}
+            )
+            threads = [record["t"] for record in result] if result else []
+        else:
+            threads = []
         return {
             "threads": threads,
             "total": len(threads),
@@ -178,8 +190,7 @@ async def get_thread_messages(
     start: Optional[int] = 0,
     limit: Optional[int] = 100,
     domain: Optional[str] = None,
-    _: None = Depends(check_rate_limit()),
-    __: None = Depends(get_permission("read")),
+    _: None = Depends(get_permission("read")),
     coordination_agent: CoordinationAgent = Depends(get_coordination_agent)
 ) -> Dict:
     """Get messages from a thread with pagination."""
@@ -288,7 +299,7 @@ async def get_project_graph(
 ) -> Dict:
     """Get graph visualization data for a project."""
     try:
-        if not memory_system or not memory_system.semantic or not memory_system.semantic.store:
+        if not memory_system or not memory_system.semantic:
             raise ServiceError("Memory system not available")
             
         # Get project nodes

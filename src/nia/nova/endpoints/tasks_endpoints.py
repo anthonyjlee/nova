@@ -6,11 +6,11 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 import uuid
 
-from .dependencies import get_memory_system
-from .auth import get_permission
-from .error_handling import ServiceError
-from .validation import ValidationResult, ValidationPattern
-from .models import (
+from ..core.dependencies import get_memory_system
+from ..core.auth import get_permission
+from ..core.error_handling import ServiceError
+from ..core.validation import ValidationResult, ValidationPattern
+from ..core.models import (
     TaskNode, TaskEdge, TaskUpdate, TaskDetails, TaskState, TaskStateTransition,
     SubTask, Comment, TaskPriority
 )

@@ -2,7 +2,7 @@
 
 from celery import Celery
 from typing import Dict, Any, Optional, cast
-from ...memory.two_layer import TwoLayerMemorySystem
+from nia.memory.two_layer import TwoLayerMemorySystem
 import json
 import uuid
 import asyncio
@@ -10,9 +10,9 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
-from ...core.types.memory_types import EpisodicMemory
+from nia.core.types.memory_types import EpisodicMemory
 
-from .websocket import websocket_manager
+from nia.nova.core.websocket import websocket_manager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)

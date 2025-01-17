@@ -8,7 +8,7 @@ import traceback
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Callable, TypeVar, Optional, Union
 from fastapi.testclient import TestClient
 from fastapi.websockets import WebSocket
 from unittest.mock import Mock, patch
@@ -22,6 +22,7 @@ from nia.nova.core.celery_app import (
     store_graph_update
 )
 from nia.memory.two_layer import TwoLayerMemorySystem
+from nia.core.agent_store import get_agent_store
 
 # Configure JSON logging
 LOGS_DIR = Path("test_results/websocket_celery_logs")
@@ -30,32 +31,70 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
 session_log = LOGS_DIR / f"session_{session_id}.json"
 
+T = TypeVar('T')
+
 class JsonFormatter(logging.Formatter):
     """Format log records as JSON."""
-    def format(self, record):
+    
+    @staticmethod
+    def safe_convert(value: Any, converter: Callable[[Any], T], default: T) -> T:
+        """Safely convert value or return default if conversion fails."""
+        if value is None:
+            return default
+        try:
+            return converter(value)
+        except (ValueError, TypeError, AttributeError):
+            return default
+
+    def format(self, record: logging.LogRecord) -> str:
+        """Format the log record as JSON."""
         log_entry = {
-            "timestamp": datetime.fromtimestamp(record.created).isoformat(),
-            "level": record.levelname,
-            "message": record.getMessage(),
-            "function": record.funcName,
-            "line": record.lineno,
-            "thread_id": record.thread,
-            "process_id": record.process,
-            "test_phase": getattr(record, 'test_phase', None),
-            "test_result": getattr(record, 'test_result', None)
+            "timestamp": self.safe_convert(
+                getattr(record, 'created', None),
+                lambda x: datetime.fromtimestamp(x).isoformat(),
+                datetime.now().isoformat()
+            ),
+            "level": self.safe_convert(record.levelname, str, "NOTSET"),
+            "message": self.safe_convert(record.getMessage(), str, ""),
+            "function": self.safe_convert(record.funcName, str, ""),
+            "line": self.safe_convert(record.lineno, int, 0),
+            "thread_id": self.safe_convert(record.thread, int, 0),
+            "process_id": self.safe_convert(record.process, int, 0),
+            "test_phase": self.safe_convert(
+                getattr(record, 'test_phase', None), 
+                str, 
+                ""
+            ),
+            "test_result": self.safe_convert(
+                getattr(record, 'test_result', None),
+                bool,
+                False
+            )
         }
         
         if record.exc_info:
             log_entry["exception"] = {
-                "type": record.exc_info[0].__name__,
-                "message": str(record.exc_info[1]),
-                "traceback": traceback.format_exception(*record.exc_info)
+                "type": self.safe_convert(
+                    record.exc_info[0] if record.exc_info else None,
+                    lambda x: x.__name__,
+                    "Exception"
+                ),
+                "message": self.safe_convert(
+                    record.exc_info[1] if record.exc_info else None,
+                    str,
+                    ""
+                ),
+                "traceback": self.safe_convert(
+                    record.exc_info,
+                    lambda x: traceback.format_exception(*x),
+                    []
+                )
             }
             
         return json.dumps(log_entry)
 
 # Configure logging with RotatingFileHandler
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("test_websocket_celery")
 logger.setLevel(logging.INFO)
 
 handler = RotatingFileHandler(
@@ -67,7 +106,7 @@ handler = RotatingFileHandler(
 handler.setFormatter(JsonFormatter())
 logger.addHandler(handler)
 
-def create_test_result(test_name: str, success: bool, details: dict = None):
+def create_test_result(test_name: str, success: bool, details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Create a test result entry."""
     return {
         "test_name": test_name,
@@ -80,13 +119,13 @@ class TestResults:
     """Manage test results and output."""
     
     def __init__(self):
-        self.results = []
+        self.results: List[Dict[str, Any]] = []
         
-    def add_result(self, test_name: str, success: bool, details: dict = None):
+    def add_result(self, test_name: str, success: bool, details: Optional[Dict[str, Any]] = None):
         """Add a test result."""
         self.results.append(create_test_result(test_name, success, details))
         
-    def save_results(self):
+    def save_results(self) -> Path:
         """Save results to JSON file."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = LOGS_DIR / f"test_results_{timestamp}.json"
@@ -157,6 +196,8 @@ async def test_websocket_connection(websocket_server, connection_manager):
         message = websocket.send_json.call_args[0][0]
         assert message["type"] == "connection_success", "Wrong message type"
         assert message["client_id"] == client_id, "Wrong client ID"
+        assert "timestamp" in message, "Missing timestamp"
+        assert "data" in message, "Missing data field"
         
         logger.info("WebSocket connection test passed", 
                    extra={"test_phase": "websocket_connection", "test_result": True})
@@ -177,9 +218,14 @@ async def test_chat_message_handling(websocket_server):
         websocket.send_json = Mock()
         test_message = {
             "type": "message",
-            "thread_id": "test-thread", 
-            "content": "Test message",
-            "sender": "test-user"
+            "timestamp": datetime.now().isoformat(),
+            "client_id": "test-client",
+            "channel": None,
+            "data": {
+                "thread_id": "test-thread", 
+                "content": "Test message",
+                "sender": "test-user"
+            }
         }
         websocket.receive_json = Mock(return_value=test_message)
         
@@ -210,9 +256,14 @@ async def test_task_update_handling(websocket_server):
         websocket.send_json = Mock()
         test_update = {
             "type": "task_update",
-            "thread_id": "test-thread",
-            "task_id": "test-task",
-            "status": "in_progress"
+            "timestamp": datetime.now().isoformat(),
+            "client_id": "test-client",
+            "channel": None,
+            "data": {
+                "thread_id": "test-thread",
+                "task_id": "test-task",
+                "status": "in_progress"
+            }
         }
         websocket.receive_json = Mock(return_value=test_update)
         
@@ -244,9 +295,14 @@ async def test_agent_status_handling(websocket_server):
         websocket.send_json = Mock()
         test_status = {
             "type": "agent_status",
-            "agent_id": "test-agent",
-            "status": "active",
-            "metadata": {"task": "test-task"}
+            "timestamp": datetime.now().isoformat(),
+            "client_id": "test-client",
+            "channel": None,
+            "data": {
+                "agent_id": "test-agent",
+                "status": "active",
+                "metadata": {"task": "test-task"}
+            }
         }
         websocket.receive_json = Mock(return_value=test_status)
         
@@ -277,8 +333,13 @@ async def test_graph_update_handling(websocket_server):
         websocket.send_json = Mock()
         test_update = {
             "type": "graph_update",
-            "nodes": [{"id": "node1", "type": "concept"}],
-            "edges": [{"from": "node1", "to": "node2", "type": "related"}]
+            "timestamp": datetime.now().isoformat(),
+            "client_id": "test-client",
+            "channel": None,
+            "data": {
+                "nodes": [{"id": "node1", "type": "concept"}],
+                "edges": [{"from": "node1", "to": "node2", "type": "related"}]
+            }
         }
         websocket.receive_json = Mock(return_value=test_update)
         
@@ -315,7 +376,12 @@ async def test_broadcast_message(connection_manager):
         
         message = {
             "type": "message",
-            "content": "Test broadcast"
+            "timestamp": datetime.now().isoformat(),
+            "client_id": "server",
+            "channel": "chat",
+            "data": {
+                "content": "Test broadcast"
+            }
         }
         await connection_manager.broadcast(message, "chat")
         
@@ -324,8 +390,8 @@ async def test_broadcast_message(connection_manager):
         
         broadcast1 = websocket1.send_json.call_args[0][0]
         broadcast2 = websocket2.send_json.call_args[0][0]
-        assert broadcast1["content"] == "Test broadcast", "Wrong message content for client 1"
-        assert broadcast2["content"] == "Test broadcast", "Wrong message content for client 2"
+        assert broadcast1["data"]["content"] == "Test broadcast", "Wrong message content for client 1"
+        assert broadcast2["data"]["content"] == "Test broadcast", "Wrong message content for client 2"
         
         logger.info("Broadcast message test passed", 
                    extra={"test_phase": "broadcast", "test_result": True})
@@ -353,12 +419,17 @@ async def test_store_chat_message():
         result = store_chat_message.delay(message_data)
         assert result.successful(), "Task failed to execute"
         
-        stored_thread = await TwoLayerMemorySystem().get_thread("test-thread")
+        memory = TwoLayerMemorySystem()
+        await memory.initialize()
+        stored_thread = await memory.get_experience("test-thread")
         assert stored_thread is not None, "Thread not found"
-        assert len(stored_thread["messages"]) > 0, "No messages in thread"
+        assert isinstance(stored_thread.content, dict), "Thread content not found"
+        messages = stored_thread.content.get("messages", [])
+        assert messages, "No messages in thread"
         
-        stored_message = stored_thread["messages"][-1]
-        assert stored_message["content"] == "Test message", "Wrong message content"
+        latest_message = messages[-1]
+        assert isinstance(latest_message, dict), "Message should be a dictionary"
+        assert latest_message.get("content") == "Test message", "Wrong message content"
         
         logger.info("Chat message storage test passed", 
                    extra={"test_phase": "celery_chat", "test_result": True})
@@ -388,12 +459,18 @@ async def test_store_task_update():
         result = store_task_update.delay(task_data)
         assert result.successful(), "Task failed to execute"
         
-        stored_thread = await TwoLayerMemorySystem().get_thread("test-thread")
+        memory = TwoLayerMemorySystem()
+        await memory.initialize()
+        stored_thread = await memory.get_experience("test-thread")
         assert stored_thread is not None, "Thread not found"
-        assert "tasks" in stored_thread["metadata"], "No tasks in thread metadata"
+        assert isinstance(stored_thread.metadata, dict), "Thread metadata not found"
+        tasks = stored_thread.metadata.get("tasks", [])
+        assert tasks, "No tasks in thread metadata"
         
-        task = next(t for t in stored_thread["metadata"]["tasks"] if t["id"] == "test-task")
-        assert task["status"] == "completed", "Wrong task status"
+        matching_tasks = [t for t in tasks if isinstance(t, dict) and t.get("id") == "test-task"]
+        assert matching_tasks, "Task not found"
+        task = matching_tasks[0]
+        assert task.get("status") == "completed", "Wrong task status"
         
         logger.info("Task update storage test passed", 
                    extra={"test_phase": "celery_task", "test_result": True})
@@ -467,10 +544,11 @@ async def test_store_graph_update():
         assert result.successful(), "Task failed to execute"
         
         memory_system = TwoLayerMemorySystem()
+        await memory_system.initialize()
         for node in graph_data["nodes"]:
-            stored_node = await memory_system.get_node(node["id"])
+            stored_node = await memory_system.get_experience(node["id"])
             assert stored_node is not None, f"Node {node['id']} not found"
-            assert stored_node["type"] == node["type"], "Wrong node type"
+            assert stored_node.type == node["type"], "Wrong node type"
             
         logger.info("Graph update storage test passed", 
                    extra={"test_phase": "celery_graph", "test_result": True})

@@ -1,6 +1,6 @@
 # API Schema Documentation
 
-## Memory System (/api/orchestration/memory)
+## Memory System (/api/memory)
 
 ### Endpoints
 
@@ -680,16 +680,16 @@ interface ErrorResponse {
 
 ## Source Files
 
-- Task Endpoints: src/nia/nova/core/tasks_endpoints.py
-- Chat/Thread Endpoints: src/nia/nova/core/thread_endpoints.py
-- Agent Endpoints: src/nia/nova/core/agent_endpoints.py
-- Nova Endpoints: src/nia/nova/core/nova_endpoints.py
-- Graph Endpoints: src/nia/nova/core/graph_endpoints.py
-- Knowledge Graph Endpoints: src/nia/nova/core/knowledge_endpoints.py
-- Channel Endpoints: src/nia/nova/core/channel_endpoints.py
-- User Endpoints: src/nia/nova/core/user_endpoints.py
-- WebSocket Endpoints: src/nia/nova/core/websocket_endpoints.py
-- Memory Endpoints: src/nia/nova/core/memory_endpoints.py
+- Task Endpoints: src/nia/nova/endpoints/tasks_endpoints.py
+- Chat/Thread Endpoints: src/nia/nova/endpoints/thread_endpoints.py
+- Agent Endpoints: src/nia/nova/endpoints/agent_endpoints.py
+- Nova Endpoints: src/nia/nova/endpoints/nova_endpoints.py
+- Graph Endpoints: src/nia/nova/endpoints/graph_endpoints.py
+- Knowledge Graph Endpoints: src/nia/nova/endpoints/knowledge_endpoints.py
+- Channel Endpoints: src/nia/nova/endpoints/channel_endpoints.py
+- User Endpoints: src/nia/nova/endpoints/user_endpoints.py
+- WebSocket Endpoints: src/nia/nova/endpoints/websocket_endpoints.py
+- Memory Endpoints: src/nia/nova/endpoints/memory_endpoints.py
 
 Additional Implementation Files:
 - Base Models: src/nia/nova/core/models.py
@@ -699,7 +699,7 @@ Additional Implementation Files:
 - FastAPI App: src/nia/nova/core/app.py
 
 ## Task Graph Operations
-Implementation: src/nia/nova/core/tasks_endpoints.py
+Implementation: src/nia/nova/endpoints/tasks_endpoints.py
 
 State Validation Rules (from implementation):
 ```python
@@ -981,7 +981,7 @@ Error responses include:
 ```
 
 ## Chat Operations
-Implementation: src/nia/nova/core/thread_endpoints.py
+Implementation: src/nia/nova/endpoints/thread_endpoints.py
 
 Key Components:
 - OrchestrationAgent: Handles task creation and management
@@ -1001,7 +1001,60 @@ Storage:
 
 ### Thread Management
 
-#### GET /api/chat/threads
+#### POST /api/tasks/propose
+Propose a new task for approval.
+
+Request Schema:
+```typescript
+{
+  type: string;
+  content: string;
+  domain?: string;
+}
+```
+
+Response Schema:
+```typescript
+{
+  task_id: string;
+  status: "pending_approval";
+  type: string;
+  content: string;
+  timestamp: string;
+}
+```
+
+#### POST /api/tasks/{task_id}/approve
+Approve a pending task and trigger execution.
+
+Response Schema:
+```typescript
+{
+  task_id: string;
+  thread_id: string;
+  status: "approved";
+  timestamp: string;
+}
+```
+
+#### GET /api/threads/graph/projects/{project_id}
+Get graph visualization data for a project.
+
+Response Schema:
+```typescript
+{
+  project_id: string;
+  nodes: Array<Record<string, unknown>>;
+  relationships: Array<{
+    type: string;
+    source: string;
+    target: string;
+  }>;
+  timestamp: string;
+}
+```
+
+#### GET /api/threads
 Lists all chat threads.
 
 Response Schema:
@@ -1023,7 +1076,7 @@ interface ThreadListResponse {
 }
 ```
 
-#### POST /api/chat/threads/create
+#### POST /api/threads/create
 Creates a new chat thread.
 
 Request Schema:
@@ -1055,7 +1108,28 @@ interface ThreadResponse {
 
 ### Message Operations
 
-#### GET /api/chat/threads/{thread_id}/messages
+#### GET /api/threads/{thread_id}
+Gets thread details and messages with pagination.
+
+Query Parameters:
+- start: Starting index for pagination (default: 0)
+- limit: Maximum number of messages to return (default: 100)
+- domain: Optional domain filter
+
+Response Schema:
+```typescript
+{
+  thread_id: string;
+  task_id: string;
+  messages: Message[];
+  sub_threads: Array<Record<string, unknown>>;
+  summary: Record<string, unknown>;
+  total_messages: number;
+  timestamp: string;
+}
+```
+
+#### GET /api/threads/{thread_id}/messages
 Gets messages from a thread.
 
 Response Schema:
@@ -1071,7 +1145,7 @@ Array<{
 }>
 ```
 
-#### POST /api/chat/threads/{thread_id}/messages
+#### POST /api/threads/{thread_id}/message
 Adds a message to a thread.
 
 Request Schema:
@@ -1096,7 +1170,7 @@ interface MessageResponse {
 
 ### Agent Integration
 
-#### GET /api/chat/threads/{thread_id}/agents
+#### GET /api/threads/{thread_id}/agents
 Gets agents in a thread.
 
 Response Schema:
@@ -1114,7 +1188,7 @@ Array<{
 }>
 ```
 
-#### POST /api/chat/threads/{thread_id}/agents
+#### POST /api/threads/{thread_id}/agents
 Adds an agent to a thread.
 
 Request Schema:
@@ -1247,7 +1321,7 @@ Response Schema:
 ```
 
 ## Knowledge Graph Operations
-Implementation: src/nia/nova/core/knowledge_endpoints.py
+Implementation: src/nia/nova/endpoints/knowledge_endpoints.py
 
 This module implements our knowledge graph system that manages domain boundaries and relationships:
 
@@ -1427,7 +1501,7 @@ Response Schema:
 ```
 
 ## Graph Operations
-Implementation: src/nia/nova/core/graph_endpoints.py
+Implementation: src/nia/nova/endpoints/graph_endpoints.py
 
 This module implements our graph visualization and analysis system:
 
@@ -1633,7 +1707,7 @@ interface TaskAssignmentMessage {
 ```
 
 ## Agent Operations
-Implementation: src/nia/nova/core/agent_endpoints.py
+Implementation: src/nia/nova/endpoints/agent_endpoints.py
 
 Storage Patterns:
 - Semantic Layer (Neo4j): Stores agent nodes with metadata and relationships
@@ -2228,7 +2302,7 @@ Response Schema:
 ```
 
 ## WebSocket Operations
-Implementation: src/nia/nova/core/websocket_endpoints.py
+Implementation: src/nia/nova/endpoints/websocket_endpoints.py
 
 This module implements our real-time communication system:
 

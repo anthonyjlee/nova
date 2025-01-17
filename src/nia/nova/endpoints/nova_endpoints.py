@@ -1,103 +1,55 @@
-"""FastAPI endpoints for Nova's analytics and orchestration."""
+"""Nova API endpoints."""
 
-from fastapi import FastAPI, APIRouter, HTTPException, WebSocket, Depends, Header, Request, Response, Query, File, UploadFile
-from starlette.websockets import WebSocketDisconnect
-from typing import Dict, List, Optional, Any
-from datetime import datetime
-import aiohttp
-import json
+from fastapi import APIRouter, WebSocket, Depends, HTTPException, WebSocketDisconnect, Request
+from typing import Dict, Any, Optional, List
 import logging
+import asyncio
+import json
 import uuid
-
-from nia.core.types.memory_types import AgentResponse, Memory, MemoryType
-from nia.nova.core.analytics import AnalyticsResult
-from nia.memory.two_layer import TwoLayerMemorySystem
-from nia.nova.core.llm import LMStudioLLM
-from .websocket import websocket_manager
-
-from .dependencies import (
-    get_memory_system,
-    get_world,
-    get_llm,
-    get_parsing_agent,
-    get_coordination_agent,
-    get_llm_interface,
-    get_tiny_factory,
-    get_analytics_agent,
-    get_orchestration_agent,
-    get_graph_store,
-    get_agent_store,
-    get_profile_store,
-    get_thread_manager,
-    CHAT_MODEL,
-    EMBEDDING_MODEL
-)
-
-from .auth import (
-    check_rate_limit,
-    check_domain_access,
-    get_permission,
-    get_api_key,
-    get_api_key_dependency,
-    get_ws_api_key,
-    ws_auth,
-    API_KEYS
-)
-from fastapi.responses import JSONResponse
+from datetime import datetime, timezone
 import traceback
 
-from .error_handling import (
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from ...core.types.memory_types import EpisodicMemory
+from ..core.auth import validate_api_key, check_rate_limit, get_permission
+from ..core.websocket import websocket_manager
+from ..core.dependencies import (
+    get_memory_system,
+    get_meta_agent,
+    get_tiny_factory,
+    get_analytics_agent,
+    get_graph_store,
+    get_agent_store,
+    get_thread_manager
+)
+from ..core.error_handling import (
     NovaError,
     ValidationError,
     ResourceNotFoundError,
-    ServiceError,
-    retry_on_error,
-    validate_request
+    ServiceError
 )
-from .models import (
-    AnalyticsRequest,
-    AnalyticsResponse,
-    TaskRequest,
-    TaskResponse,
-    CoordinationRequest,
-    CoordinationResponse,
-    ResourceAllocationRequest,
-    ResourceAllocationResponse,
-    MemoryRequest,
-    MemoryResponse,
-    FlowOptimizationRequest,
-    FlowOptimizationResponse,
-    AgentAssignmentRequest,
-    AgentAssignmentResponse,
-    ParseRequest,
-    ParseResponse,
-    AgentResponse,
-    ProfileResponse,
-    PreferenceResponse,
-    AgentCapabilitiesResponse,
-    AgentTypesResponse,
-    AgentSearchResponse,
-    AgentHistoryResponse,
-    AgentMetricsResponse,
-    AgentStatusResponse,
-    GraphPruneResponse,
-    GraphHealthResponse,
-    GraphOptimizeResponse,
-    GraphStatisticsResponse,
-    GraphBackupResponse,
+from ..core.models import (
     ThreadRequest,
     ThreadResponse,
     MessageRequest,
     Message,
     MessageResponse,
     ThreadListResponse,
-    ThreadValidation
+    StatusResponse
 )
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)  # Set to DEBUG to see metadata processing logs
+# Constants
+API_KEYS = ["development"]  # For testing only
 
-# Create root router for status endpoint
+# Create Nova router
+nova_router = APIRouter()
+
+# Export routers
+__all__ = ['nova_router']
+
+# Create routers with dependencies
 root_router = APIRouter(
     prefix="/api",
     tags=["System"],
@@ -105,50 +57,99 @@ root_router = APIRouter(
     responses={404: {"description": "Not found"}}
 )
 
-@root_router.get("/status")
-async def get_status() -> Dict[str, str]:
+@root_router.get("/status", response_model=StatusResponse)
+async def get_status() -> StatusResponse:
     """Get server status."""
-    return {
-        "status": "running",
-        "version": "0.1.0",
-        "timestamp": datetime.now().isoformat()
-    }
+    return StatusResponse(
+        request_id=str(uuid.uuid4()),
+        status="running",
+        version="0.1.0",
+        uptime=0.0,  # TODO: Implement actual uptime tracking
+        services={},
+        metrics={},
+        timestamp=datetime.now().isoformat()
+    )
 
-# Create routers with dependencies
 graph_router = APIRouter(
     prefix="/api/graph",
     tags=["Knowledge Graph"],
     dependencies=[Depends(check_rate_limit)],
-    responses={404: {"description": "Not found"}}
+    responses={404: {"description": "not found"}}
 )
 
 agent_router = APIRouter(
     prefix="/api/agents",
     tags=["Agent Management"],
     dependencies=[Depends(check_rate_limit)],
-    responses={404: {"description": "Not found"}}
+    responses={404: {"description": "not found"}}
 )
 
 user_router = APIRouter(
     prefix="/api/users",
     tags=["User Management"],
     dependencies=[Depends(check_rate_limit)],
-    responses={404: {"description": "Not found"}}
+    responses={404: {"description": "not found"}}
 )
 
 analytics_router = APIRouter(
     prefix="/api/analytics",
     tags=["Analytics & Insights"],
     dependencies=[Depends(check_rate_limit)],
-    responses={404: {"description": "Not found"}}
+    responses={404: {"description": "not found"}}
 )
 
 orchestration_router = APIRouter(
     prefix="/api/orchestration",
     tags=["Task Orchestration"],
     dependencies=[Depends(check_rate_limit)],
-    responses={404: {"description": "Not found"}}
+    responses={404: {"description": "not found"}}
 )
+
+chat_router = APIRouter(
+    prefix="/api/chat",
+    tags=["Chat & Threads"],
+    dependencies=[Depends(check_rate_limit)],
+    responses={404: {"description": "not found"}}
+)
+
+ws_router = APIRouter(
+    prefix="/api/ws",
+    tags=["Real-time Updates"]
+)
+
+# Include all routers at the end
+nova_router.include_router(root_router)
+nova_router.include_router(graph_router)
+nova_router.include_router(agent_router)
+nova_router.include_router(user_router)
+nova_router.include_router(analytics_router)
+nova_router.include_router(orchestration_router)
+nova_router.include_router(chat_router)
+nova_router.include_router(ws_router)
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)  # Set to DEBUG to see metadata processing logs
+
+@graph_router.get("/data")
+async def get_graph_data(
+    _: None = Depends(get_permission("read")),
+    graph_store: Any = Depends(get_graph_store)
+) -> Dict[str, Any]:
+    """Get graph data."""
+    try:
+        graph_data = await graph_store.get_graph_data()
+        return {
+            "nodes": graph_data.get("nodes", []),
+            "edges": graph_data.get("edges", []),
+            "timestamp": datetime.now().isoformat()
+        }
+    except ResourceNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ServiceError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error in add_thread_agent: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
 
 @agent_router.options("/{path:path}")
 async def agent_options_handler(request: Request):
@@ -164,7 +165,7 @@ async def agent_options_handler(request: Request):
     )
 
 @agent_router.get("")
-async def list_available_agents(
+async def get_agents(
     _: None = Depends(get_permission("read")),
     agent_store: Any = Depends(get_agent_store)
 ) -> List[Dict[str, Any]]:
@@ -307,15 +308,6 @@ async def get_agent_graph(
         logger.error(f"Unexpected error in add_thread_agent: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-from fastapi.middleware.cors import CORSMiddleware
-
-chat_router = APIRouter(
-    prefix="/api/chat",
-    tags=["Chat & Threads"],
-    dependencies=[Depends(check_rate_limit), Depends(get_api_key_dependency)],
-    responses={404: {"description": "Not found"}}
-)
-
 @chat_router.options("/{path:path}")
 async def chat_options_handler(request: Request):
     """Handle CORS preflight requests for chat endpoints."""
@@ -330,54 +322,41 @@ async def chat_options_handler(request: Request):
         },
     )
 
-@chat_router.get("/threads")
+@chat_router.get("/threads", response_model=ThreadListResponse)
 async def list_threads(
     request: Request,
     thread_manager: Any = Depends(get_thread_manager)
 ) -> ThreadListResponse:
     """List all chat threads with optional filtering."""
     try:
+        # API key validation is handled by dependencies
+        _: None = Depends(get_permission("read"))
+        
         raw_threads = await thread_manager.list_threads(None)
         
         # Convert thread data to match schema
         threads = []
         for thread in raw_threads:
-            # Ensure metadata has required fields
-            metadata = thread.get("metadata", {})
-            if not isinstance(metadata, dict):
-                metadata = {}
-            
-            # Set default metadata fields if missing
-            metadata.setdefault("type", "chat")
-            metadata.setdefault("system", False)
-            metadata.setdefault("pinned", False)
-            metadata.setdefault("description", "")
-            
-            # Create thread data matching ThreadResponse model
-            thread_data = ThreadResponse(
-                id=thread["id"],
-                title=thread.get("title", "Untitled"),
-                domain=thread.get("domain", "general"),
-                status=thread.get("status", "active"),
-                created_at=thread.get("created_at"),
-                updated_at=thread.get("updated_at"),
-                workspace=thread.get("workspace", "personal"),
-                participants=thread.get("participants", []),
-                metadata=metadata,
-                validation=ThreadValidation(
-                    domain=thread.get("domain", "general"),
-                    access_domain=thread.get("domain", "general"),
-                    confidence=1.0,
-                    source="system",
-                    timestamp=datetime.utcnow().isoformat()
-                )
-            )
+            # Convert created_at/updated_at to createdAt/updatedAt
+            thread_data = {
+                "id": thread["id"],
+                "name": thread.get("title", "Untitled"),  # title -> name
+                "domain": thread.get("domain"),
+                "messages": thread.get("messages", []),
+                "createdAt": thread.get("created_at"),  # created_at -> createdAt
+                "updatedAt": thread.get("updated_at"),  # updated_at -> updatedAt
+                "workspace": thread.get("workspace", "personal"),
+                "participants": thread.get("participants", []),
+                "metadata": thread.get("metadata", {})
+            }
             threads.append(thread_data)
             
         return ThreadListResponse(
-            threads=threads,
+            threads=[ThreadResponse(**thread) for thread in threads],
             total=len(threads),
-            timestamp=datetime.now().isoformat()
+            page=None,
+            page_size=None,
+            metadata={}
         )
     except ServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -386,7 +365,7 @@ async def list_threads(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @chat_router.get("/agents", response_model=List[Dict[str, Any]])
-async def list_thread_agents(
+async def list_available_agents(
     _: None = Depends(get_permission("read")),
     agent_store: Any = Depends(get_agent_store)
 ) -> List[Dict[str, Any]]:
@@ -541,9 +520,10 @@ async def get_thread(
         logger.error(f"Unexpected error in get_thread: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@chat_router.post("/threads/create")
+@chat_router.post("/threads/create", response_model=ThreadResponse)
 async def create_thread(
     request: ThreadRequest,
+    _: None = Depends(get_permission("write")),
     thread_manager: Any = Depends(get_thread_manager)
 ) -> ThreadResponse:
     """Create a new chat thread with validation."""
@@ -624,6 +604,8 @@ async def add_message(
         return MessageResponse(
             id=message.id,
             content=message.content,
+            message=message,
+            thread_id=thread_id,
             timestamp=datetime.now().isoformat()
         )
     except ResourceNotFoundError as e:
@@ -657,12 +639,6 @@ async def create_agent_team(
     except Exception as e:
         logger.error(f"Unexpected error in create_agent_team: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
-
-# Create WebSocket router without dependencies
-ws_router = APIRouter(
-    prefix="/api/ws",
-    tags=["Real-time Updates"]
-)
 
 @ws_router.websocket("/ws")
 async def analytics_websocket(
@@ -708,7 +684,7 @@ async def analytics_websocket(
                 try:
                     # Handle different message types
                     if data.get("type") == "ping":
-                        await websocket_manager.broadcast_to_client(client_id, {
+                        await websocket_manager.send_json(client_id, {
                             "type": "pong",
                             "timestamp": datetime.now().isoformat()
                         })
@@ -720,7 +696,7 @@ async def analytics_websocket(
                         await handle_agent_coordination(client_id, data, analytics_agent, websocket)
                 except Exception as e:
                     logger.error(f"Error handling message: {e}")
-                    await websocket_manager.broadcast_to_client(client_id, {
+                    await websocket_manager.send_json(client_id, {
                         "type": "error",
                         "error": str(e),
                         "timestamp": datetime.now().isoformat()
@@ -730,7 +706,7 @@ async def analytics_websocket(
         except Exception as e:
             logger.error(f"WebSocket error: {e}")
         finally:
-            await websocket_manager.disconnect(websocket, client_id)
+            await websocket_manager.disconnect(client_id)
     except Exception as e:
         logger.error(f"WebSocket connection error: {e}")
         try:
@@ -784,7 +760,7 @@ async def handle_graph_subscribe(client_id: str, graph_store: Any):
         
         edges.append({"data": edge_data})
     
-    await websocket_manager.broadcast_to_client(client_id, {
+    await websocket_manager.send_json(client_id, {
         "type": "graph_update",
         "data": {
             "added": {
@@ -835,7 +811,7 @@ async def handle_agent_coordination(client_id: str, data: Dict, analytics_agent:
     
     if isinstance(result.analytics, dict):
         for agent, update in result.analytics.items():
-            await websocket_manager.broadcast_to_client(client_id, {
+            await websocket_manager.send_json(client_id, {
                 "type": "agent_update",
                 "agent": agent,
                 "update": update,

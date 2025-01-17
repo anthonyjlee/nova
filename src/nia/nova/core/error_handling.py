@@ -3,7 +3,7 @@
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
 from functools import wraps
-from typing import Any, Callable, Dict, Type, TypeVar
+from typing import Any, Callable, Dict, Type, TypeVar, Optional, Union
 import logging
 import asyncio
 from datetime import datetime
@@ -13,64 +13,76 @@ logger = logging.getLogger(__name__)
 # Custom exception types
 class NovaError(Exception):
     """Base exception for Nova errors."""
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, details: Optional[Dict[str, Any]] = None):
         self.code = code
         self.message = message
+        self.details = details or {}
         super().__init__(message)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert error to dict."""
+        return {
+            "error": {
+                "code": self.code,
+                "message": self.message
+            },
+            "detail": {
+                "code": self.code,
+                "message": self.message,
+                "details": self.details,
+                "timestamp": datetime.now().isoformat()
+            }
+        }
+        
+    def to_http_exception(self) -> HTTPException:
+        """Convert to FastAPI HTTPException."""
+        return HTTPException(
+            status_code=get_status_code(self),
+            detail=self.to_dict()
+        )
 
 class ValidationError(NovaError):
     """Validation error."""
-    def __init__(self, message: str):
-        super().__init__("VALIDATION_ERROR", message)
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__("VALIDATION_ERROR", message, details)
 
 class AuthenticationError(NovaError):
     """Authentication error."""
-    def __init__(self, message: str):
-        super().__init__("AUTHENTICATION_ERROR", message)
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__("AUTHENTICATION_ERROR", message, details)
 
 class AuthorizationError(NovaError):
     """Authorization error."""
-    def __init__(self, message: str):
-        super().__init__("PERMISSION_DENIED", message)
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__("PERMISSION_DENIED", message, details)
 
 class ResourceNotFoundError(NovaError):
     """Resource not found error."""
-    def __init__(self, message: str):
-        super().__init__("RESOURCE_NOT_FOUND", message)
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__("RESOURCE_NOT_FOUND", message, details)
 
 class RateLimitError(NovaError):
     """Rate limit exceeded error."""
-    def __init__(self, message: str):
-        super().__init__("RATE_LIMIT_EXCEEDED", message)
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__("RATE_LIMIT_EXCEEDED", message, details)
 
 class ServiceError(NovaError):
     """Internal service error."""
-    def __init__(self, message: str):
-        super().__init__("SERVICE_ERROR", message)
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__("SERVICE_ERROR", message, details)
 
 class InitializationError(NovaError):
     """Error during initialization."""
-    def __init__(self, message: str):
-        super().__init__("INITIALIZATION_ERROR", message)
+    def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
+        super().__init__("INITIALIZATION_ERROR", message, details)
 
 # Error handlers
 async def handle_nova_error(request: Request, exc: NovaError) -> JSONResponse:
     """Handle Nova errors."""
     logger.error(f"Error handling request {request.state.request_id}: {exc}")
-    error_response = {
-        "error": {
-            "code": exc.code,
-            "message": str(exc)
-        },
-        "detail": {
-            "code": exc.code,
-            "message": str(exc),
-            "timestamp": datetime.now().isoformat()
-        }
-    }
     return JSONResponse(
         status_code=get_status_code(exc),
-        content=error_response
+        content=exc.to_dict()
     )
 
 async def handle_http_error(request: Request, exc: HTTPException) -> JSONResponse:
@@ -105,23 +117,13 @@ async def handle_http_error(request: Request, exc: HTTPException) -> JSONRespons
 async def handle_validation_error(request: Request, exc: Exception) -> JSONResponse:
     """Handle validation errors."""
     logger.error(f"Validation error in request {request.state.request_id}: {exc}")
-    error_response = {
-        "error": {
-            "code": "VALIDATION_ERROR",
-            "message": str(exc)
-        },
-        "detail": {
-            "code": "VALIDATION_ERROR",
-            "message": str(exc),
-            "timestamp": datetime.now().isoformat()
-        }
-    }
+    error = ValidationError(str(exc))
     return JSONResponse(
         status_code=400,
-        content=error_response
+        content=error.to_dict()
     )
 
-def get_status_code(error: Exception) -> int:
+def get_status_code(error: Union[Exception, Type[Exception]]) -> int:
     """Get HTTP status code for error."""
     status_codes = {
         ValidationError: 400,
@@ -132,7 +134,8 @@ def get_status_code(error: Exception) -> int:
         InitializationError: 422,
         ServiceError: 500
     }
-    return status_codes.get(type(error), 500)
+    error_type = error if isinstance(error, type) else type(error)
+    return status_codes.get(error_type, 500)
 
 # Decorators
 T = TypeVar("T")

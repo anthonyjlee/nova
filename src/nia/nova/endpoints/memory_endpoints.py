@@ -9,12 +9,12 @@ from nia.memory.two_layer import TwoLayerMemorySystem
 from nia.agents.specialized.orchestration_agent import OrchestrationAgent
 from nia.core.types.memory_types import Memory, EpisodicMemory, MemoryType
 
-from .auth import (
+from ..core.auth import (
     check_rate_limit,
     check_domain_access,
     get_permission
 )
-from .error_handling import (
+from ..core.error_handling import (
     NovaError,
     ValidationError,
     ResourceNotFoundError,
@@ -22,14 +22,14 @@ from .error_handling import (
     retry_on_error,
     validate_request
 )
-from .endpoints import (
+from ..core.dependencies import (
     get_memory_system,
     get_orchestration_agent
 )
 
 # Create router with dependencies
 memory_router = APIRouter(
-    prefix="/api/orchestration/memory",
+    prefix="/api/memory",
     tags=["memory"],
     dependencies=[Depends(check_rate_limit)]
 )

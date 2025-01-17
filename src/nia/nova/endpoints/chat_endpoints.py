@@ -6,13 +6,13 @@ from datetime import datetime
 import logging
 import uuid
 
-from .dependencies import (
+from ..core.dependencies import (
     get_memory_system,
     get_analytics_agent,
     get_coordination_agent
 )
-from .auth import check_rate_limit, get_permission
-from .error_handling import ServiceError, ValidationError
+from ..core.auth import check_rate_limit, get_permission
+from ..core.error_handling import ServiceError, ValidationError
 
 logger = logging.getLogger(__name__)
 
@@ -52,16 +52,6 @@ async def create_thread(
         }
         
         return thread_data
-    except HTTPException:
-        raise
-    except HTTPException:
-        raise
-    except HTTPException:
-        raise
-    except HTTPException:
-        raise
-    except HTTPException:
-        raise
     except HTTPException:
         raise
     except Exception as e:

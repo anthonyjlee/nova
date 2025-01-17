@@ -1,316 +1,376 @@
-# Schema Debug Guide
+# WebSocket Schema Debug Guide
 
-## Current Problem
-Messages aren't validating correctly between frontend and backend. We need to:
-1. Debug validation issues
-2. Use feature flags to help identify problems
-3. Get basic chat working
+## Overview
 
-## Implementation
+This guide explains how to debug and fix WebSocket schema validation issues between the frontend and backend.
 
-### 1. Redis Feature Flags (no longer implementing)
-```python
-# src/nia/core/feature_flags.py
-class FeatureFlags:
-    def __init__(self, redis_client):
-        self.redis = redis_client
-        self.prefix = "debug:"
-        
-    async def enable_debug(self, flag_name: str):
-        """Enable debug flag."""
-        key = f"{self.prefix}{flag_name}"
-        await self.redis.set(key, "true")
-        
-    async def is_debug_enabled(self, flag_name: str) -> bool:
-        """Check if debug flag is enabled."""
-        key = f"{self.prefix}{flag_name}"
-        return await self.redis.get(key) == b"true"
+## Required Message Flow
 
-# Debug flags
-DEBUG_FLAGS = {
-    'log_validation': 'debug:log_validation',     # Log all validation attempts
-    'log_websocket': 'debug:log_websocket',       # Log WebSocket messages
-    'log_storage': 'debug:log_storage',           # Log storage operations
-    'strict_mode': 'debug:strict_mode'            # Throw on any validation error
+1. Initial Connection (CRITICAL)
+```typescript
+// 1. Connect with API key in headers
+ws = new WebSocket(`/api/nova/ws/${clientId}`);
+
+// 2. Send auth message immediately after connection
+ws.send({
+    type: "auth",
+    timestamp: new Date().toISOString(),
+    client_id: clientId,
+    channel: null,
+    data: {
+        api_key: apiKey
+    }
+});
+
+// 3. Wait for auth success response
+{
+    type: "connection_success",
+    timestamp: "...",
+    client_id: clientId,
+    channel: null,
+    data: {}
 }
 ```
 
-### 2. Backend Validation
-```python
-# src/nia/nova/core/validation.py
-async def validate_message(data: dict, debug_flags: FeatureFlags) -> Message:
-    """Validate message with debug logging."""
-    try:
-        if await debug_flags.is_debug_enabled('log_validation'):
-            logger.debug(f"Validating message data: {data}")
-            
-        message = Message(**data)
-        
-        if await debug_flags.is_debug_enabled('log_validation'):
-            logger.debug(f"Validation successful: {message}")
-            
-        return message
-        
-    except ValidationError as e:
-        if await debug_flags.is_debug_enabled('log_validation'):
-            logger.error(f"Validation failed: {str(e)}")
-            
-        if await debug_flags.is_debug_enabled('strict_mode'):
-            raise
-        
-        logger.warning(f"Validation error (non-strict mode): {str(e)}")
-        return None
-```
-
-### 3. Frontend Validation
+2. Channel Subscription (REQUIRED BEFORE SENDING CHANNEL MESSAGES)
 ```typescript
-// frontend/src/lib/validation/debug.ts
-export const debugFlags = {
-    logValidation: false,
-    logWebSocket: false,
-    strictMode: false
-};
+// After auth success, subscribe to channels
+ws.send({
+    type: "subscribe", 
+    timestamp: new Date().toISOString(),
+    client_id: clientId,
+    channel: "desired-channel",
+    data: {}
+});
 
-// frontend/src/lib/validation/messages.ts
-export const validateMessage = (data: unknown) => {
-    if (debugFlags.logValidation) {
-        console.log('Validating message:', data);
-    }
-    
-    try {
-        const result = messageSchema.parse(data);
-        
-        if (debugFlags.logValidation) {
-            console.log('Validation successful:', result);
-        }
-        
-        return result;
-    } catch (error) {
-        if (debugFlags.logValidation) {
-            console.error('Validation failed:', error);
-        }
-        
-        if (debugFlags.strictMode) {
-            throw error;
-        }
-        
-        console.warn('Validation error (non-strict):', error);
-        return null;
-    }
-};
+// Wait for subscription confirmation
+{
+    type: "subscription_success",
+    timestamp: "...",
+    client_id: clientId,
+    channel: "desired-channel",
+    data: {}
+}
 ```
 
-### 4. WebSocket Integration
-```python
-# Backend WebSocket
-class WebSocketServer:
-    def __init__(self, redis_client):
-        self.redis = redis_client
-        self.pubsub = self.redis.pubsub()
-        self.pubsub.subscribe("debug_updates")
-        
-    async def broadcast_debug_update(self, data: dict):
-        """Broadcast debug info to all clients."""
-        await self.redis.publish("debug_updates", 
-            json.dumps({
-                "type": "debug_update",
-                "data": data,
-                "timestamp": datetime.now().isoformat()
-            })
-        )
+3. Message Format (MUST MATCH EXACTLY)
+```typescript
+// Base message format expected by backend
+interface BaseMessage {
+    type: string;
+    timestamp: string; // ISO date
+    client_id: string;
+    channel: string | null;
+    data: any;
+}
 
-# Frontend WebSocket
-export class WebSocketClient {
-    constructor(private debugFlags = debugFlags) {
-        this.ws = new WebSocket('ws://localhost:8000/ws');
-        this.setupDebugHandlers();
-    }
-    
-    private setupDebugHandlers() {
-        // Handle debug messages
-        this.ws.addEventListener('message', (event) => {
-            if (this.debugFlags.logWebSocket) {
-                console.log('WS Received:', event.data);
-            }
-            
-            try {
-                const data = JSON.parse(event.data);
-                if (data.type === 'debug_update') {
-                    this.handleDebugUpdate(data);
-                }
-            } catch (error) {
-                if (this.debugFlags.logWebSocket) {
-                    console.error('WS Parse error:', error);
-                }
-            }
-        });
-        
-        // Handle connection issues
-        this.ws.addEventListener('close', () => {
-            if (this.debugFlags.logWebSocket) {
-                console.log('WS Connection closed');
-            }
-            this.scheduleReconnect();
-        });
-    }
-    
-    private handleDebugUpdate(data: any) {
-        if (data.data.type === 'validation') {
-            this.handleValidationUpdate(data.data);
-        } else if (data.data.type === 'websocket') {
-            this.handleWebSocketUpdate(data.data);
-        }
-    }
-    
-    async send(message: unknown) {
-        if (this.debugFlags.logWebSocket) {
-            console.log('WS Sending:', message);
-        }
-        
-        try {
-            const validated = validateMessage(message);
-            if (!validated) {
-                throw new Error('Message validation failed');
-            }
-            
-            await this.ws.send(JSON.stringify(validated));
-            
-        } catch (error) {
-            if (this.debugFlags.logWebSocket) {
-                console.error('WS Send error:', error);
-            }
-            throw error;
-        }
-    }
-    
-    private scheduleReconnect() {
-        setTimeout(() => {
-            if (this.debugFlags.logWebSocket) {
-                console.log('WS Attempting reconnect...');
-            }
-            this.ws = new WebSocket('ws://localhost:8000/ws');
-            this.setupDebugHandlers();
-        }, 5000);
+// Example chat message
+{
+    type: "chat_message",
+    timestamp: "2025-01-20T12:34:56.789Z",
+    client_id: "user-123",
+    channel: null,
+    data: {
+        content: "Hello",
+        thread_id: "thread-123"
     }
 }
 ```
 
-### 5. Debug UI
-```typescript
-// frontend/src/lib/components/DebugPanel.svelte
-<script lang="ts">
-    import { debugFlags } from '../validation/debug';
-    import { webSocket } from '../websocket/client';
-    
-    let messages: any[] = [];
-    
-    $: {
-        if (debugFlags.logValidation) {
-            // Subscribe to validation logs
-            webSocket.on('validation', (data) => {
-                messages = [...messages, {
-                    type: 'validation',
-                    ...data,
-                    timestamp: new Date().toISOString()
-                }];
-            });
-        }
-        
-        if (debugFlags.logWebSocket) {
-            // Subscribe to WebSocket logs
-            webSocket.on('websocket', (data) => {
-                messages = [...messages, {
-                    type: 'websocket',
-                    ...data,
-                    timestamp: new Date().toISOString()
-                }];
-            });
-        }
-    }
-</script>
+## Current Issues
 
-<div class="debug-panel">
-    <div class="controls">
-        <label>
-            <input type="checkbox" bind:checked={debugFlags.logValidation}>
-            Log Validation
-        </label>
-        <label>
-            <input type="checkbox" bind:checked={debugFlags.logWebSocket}>
-            Log WebSocket
-        </label>
-        <label>
-            <input type="checkbox" bind:checked={debugFlags.strictMode}>
-            Strict Mode
-        </label>
-    </div>
-    
-    <div class="logs">
-        {#each messages as msg}
-            <div class="log-entry">
-                <span class="timestamp">{msg.timestamp}</span>
-                <span class="type">{msg.type}</span>
-                <pre class="data">{JSON.stringify(msg.data, null, 2)}</pre>
-            </div>
-        {/each}
-    </div>
-</div>
+1. Missing Auth Message (CRITICAL)
+- Backend requires auth message immediately after connection
+- Without auth, all other messages will fail
+- Check WebSocket connection logs for auth failures
+
+2. Schema Validation Errors (BLOCKING)
+- Frontend uses strict Zod validation
+- Backend expects simpler format
+- Common validation failures:
+  - Extra metadata fields
+  - Missing required fields
+  - Wrong field types
+  - Invalid date formats
+
+3. Channel Subscription Issues (BLOCKING)
+- Messages to channels require subscription first
+- Subscribe before sending channel messages:
+```typescript
+// Join channel
+ws.send({
+    type: "subscribe",
+    timestamp: new Date().toISOString(),
+    client_id: clientId,
+    channel: null,
+    data: {
+        channel: "channel-name"
+    }
+});
+
+// Wait for subscription success
+{
+    type: "subscription_success",
+    timestamp: "...",
+    client_id: clientId,
+    channel: null,
+    data: {
+        channel: "channel-name"
+    }
+}
 ```
 
-## Debug Process
+## Required Message Flow Order
 
-### 1. Enable Debug Mode
-```python
-# In development
-await feature_flags.enable_debug('log_validation')
-await feature_flags.enable_debug('log_websocket')
-await feature_flags.enable_debug('strict_mode')
+1. Connect to WebSocket
+2. Send auth message immediately
+3. Wait for auth success
+4. Subscribe to channels if needed
+5. Wait for subscription success
+6. Begin sending messages
+
+## Exact Message Type Mapping (MUST MATCH)
+
+Backend expects these specific message types:
+
+1. Chat Messages
+```typescript
+{
+    type: "chat_message",
+    data: {
+        thread_id: string;
+        content: string;
+        sender?: string;
+    }
+}
 ```
 
-### 2. Send Test Message
+2. Task Updates
 ```typescript
-// In browser console
-debugFlags.logValidation = true;
-debugFlags.logWebSocket = true;
-debugFlags.strictMode = true;
-
-// Send test message
-const message = {
-    content: "Test message",
-    thread_id: "test-thread",
-    sender: {
-        id: "test-user",
-        type: "user",
-        name: "Test User"
+{
+    type: "task_update",
+    data: {
+        task_id: string;
+        status?: string;
+        metadata?: Record<string, any>;
     }
+}
+```
+
+3. Agent Status
+```typescript
+{
+    type: "agent_status",
+    data: {
+        agent_id: string;
+        status: string;
+        metadata?: Record<string, any>;
+    }
+}
+```
+
+4. Graph Updates
+```typescript
+{
+    type: "graph_update",
+    data: {
+        nodes: Array<{
+            id: string;
+            type: string;
+            metadata?: Record<string, any>;
+        }>;
+        edges: Array<{
+            from: string;
+            to: string;
+            type: string;
+            metadata?: Record<string, any>;
+        }>;
+    }
+}
+```
+
+## Debugging Steps
+
+1. Enable WebSocket Logging
+```typescript
+// Frontend
+ws.onmessage = (event) => {
+    console.log('Received:', JSON.parse(event.data));
 };
 
-await chat.sendMessage(message);
+ws.onerror = (error) => {
+    console.error('WebSocket error:', error);
+};
+
+// Backend logs in: logs/websocket.log
 ```
 
-### 3. Check Logs
-1. Browser console for frontend validation/WebSocket logs
-2. Backend logs for server validation/WebSocket logs
-3. Compare data at each step
+2. Validate Message Format
+- Check message matches base format
+- Verify required fields present
+- Ensure correct field types
+- Validate ISO date format
+
+3. Test Connection Flow
+```typescript
+// 1. Connect with headers
+const headers = {
+    'X-API-Key': apiKey
+};
+
+// 2. Send auth immediately
+ws.onopen = () => {
+    ws.send(JSON.stringify({
+        type: 'auth',
+        timestamp: new Date().toISOString(),
+        client_id: clientId,
+        channel: null,
+        data: { api_key: apiKey }
+    }));
+};
+
+// 3. Handle auth response
+ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    if (msg.type === 'connection_success') {
+        // Connection ready
+    }
+};
+```
+
+4. Check Channel Subscriptions
+- Verify channel subscription before sending channel messages
+- Check channel exists and client has access
+- Confirm subscription success response
+
+## Frontend Schema Updates
+
+Update frontend schemas to match backend expectations:
+
+```typescript
+// Base WebSocket message schema
+export const WebSocketMessageBaseSchema = z.object({
+    type: z.string(),
+    timestamp: z.string().refine(isValidISODate),
+    client_id: z.string(),
+    channel: z.string().nullable(),
+    data: z.record(z.unknown())
+});
+
+// Auth message schema
+export const AuthMessageSchema = WebSocketMessageBaseSchema.extend({
+    type: z.literal('auth'),
+    data: z.object({
+        api_key: z.string()
+    })
+});
+
+// Chat message schema
+export const ChatMessageSchema = WebSocketMessageBaseSchema.extend({
+    type: z.literal('chat_message'),
+    data: z.object({
+        thread_id: z.string(),
+        content: z.string(),
+        sender: z.string().optional()
+    })
+});
+```
+
+## Testing WebSocket Connection
+
+Use the test client to verify connection:
+
+```typescript
+import { WebSocket } from 'ws';
+
+const ws = new WebSocket('ws://localhost:8000/ws/test-client');
+
+// Enable logging
+ws.on('message', (data) => {
+    console.log('Received:', JSON.parse(data));
+});
+
+// Send auth message
+ws.on('open', () => {
+    ws.send(JSON.stringify({
+        type: 'auth',
+        timestamp: new Date().toISOString(),
+        client_id: 'test-client',
+        channel: null,
+        data: {
+            api_key: 'test-key'
+        }
+    }));
+});
+
+// Handle errors
+ws.on('error', console.error);
+```
+
+## Common Error Messages
+
+1. Authentication Errors
+```
+Error: Authentication required
+Solution: Send auth message after connection
+```
+
+2. Schema Validation Errors
+```
+Error: Invalid message format
+Solution: Check message matches base format
+```
+
+3. Channel Errors
+```
+Error: Not subscribed to channel
+Solution: Subscribe to channel before sending messages
+```
+
+4. Connection Timeout
+```
+Error: Connection timeout
+Solution: Check connection is alive and sending ping/pong
+```
+
+## Best Practices
+
+1. Always send auth message first
+2. Validate messages against schemas before sending
+3. Handle reconnection with exponential backoff
+4. Subscribe to channels before sending channel messages
+5. Log WebSocket traffic for debugging
+6. Use typed message interfaces
+7. Handle connection errors gracefully
+8. Clean up subscriptions on disconnect
+
+## Testing Tools
+
+1. WebSocket Test Client
+```bash
+# Install wscat
+npm install -g wscat
+
+# Connect and send messages
+wscat -c ws://localhost:8000/ws/test-client
+```
+
+2. Browser DevTools
+- Network tab > WS
+- Console logging
+- Message inspection
+
+3. Backend Logs
+- Check logs/websocket.log
+- Enable debug logging
+- Monitor connection status
 
 ## Next Steps
 
-1. Debug Current Issues
-- [ ] Enable debug logging
-- [ ] Send test messages
-- [ ] Identify validation failures
-- [ ] Fix schema mismatches
-
-2. Get Basic Flow Working
-- [ ] Test simple message flow
-- [ ] Verify storage
-- [ ] Check WebSocket updates
-- [ ] Validate responses
-
-3. Add Error Recovery
-- [ ] Improve error messages
-- [ ] Add retry logic
-- [ ] Handle edge cases
-- [ ] Add user feedback
-
-The goal is to get basic messaging working first, then improve the validation and error handling once we understand where things are breaking.
+1. Update frontend schemas to match backend
+2. Add auth message handling
+3. Implement proper channel subscription
+4. Add connection error handling
+5. Enable WebSocket logging
+6. Test with example messages
+7. Monitor for validation errors

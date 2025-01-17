@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from typing import Dict, Any
 
 from nia.nova.core.llm import LMStudioLLM
-from nia.nova.core.models import (
+from nia.nova.core.llm_types import (
     LLMConcept,
     LLMAnalysisResult,
     LLMAnalyticsResult,

@@ -4,13 +4,13 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from typing import Dict, Any, List
 from datetime import datetime
 
-from .dependencies import get_memory_system
-from .auth import get_permission
-from .error_handling import ServiceError
+from ..core.dependencies import get_memory_system
+from ..core.auth import get_permission
+from ..core.error_handling import ServiceError
 from nia.core.types.memory_types import Memory, MemoryType
 
 kg_router = APIRouter(
-    prefix="/api/kg",
+    prefix="/api/knowledge",
     tags=["Knowledge Graph"]
 )
 

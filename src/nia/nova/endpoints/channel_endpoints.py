@@ -15,10 +15,10 @@ from typing import Dict, Any, List
 from datetime import datetime
 import json
 
-from .dependencies import get_memory_system
-from .auth import get_permission
-from .error_handling import ServiceError
-from .models import (
+from ..core.dependencies import get_memory_system
+from ..core.auth import get_permission
+from ..core.error_handling import ServiceError
+from ..core.models import (
     ChannelDetails, ChannelMember, PinnedItem, ChannelSettings,
     AgentMetrics, AgentInteraction, AgentInfo
 )
@@ -46,7 +46,7 @@ async def channel_options_handler():
 @channel_router.get("/graph/concepts", response_model=Dict[str, Any])
 async def get_graph_concepts(
     memory_system: Any = Depends(get_memory_system)
-) -> Dict[str, Any]:
+) -> JSONResponse:
     """Get graph concepts for visualization."""
     try:
         # Query all concepts from semantic layer
@@ -103,7 +103,7 @@ agent_router = APIRouter(
 async def get_channel_details(
     channel_id: str,
     memory_system: Any = Depends(get_memory_system)
-) -> ChannelDetails:
+) -> JSONResponse:
     """Get detailed information about a channel."""
     try:
         # Query channel from semantic layer
@@ -172,7 +172,7 @@ async def get_channel_details(
 async def get_channel_members(
     channel_id: str,
     memory_system: Any = Depends(get_memory_system)
-) -> List[ChannelMember]:
+) -> JSONResponse:
     """Get list of members in a channel."""
     try:
         # Query members from semantic layer
@@ -232,7 +232,7 @@ async def get_channel_members(
 async def get_pinned_items(
     channel_id: str,
     memory_system: Any = Depends(get_memory_system)
-) -> List[PinnedItem]:
+) -> JSONResponse:
     """Get pinned items in a channel."""
     try:
         # Get pinned items from episodic memory
@@ -261,7 +261,7 @@ async def update_channel_settings(
     channel_id: str,
     settings: ChannelSettings,
     memory_system: Any = Depends(get_memory_system)
-) -> ChannelSettings:
+) -> JSONResponse:
     """Update channel settings."""
     try:
         # Update settings in semantic layer

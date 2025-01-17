@@ -9,9 +9,9 @@ import asyncio
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-from .dependencies import get_memory_system
-from .auth import validate_api_key
-from .websocket_server import WebSocketServer
+from ..core.dependencies import get_memory_system
+from ..core.auth import validate_api_key
+from ..core.websocket_server import WebSocketServer
 from nia.memory.two_layer import TwoLayerMemorySystem
 
 ws_router = APIRouter(prefix="/api/ws", tags=["WebSocket"])

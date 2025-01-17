@@ -9,7 +9,7 @@ project_root = str(Path(__file__).parent.parent)
 sys.path.insert(0, project_root)
 
 from src.nia.nova.core.llm import LMStudioLLM
-from src.nia.nova.core.models import LLMAnalysisResult
+from src.nia.nova.core.llm_types import LLMAnalysisResult
 
 async def test_llm():
     """Test LM Studio integration."""
