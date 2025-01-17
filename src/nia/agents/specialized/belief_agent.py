@@ -10,23 +10,12 @@ from ..tinytroupe_agent import TinyTroupeAgent
 from ...world.environment import NIAWorld
 from ...memory.two_layer import TwoLayerMemorySystem
 from ...core.types.memory_types import AgentResponse, DomainContext, ValidationSchema
+from ...core.neo4j.base_store import Neo4jMemoryStore
 
 logger = logging.getLogger(__name__)
 
 class BeliefAgent(NovaBeliefAgent, TinyTroupeAgent):
-    """Belief agent with TinyTroupe and memory capabilities.
-    
-    This agent combines TinyTroupe's agent capabilities with Nova's belief system
-    and memory management. It handles domain-aware belief analysis, reflection
-    recording, and cross-domain operations.
-    
-    Key features:
-    - Async initialization with proper connection handling
-    - Domain context validation and access control
-    - Memory system integration with both semantic and episodic layers
-    - Comprehensive error handling and logging
-    - Automatic recovery from uninitialized states
-    """
+    """Belief agent with TinyTroupe and memory capabilities."""
     
     def __init__(
         self,
@@ -54,8 +43,8 @@ class BeliefAgent(NovaBeliefAgent, TinyTroupeAgent):
         NovaBeliefAgent.__init__(
             self,
             llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
+            store=memory_system.semantic if memory_system and hasattr(memory_system, 'semantic') and isinstance(memory_system.semantic, Neo4jMemoryStore) else None,
+            vector_store=memory_system.episodic.store if memory_system and hasattr(memory_system, 'episodic') else None,
             domain=self.domain
         )
         
@@ -70,45 +59,24 @@ class BeliefAgent(NovaBeliefAgent, TinyTroupeAgent):
             self._configuration["memory_references"] = []
             
     async def initialize(self):
-        """Initialize belief agent with domain-specific setup.
-        
-        Extends base initialization with belief-specific components:
-        1. Base initialization (memory, world)
-        2. Nova belief system initialization
-        3. Domain-specific setup
-        """
-        # Initialize base components first
+        """Initialize belief agent with domain-specific setup."""
         await super().initialize()
         
         try:
-            # Initialize Nova belief system
             await NovaBeliefAgent.initialize(self)
             self.logger.debug(f"Nova belief system initialized for {self.name}")
-            
-            # Any additional belief-specific initialization can go here
-            
         except Exception as e:
             self.logger.error(f"Failed to initialize belief components: {str(e)}")
             self.logger.error(f"Stack trace: {traceback.format_exc()}")
             raise
             
     @classmethod
-    async def create(
-        cls,
-        name: str,
-        memory_system: Optional[TwoLayerMemorySystem] = None,
-        world: Optional[NIAWorld] = None,
-        attributes: Optional[Dict] = None,
-        domain: Optional[str] = None
-    ) -> 'BeliefAgent':
+    async def create(cls, name: str, memory_system: Optional[TwoLayerMemorySystem] = None,
+                    world: Optional[NIAWorld] = None, attributes: Optional[Dict] = None,
+                    domain: Optional[str] = None) -> 'BeliefAgent':
         """Factory method to create and initialize a BeliefAgent."""
-        agent = cls(
-            name=name,
-            memory_system=memory_system,
-            world=world,
-            attributes=attributes,
-            domain=domain
-        )
+        agent = cls(name=name, memory_system=memory_system, world=world,
+                   attributes=attributes, domain=domain)
         await agent.initialize()
         return agent
         
@@ -137,42 +105,29 @@ class BeliefAgent(NovaBeliefAgent, TinyTroupeAgent):
         self.define(**attributes)
         
     @property
-    def emotions(self):
-        """Get agent emotions."""
-        return self._configuration.get("current_emotions", {})
-        
+    def emotions(self): return self._configuration.get("current_emotions", {})
+    
     @emotions.setter
     def emotions(self, value):
-        """Set agent emotions."""
-        if not isinstance(value, dict):
-            value = {}
+        if not isinstance(value, dict): value = {}
         self._configuration["current_emotions"] = value.copy()
             
     def update_emotions(self, updates: Dict[str, str]):
-        """Update emotions dictionary."""
         if "current_emotions" not in self._configuration:
             self._configuration["current_emotions"] = {}
         self._configuration["current_emotions"].update(updates)
         
     @property
-    def desires(self):
-        """Get agent desires."""
-        return self._configuration.get("current_goals", [])
-        
+    def desires(self): return self._configuration.get("current_goals", [])
+    
     @desires.setter
-    def desires(self, value):
-        """Set agent desires."""
-        self._configuration["current_goals"] = value
+    def desires(self, value): self._configuration["current_goals"] = value
         
     @property
-    def capabilities(self):
-        """Get agent capabilities."""
-        return self._configuration.get("capabilities", [])
-        
+    def capabilities(self): return self._configuration.get("capabilities", [])
+    
     @capabilities.setter
-    def capabilities(self, value):
-        """Set agent capabilities."""
-        self._configuration["capabilities"] = value
+    def capabilities(self, value): self._configuration["capabilities"] = value
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems."""
@@ -180,16 +135,13 @@ class BeliefAgent(NovaBeliefAgent, TinyTroupeAgent):
             logger.warning(f"BeliefAgent {self.name} not initialized, initializing now...")
             await self.initialize()
             
-        # Add domain to metadata
         metadata = metadata or {}
         metadata["domain"] = self.domain
         
         try:
-            # Get analysis from LLM
             if self._memory_system and self._memory_system.llm:
                 analysis = await self._memory_system.llm.analyze(content)
                 
-                # Update emotions and desires based on analysis
                 if analysis and analysis.get("beliefs"):
                     for belief in analysis["beliefs"]:
                         if belief.get("type") == "belief":
@@ -213,13 +165,11 @@ class BeliefAgent(NovaBeliefAgent, TinyTroupeAgent):
                                     "domain_state": "low_relevance"
                                 })
                                 
-                # Create response with analysis
                 return AgentResponse(
                     content=str(analysis),
                     metadata={"analysis": analysis}
                 )
                 
-            # Process through memory system if no LLM
             return await super().process(content, metadata)
             
         except Exception as e:
@@ -230,33 +180,24 @@ class BeliefAgent(NovaBeliefAgent, TinyTroupeAgent):
                 metadata={"error": str(e)}
             )
         
-    async def analyze_and_store(
-        self,
-        content: Dict[str, Any],
-        target_domain: Optional[str] = None
-    ) -> BeliefResult:
+    async def analyze_and_store(self, content: Dict[str, Any], target_domain: Optional[str] = None) -> BeliefResult:
         """Analyze beliefs and store results with domain awareness."""
         if not getattr(self, '_initialized', False):
             logger.warning(f"BeliefAgent {self.name} not initialized, initializing now...")
             await self.initialize()
             
-        # Validate domain access if specified
         if target_domain:
             await self.validate_domain_access(target_domain)
             
         try:
-            # Get analysis from LLM
             if self._memory_system and self._memory_system.llm:
                 analysis = await self._memory_system.llm.analyze(content)
                 
-                # Get beliefs and confidence
                 beliefs = analysis.get("beliefs", [])
                 confidence = analysis.get("confidence")
                 if confidence is None:
-                    # Calculate from beliefs if not provided
                     confidence = sum(b.get("confidence", 0.5) for b in beliefs) / len(beliefs) if beliefs else 0.0
                 
-                # Create BeliefResult
                 result = BeliefResult(
                     beliefs=beliefs,
                     confidence=float(confidence),
@@ -268,26 +209,23 @@ class BeliefAgent(NovaBeliefAgent, TinyTroupeAgent):
                     evidence=analysis.get("evidence", {})
                 )
                 
-                # Store belief analysis
-                if self._memory_system.semantic and self._memory_system.semantic.store:
-                    await self._memory_system.semantic.store.store_memory(
-                        {
-                            "type": "belief_analysis",
-                            "content": content,
+                if (self._memory_system and hasattr(self._memory_system, 'semantic') and 
+                    self._memory_system.semantic and isinstance(self._memory_system.semantic, Neo4jMemoryStore)):
+                    memory_data = {
+                        "type": "belief_analysis",
+                        "content": {
+                            "original": content,
                             "analysis": {
                                 "beliefs": result.beliefs,
                                 "confidence": result.confidence,
                                 "evidence": result.evidence,
                                 "timestamp": result.timestamp
-                            }
-                        },
-                        {
-                            "type": "belief",
+                            },
                             "domain": target_domain or self.domain
                         }
-                    )
+                    }
+                    await self._memory_system.semantic.store_memory(memory_data)
         
-                    # Record reflections based on analysis
                     if result.confidence > 0.8:
                         await self.record_reflection(
                             f"High confidence belief analysis achieved in {self.domain} domain",
@@ -299,7 +237,6 @@ class BeliefAgent(NovaBeliefAgent, TinyTroupeAgent):
                             domain=self.domain
                         )
                         
-                    # Record contradictions
                     if result.evidence.get("contradictions"):
                         await self.record_reflection(
                             f"Contradictory evidence found in {self.domain} domain - further investigation needed",
@@ -337,40 +274,30 @@ class BeliefAgent(NovaBeliefAgent, TinyTroupeAgent):
         }
         
     @property
-    def memory_system(self):
-        """Get memory system."""
-        return self._memory_system
+    def memory_system(self): return self._memory_system
         
     async def get_domain_access(self, domain_context: DomainContext) -> bool:
         """Check if agent has access to specified domain context."""
-        # Always allow access to agent's primary domain
         if domain_context.primary_domain == self.domain:
             return True
             
-        # For cross-domain operations, check if approved
         if domain_context.cross_domain and domain_context.cross_domain.get("approved"):
             return True
             
-        # For knowledge verticals, check semantic store
-        if self._memory_system and hasattr(self._memory_system, "semantic"):
+        if (self._memory_system and hasattr(self._memory_system, "semantic") and 
+            self._memory_system.semantic and isinstance(self._memory_system.semantic, Neo4jMemoryStore)):
             try:
-                # Check both primary domain and knowledge vertical
-                primary_access = await self._memory_system.semantic.store.get_domain_access(
-                    self.name,
-                    domain_context.primary_domain
+                primary_access = await self._memory_system.semantic.get_memory(
+                    f"domain_access_{self.name}_{domain_context.primary_domain}"
                 )
                 
-                # If no knowledge vertical or primary access denied, return primary access result
                 if not domain_context.knowledge_vertical or not primary_access:
                     return primary_access
                     
-                # Check knowledge vertical access
-                vertical_access = await self._memory_system.semantic.store.get_domain_access(
-                    self.name,
-                    domain_context.knowledge_vertical
+                vertical_access = await self._memory_system.semantic.get_memory(
+                    f"domain_access_{self.name}_{domain_context.knowledge_vertical}"
                 )
                 
-                # Both must be granted for access
                 return primary_access and vertical_access
                 
             except Exception as e:
@@ -382,7 +309,6 @@ class BeliefAgent(NovaBeliefAgent, TinyTroupeAgent):
         
     async def validate_domain_access(self, domain_context: Union[DomainContext, str]):
         """Validate access to a domain context before processing."""
-        # Convert string to DomainContext if needed
         if isinstance(domain_context, str):
             domain_context = DomainContext(
                 primary_domain=domain_context,
@@ -406,25 +332,28 @@ class BeliefAgent(NovaBeliefAgent, TinyTroupeAgent):
         justification: str
     ) -> bool:
         """Request access for cross-domain operation."""
-        if self._memory_system and hasattr(self._memory_system, "semantic"):
+        if (self._memory_system and hasattr(self._memory_system, "semantic") and 
+            self._memory_system.semantic and isinstance(self._memory_system.semantic, Neo4jMemoryStore)):
             try:
-                return await self._memory_system.semantic.store.request_cross_domain_access(
-                    agent_name=self.name,
-                    source_domain=source_domain,
-                    target_domain=target_domain,
-                    justification=justification
-                )
+                memory_data = {
+                    "type": "cross_domain_request",
+                    "content": {
+                        "agent": self.name,
+                        "source_domain": source_domain.primary_domain,
+                        "target_domain": target_domain.primary_domain,
+                        "justification": justification,
+                        "status": "pending"
+                    }
+                }
+                await self._memory_system.semantic.store_memory(memory_data)
+                return True
             except Exception as e:
                 logger.error(f"Error requesting cross-domain access: {str(e)}")
                 logger.error(f"Stack trace: {traceback.format_exc()}")
                 return False
         return False
             
-    async def record_reflection(
-        self,
-        content: str,
-        domain: Optional[str] = None
-    ):
+    async def record_reflection(self, content: str, domain: Optional[str] = None):
         """Record a reflection with domain awareness."""
         if not getattr(self, '_initialized', False):
             logger.warning(f"BeliefAgent {self.name} not initialized, initializing now...")
@@ -432,7 +361,6 @@ class BeliefAgent(NovaBeliefAgent, TinyTroupeAgent):
             
         if self._memory_system and hasattr(self._memory_system, "semantic"):
             try:
-                # Create domain context
                 domain_context = DomainContext(
                     primary_domain=domain or self.domain,
                     knowledge_vertical=None,
@@ -443,13 +371,14 @@ class BeliefAgent(NovaBeliefAgent, TinyTroupeAgent):
                     )
                 )
                 
-                # Record reflection with domain context
-                await self._memory_system.semantic.store.record_reflection(
-                    content=content,
-                    domain=domain_context.primary_domain
-                )
+                await self._memory_system.semantic.store_memory({
+                    "type": "reflection",
+                    "content": {
+                        "text": content,
+                        "domain": domain_context.primary_domain
+                    }
+                })
                 
-                # Store reference with domain information
                 if "memory_references" in self._configuration:
                     self._configuration["memory_references"].append({
                         "type": "reflection",

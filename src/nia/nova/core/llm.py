@@ -26,7 +26,7 @@ class LMStudioLLM:
         agent_type: Optional[str] = None,
         metadata: Optional[Dict] = None,
         max_tokens: int = 1000
-    ) -> Union[AnalysisResponse, AnalyticsResponse, LLMErrorResponse]:
+    ) -> Dict[str, Any]:
         """Get structured completion from LM Studio using outlines."""
         try:
             from openai import OpenAI
@@ -47,8 +47,14 @@ class LMStudioLLM:
             # Add metadata if provided
             if metadata and isinstance(result, dict):
                 result["metadata"] = metadata
-                
-            return result
+            
+            # Convert result to dictionary if needed
+            if isinstance(result, dict):
+                return result
+            elif isinstance(result, str):
+                return {"response": result}
+            else:
+                return {"error": "Invalid response type", "error_type": "type_error", "confidence": 0.0}
         except Exception as e:
             raise Exception(f"LM Studio error: {str(e)}")
 
@@ -57,7 +63,7 @@ class LMStudioLLM:
         content: Dict[str, Any],
         template: str = "parsing_analysis",
         max_tokens: int = 1000
-    ) -> Union[AnalysisResponse, AnalyticsResponse, LLMErrorResponse]:
+    ) -> Dict[str, Any]:
         """Analyze content using LM Studio."""
         try:
             from openai import OpenAI
@@ -89,44 +95,41 @@ class LMStudioLLM:
             
             # Parse response
             try:
-                result = json.loads(response.choices[0].message.content)
-            except json.JSONDecodeError:
-                # If response is not valid JSON, return error
-                return {
-                    "response": "Error: Invalid JSON response",
-                    "concepts": [{
-                        "name": "Error",
-                        "type": "error",
-                        "description": "Failed to parse JSON response",
+                content = response.choices[0].message.content
+                if not content:  # Handle None or empty string
+                    return {
+                        "error": "Empty response",
+                        "error_type": "empty_response",
                         "confidence": 0.0
-                    }],
-                    "key_points": ["Error parsing response"],
-                    "implications": ["Analysis failed"],
-                    "uncertainties": ["Response format"],
-                    "reasoning": ["Invalid JSON"]
+                    }
+                if isinstance(content, dict):
+                    result = content
+                else:
+                    result = json.loads(str(content))
+            except json.JSONDecodeError:
+                # If response is not valid JSON, return error response
+                error_response = {
+                    "error": "Invalid JSON response",
+                    "error_type": "json_decode_error",
+                    "confidence": 0.0
                 }
+                return error_response
             
             # Add metadata if provided
             if content.get("metadata"):
                 result["metadata"] = content["metadata"]
-                
+            
+            # Return raw dictionary for test compatibility
             return result
             
         except Exception as e:
             # Return error response
-            return {
-                "response": "Error analyzing content",
-                "concepts": [{
-                    "name": "Error",
-                    "type": "error",
-                    "description": str(e),
-                    "confidence": 0.0
-                }],
-                "key_points": ["Error occurred during analysis"],
-                "implications": ["Analysis failed"],
-                "uncertainties": ["Error cause"],
-                "reasoning": ["Error handling"]
+            error_response = {
+                "error": "Error analyzing content",
+                "error_type": "analysis_error",
+                "confidence": 0.0
             }
+            return error_response
             
     def _prepare_prompt(self, content: Dict[str, Any], template: str) -> str:
         """Prepare prompt based on template."""

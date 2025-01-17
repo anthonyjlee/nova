@@ -91,14 +91,18 @@ async def get_concept_manager() -> ConceptManager:
     global _concept_manager
     if _concept_manager is None:
         _concept_manager = ConceptManager()
-        await initialize_with_retry(_concept_manager, "Concept Manager")
+        await initialize_with_retry(_concept_manager, "ConceptManager", store={})
     return _concept_manager
 
 # Model configurations
 CHAT_MODEL = "gpt-4"
 EMBEDDING_MODEL = "text-embedding-ada-002"
 
-async def get_memory_system() -> TwoLayerMemorySystem:
+async def get_memory_system(
+    max_retries: int = 5,
+    retry_delay: float = 1.0,
+    name: str = "TwoLayerMemorySystem"
+) -> TwoLayerMemorySystem:
     """Get or create memory system instance."""
     global _memory_system
     if _memory_system is None:
@@ -107,11 +111,10 @@ async def get_memory_system() -> TwoLayerMemorySystem:
         try:
             # Initialize with retries
             retry_count = 0
-            max_retries = 5
             while retry_count < max_retries:
                 try:
                     logger.debug(f"Attempting memory system initialization (attempt {retry_count + 1}/{max_retries})")
-                    await _memory_system.initialize()
+                    await initialize_with_retry(_memory_system, name, store={}, max_retries=max_retries, retry_delay=retry_delay)
                     logger.debug("Memory system initialization complete")
                     break
                 except Exception as e:
@@ -121,21 +124,44 @@ async def get_memory_system() -> TwoLayerMemorySystem:
                         # Continue without full initialization
                         break
                     logger.warning(f"Memory system initialization attempt {retry_count} failed: {str(e)}")
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(retry_delay)
         except Exception as e:
             logger.error(f"Error in memory system initialization: {str(e)}")
             # Don't raise - allow startup to continue
             logger.warning("Continuing without fully initialized memory system")
     return _memory_system
 
-async def initialize_with_retry(instance: Any, name: str) -> bool:
-    """Helper function to initialize components with retry logic."""
+async def initialize_with_retry(
+    instance: Any,
+    name: Optional[str] = None,
+    store: Optional[Any] = None,
+    max_retries: int = 5,
+    retry_delay: float = 1.0
+) -> bool:
+    """Helper function to initialize components with retry logic.
+    
+    Args:
+        instance: The component instance to initialize
+        name: Optional name for logging (defaults to class name)
+        store: Optional store to attach to instance
+        max_retries: Maximum number of retry attempts
+        retry_delay: Delay between retries in seconds
+    """
+    # Set default name if not provided
+    if name is None:
+        name = instance.__class__.__name__
+    
+    # Handle store attribute
+    if store is None and hasattr(instance, 'store'):
+        store = {}
+    if hasattr(instance, 'store'):
+        instance.store = store
     retry_count = 0
-    max_retries = 5
     while retry_count < max_retries:
         try:
             logger.debug(f"Attempting {name} initialization (attempt {retry_count + 1}/{max_retries})")
-            await instance.initialize()
+            if hasattr(instance, 'initialize'):
+                await instance.initialize()
             logger.debug(f"{name} initialization complete")
             return True
         except Exception as e:
@@ -144,7 +170,7 @@ async def initialize_with_retry(instance: Any, name: str) -> bool:
                 logger.warning(f"{name} initialization failed after {max_retries} retries: {str(e)}")
                 return False
             logger.warning(f"{name} initialization attempt {retry_count} failed: {str(e)}")
-            await asyncio.sleep(1)
+            await asyncio.sleep(retry_delay)
     return False
 
 async def get_world() -> World:
@@ -152,7 +178,7 @@ async def get_world() -> World:
     global _world
     if _world is None:
         _world = World()
-        await initialize_with_retry(_world, "World")
+        await initialize_with_retry(_world, "World", store={})
     return _world
 
 async def get_llm() -> LLMInterface:
@@ -160,7 +186,7 @@ async def get_llm() -> LLMInterface:
     global _llm
     if _llm is None:
         _llm = LLMInterface()
-        await initialize_with_retry(_llm, "LLM Interface")
+        await initialize_with_retry(_llm, "LLMInterface", store={})
     return _llm
 
 async def get_parsing_agent() -> ParsingAgent:
@@ -174,7 +200,7 @@ async def get_parsing_agent() -> ParsingAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_parsing_agent, "Parsing Agent")
+        await initialize_with_retry(_parsing_agent, "ParsingAgent", store={})
     return _parsing_agent
 
 async def get_coordination_agent() -> CoordinationAgent:
@@ -188,7 +214,7 @@ async def get_coordination_agent() -> CoordinationAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_coordination_agent, "Coordination Agent")
+        await initialize_with_retry(_coordination_agent, "CoordinationAgent", store={})
     return _coordination_agent
 
 async def get_tiny_factory() -> TinyFactory:
@@ -201,7 +227,7 @@ async def get_tiny_factory() -> TinyFactory:
             memory_system=memory_system,
             world=world
         )
-        await initialize_with_retry(_tiny_factory, "Tiny Factory")
+        await initialize_with_retry(_tiny_factory, "TinyFactory", store={})
     return _tiny_factory
 
 async def get_analytics_agent() -> AnalyticsAgent:
@@ -215,7 +241,7 @@ async def get_analytics_agent() -> AnalyticsAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_analytics_agent, "Analytics Agent")
+        await initialize_with_retry(_analytics_agent, "AnalyticsAgent", store={})
     return _analytics_agent
 
 async def get_orchestration_agent() -> OrchestrationAgent:
@@ -229,7 +255,7 @@ async def get_orchestration_agent() -> OrchestrationAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_orchestration_agent, "Orchestration Agent")
+        await initialize_with_retry(_orchestration_agent, "OrchestrationAgent", store={})
     return _orchestration_agent
 
 async def get_graph_store() -> GraphStore:
@@ -237,7 +263,7 @@ async def get_graph_store() -> GraphStore:
     global _graph_store
     if _graph_store is None:
         _graph_store = GraphStore()
-        await initialize_with_retry(_graph_store, "Graph Store")
+        await initialize_with_retry(_graph_store, "GraphStore", store={})
     return _graph_store
 
 async def get_agent_store() -> AgentStore:
@@ -245,7 +271,7 @@ async def get_agent_store() -> AgentStore:
     global _agent_store
     if _agent_store is None:
         _agent_store = AgentStore()
-        await initialize_with_retry(_agent_store, "Agent Store")
+        await initialize_with_retry(_agent_store, "AgentStore", store={})
     return _agent_store
 
 async def get_profile_store() -> ProfileStore:
@@ -253,10 +279,10 @@ async def get_profile_store() -> ProfileStore:
     global _profile_store
     if _profile_store is None:
         _profile_store = ProfileStore()
-        await initialize_with_retry(_profile_store, "Profile Store")
+        await initialize_with_retry(_profile_store, "ProfileStore", store={})
     return _profile_store
 
-async def get_thread_manager() -> ThreadManager:
+async def get_thread_manager(max_retries: int = 5, retry_delay: float = 1.0) -> ThreadManager:
     """Get or create thread manager instance."""
     global _thread_manager
     if _thread_manager is None:
@@ -264,7 +290,6 @@ async def get_thread_manager() -> ThreadManager:
         try:
             # Get memory system with retries
             retry_count = 0
-            max_retries = 5
             memory_system = None
             while retry_count < max_retries:
                 try:
@@ -275,18 +300,29 @@ async def get_thread_manager() -> ThreadManager:
                     if retry_count == max_retries:
                         logger.warning(f"Failed to get memory system after {max_retries} retries: {str(e)}")
                         break
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(retry_delay)
             
-            if memory_system:
-                _thread_manager = ThreadManager(memory_system)
-                logger.debug("Thread manager created successfully")
-            else:
-                logger.warning("Creating thread manager without memory system")
-                _thread_manager = ThreadManager(TwoLayerMemorySystem())
+            memory_system = await get_memory_system()
+            # Ensure memory system is initialized
+            if not memory_system._initialized:
+                await initialize_with_retry(memory_system, "TwoLayerMemorySystem", max_retries=max_retries, retry_delay=retry_delay)
+                if not memory_system._initialized:
+                    logger.error("Failed to initialize memory system")
+                    raise RuntimeError("Failed to initialize memory system")
+            
+            # Create thread manager with initialized memory system
+            _thread_manager = ThreadManager(memory_system)
+            if not await initialize_with_retry(_thread_manager, "Thread Manager"):
+                raise RuntimeError("Failed to initialize thread manager")
+            logger.debug("Thread manager created successfully")
         except Exception as e:
             logger.error(f"Error creating thread manager: {str(e)}")
-            # Don't raise - allow startup to continue
-            logger.warning("Continuing without thread manager")
+            # Create a new memory system and thread manager as fallback
+            memory_system = TwoLayerMemorySystem()
+            await initialize_with_retry(memory_system, "TwoLayerMemorySystem", max_retries=max_retries, retry_delay=retry_delay)
+            _thread_manager = ThreadManager(memory_system)
+            await initialize_with_retry(_thread_manager, "Thread Manager")
+            logger.warning("Created fallback thread manager")
     return _thread_manager
 
 # Core cognitive agent getters
@@ -301,7 +337,7 @@ async def get_belief_agent() -> BeliefAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_belief_agent, "Belief Agent")
+        await initialize_with_retry(_belief_agent, "BeliefAgent", store={})
     return _belief_agent
 
 async def get_desire_agent() -> DesireAgent:
@@ -315,7 +351,7 @@ async def get_desire_agent() -> DesireAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_desire_agent, "Desire Agent")
+        await initialize_with_retry(_desire_agent, "DesireAgent", store={})
     return _desire_agent
 
 async def get_emotion_agent() -> EmotionAgent:
@@ -329,7 +365,7 @@ async def get_emotion_agent() -> EmotionAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_emotion_agent, "Emotion Agent")
+        await initialize_with_retry(_emotion_agent, "EmotionAgent", store={})
     return _emotion_agent
 
 async def get_reflection_agent() -> ReflectionAgent:
@@ -343,7 +379,7 @@ async def get_reflection_agent() -> ReflectionAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_reflection_agent, "Reflection Agent")
+        await initialize_with_retry(_reflection_agent, "ReflectionAgent", store={})
     return _reflection_agent
 
 async def get_meta_agent() -> MetaAgent:
@@ -364,7 +400,7 @@ async def get_self_model_agent() -> SelfModelAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_self_model_agent, "Self Model Agent")
+        await initialize_with_retry(_self_model_agent, "SelfModelAgent", store={})
     return _self_model_agent
 
 async def get_analysis_agent() -> AnalysisAgent:
@@ -378,7 +414,7 @@ async def get_analysis_agent() -> AnalysisAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_analysis_agent, "Analysis Agent")
+        await initialize_with_retry(_analysis_agent, "AnalysisAgent", store={})
     return _analysis_agent
 
 async def get_research_agent() -> ResearchAgent:
@@ -392,7 +428,7 @@ async def get_research_agent() -> ResearchAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_research_agent, "Research Agent")
+        await initialize_with_retry(_research_agent, "ResearchAgent", store={})
     return _research_agent
 
 async def get_integration_agent() -> IntegrationAgent:
@@ -406,7 +442,7 @@ async def get_integration_agent() -> IntegrationAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_integration_agent, "Integration Agent")
+        await initialize_with_retry(_integration_agent, "IntegrationAgent", store={})
     return _integration_agent
 
 async def get_task_agent() -> TaskAgent:
@@ -420,7 +456,7 @@ async def get_task_agent() -> TaskAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_task_agent, "Task Agent")
+        await initialize_with_retry(_task_agent, "TaskAgent", store={})
     return _task_agent
 
 async def get_logging_agent() -> LoggingAgent:
@@ -428,7 +464,7 @@ async def get_logging_agent() -> LoggingAgent:
     global _logging_agent
     if _logging_agent is None:
         _logging_agent = LoggingAgent()  # LoggingAgent doesn't inherit from TinyTroupeAgent
-        await initialize_with_retry(_logging_agent, "Logging Agent")
+        await initialize_with_retry(_logging_agent, "LoggingAgent", store={})
     return _logging_agent
 
 # Support agent getters
@@ -443,7 +479,7 @@ async def get_dialogue_agent() -> DialogueAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_dialogue_agent, "Dialogue Agent")
+        await initialize_with_retry(_dialogue_agent, "DialogueAgent", store={})
     return _dialogue_agent
 
 async def get_context_agent() -> ContextAgent:
@@ -457,7 +493,7 @@ async def get_context_agent() -> ContextAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_context_agent, "Context Agent")
+        await initialize_with_retry(_context_agent, "ContextAgent", store={})
     return _context_agent
 
 async def get_validation_agent() -> ValidationAgent:
@@ -471,7 +507,7 @@ async def get_validation_agent() -> ValidationAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_validation_agent, "Validation Agent")
+        await initialize_with_retry(_validation_agent, "ValidationAgent", store={})
     return _validation_agent
 
 async def get_synthesis_agent() -> SynthesisAgent:
@@ -485,7 +521,7 @@ async def get_synthesis_agent() -> SynthesisAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_synthesis_agent, "Synthesis Agent")
+        await initialize_with_retry(_synthesis_agent, "SynthesisAgent", store={})
     return _synthesis_agent
 
 async def get_alerting_agent() -> AlertingAgent:
@@ -499,7 +535,7 @@ async def get_alerting_agent() -> AlertingAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_alerting_agent, "Alerting Agent")
+        await initialize_with_retry(_alerting_agent, "AlertingAgent", store={})
     return _alerting_agent
 
 async def get_monitoring_agent() -> MonitoringAgent:
@@ -513,7 +549,7 @@ async def get_monitoring_agent() -> MonitoringAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_monitoring_agent, "Monitoring Agent")
+        await initialize_with_retry(_monitoring_agent, "MonitoringAgent", store={})
     return _monitoring_agent
 
 async def get_schema_agent() -> SchemaAgent:
@@ -527,7 +563,7 @@ async def get_schema_agent() -> SchemaAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_schema_agent, "Schema Agent")
+        await initialize_with_retry(_schema_agent, "SchemaAgent", store={})
     return _schema_agent
 
 async def get_llm_interface() -> LLMInterface:
@@ -545,5 +581,5 @@ async def get_response_agent() -> ResponseAgent:
             world=world,
             attributes=None
         )
-        await initialize_with_retry(_response_agent, "Response Agent")
+        await initialize_with_retry(_response_agent, "ResponseAgent", store={})
     return _response_agent

@@ -277,10 +277,11 @@ class Structure(BaseModel):
     domain_factors: Dict[str, Union[str, float]]
     complexity_factors: List[ComplexityFactor]
 
-class AnalysisResponse(BaseModel):
-    concepts: List[Concept]
-    key_points: List[KeyPoint]
-    structure: Structure
+class AnalysisResponse(Dict[str, Any]):
+    """Analysis result from LLM."""
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.update(kwargs)
 
 class Metric(BaseModel):
     name: str
@@ -302,11 +303,11 @@ class Analytics(BaseModel):
     key_metrics: List[Metric]
     trends: List[Trend]
 
-class AnalyticsResponse(BaseModel):
-    analytics: Dict[str, Any]
-    insights: List[Dict[str, Any]]
-    confidence: float
-    timestamp: str
+class AnalyticsResponse(Dict[str, Any]):
+    """Analytics result from LLM."""
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.update(kwargs)
 
 # Request Models
 class AnalyticsRequest(BaseModel):
@@ -504,16 +505,32 @@ class LLMAnalysisResult(BaseModel):
     uncertainties: List[str] = Field(..., description="List of uncertainties or open questions")
     reasoning: List[str] = Field(..., description="Step-by-step reasoning process")
 
+    def __getitem__(self, key: str) -> Any:
+        """Support dict-like access for testing."""
+        return getattr(self, key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Support dict-like get for testing."""
+        return getattr(self, key, default)
+
 class LLMAnalyticsResult(BaseModel):
     """Analytics result from LLM using outlines.generate.json."""
     response: str = Field(..., description="The analysis response")
     confidence: float = Field(..., ge=0.0, le=1.0, description="Confidence score between 0 and 1")
 
-class LLMErrorResponse(BaseModel):
-    """Error response from LLM using outlines.generate.json."""
-    error: str = Field(..., description="Error message")
-    error_type: str = Field(..., description="Type of error")
-    confidence: Literal[0.0] = Field(default=0.0, description="Always 0.0 for errors")
+    def __getitem__(self, key: str) -> Any:
+        """Support dict-like access for testing."""
+        return getattr(self, key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Support dict-like get for testing."""
+        return getattr(self, key, default)
+
+class LLMErrorResponse(Dict[str, Any]):
+    """Error response from LLM."""
+    def __init__(self, **kwargs):
+        super().__init__()
+        self.update(kwargs)
 
 class ThreadRequest(BaseModel):
     """Request model for thread operations."""
@@ -546,9 +563,25 @@ class ThreadMessage(BaseModel):
     workspace: str = "personal"
     metadata: Dict[str, Any] = Field(default_factory=dict)
 
-class ThreadValidation(ValidationSchema):
+class ThreadValidation(BaseModel):
     """Thread validation model."""
-    pass
+    domain: str = Field(default="general")
+    access_domain: str = Field(default="general")
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    source: str = Field(default="system")
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
+    supported_by: List[str] = Field(default_factory=list)
+    contradicted_by: List[str] = Field(default_factory=list)
+    needs_verification: List[str] = Field(default_factory=list)
+    cross_domain: Dict[str, Any] = Field(
+        default_factory=lambda: {
+            "approved": False,
+            "requested": False,
+            "source_domain": "general",
+            "target_domain": "general",
+            "justification": ""
+        }
+    )
 
 class ThreadResponse(BaseModel):
     """Response model for thread operations."""

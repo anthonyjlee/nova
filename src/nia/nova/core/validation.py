@@ -1,277 +1,224 @@
-"""Core validation functionality."""
+"""Validation schemas for WebSocket messages."""
 
-import logging
-from typing import Optional, Dict, Any, List
+from typing import Dict, Any, Optional, Literal, Set, List
+from pydantic import BaseModel, Field, validator
 from datetime import datetime
-from pydantic import ValidationError, BaseModel
+from enum import Enum
 
-logger = logging.getLogger(__name__)
+class ValidationResult(BaseModel):
+    """Result of a validation operation."""
+    is_valid: bool
+    issues: List[Dict[str, Any]] = []
+    metadata: Dict[str, Any] = {}
+    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
+    validations: List[Dict[str, Any]] = []
+    confidence: float = 0.0
 
 class ValidationPattern(BaseModel):
-    """Pattern detected during validation."""
+    """Base validation pattern."""
     type: str
     description: str
     severity: str = "low"
-    frequency: int = 1
     first_seen: str
     last_seen: str
     metadata: Dict[str, Any] = {}
 
-class ValidationResult(BaseModel):
-    """Result of validation operation."""
-    is_valid: bool
-    issues: List[Dict[str, Any]] = []
-    patterns: List[ValidationPattern] = []
-    metadata: Dict[str, Any] = {}
-    timestamp: str = datetime.now().isoformat()
-
-class Message(BaseModel):
-    """Base message class for validation."""
-    content: str
-    thread_id: str
-    sender_type: str = "user"
-    sender_id: str
-    timestamp: Optional[str] = None
-    metadata: Dict[str, Any] = {}
-    validation: Optional[Dict[str, Any]] = None
-
 class ValidationTracker:
-    """Track validation patterns and issues."""
-    
+    """Track validation patterns over time."""
     def __init__(self):
-        self.patterns = {}  # pattern_key -> ValidationPattern
+        self.patterns: List[Dict[str, Any]] = []
         
-    def add_issue(self, issue: Dict[str, Any]):
-        """Add validation issue and update patterns."""
-        pattern_key = f"{issue['type']}:{issue['description']}"
+    def add_issue(self, pattern: Dict[str, Any]):
+        """Add a validation issue pattern."""
+        self.patterns.append(pattern)
         
-        if pattern_key in self.patterns:
-            pattern = self.patterns[pattern_key]
-            pattern.frequency += 1
-            pattern.last_seen = datetime.now().isoformat()
-            pattern.metadata["last_issue"] = issue
-        else:
-            now = datetime.now().isoformat()
-            self.patterns[pattern_key] = ValidationPattern(
-                type=issue["type"],
-                description=issue["description"],
-                severity=issue.get("severity", "low"),
-                first_seen=now,
-                last_seen=now,
-                metadata={"first_issue": issue}
-            )
-            
-    def get_patterns(self) -> List[ValidationPattern]:
-        """Get all tracked validation patterns."""
-        return list(self.patterns.values())
+    def get_patterns(self) -> List[Dict[str, Any]]:
+        """Get all tracked patterns."""
+        return self.patterns
         
-    def get_critical_patterns(self) -> List[ValidationPattern]:
-        """Get patterns with high severity or frequency."""
-        return [
-            p for p in self.patterns.values()
-            if p.severity == "high" or p.frequency > 2
-        ]
+    def get_critical_patterns(self) -> List[Dict[str, Any]]:
+        """Get patterns marked as critical/high severity."""
+        return [p for p in self.patterns if p.get("severity") == "high"]
 
-# Global validation tracker
-validation_tracker = ValidationTracker()
+class ChannelType(str, Enum):
+    """Channel types for access control."""
+    CORE = "core"
+    SUPPORT = "support"
 
-async def validate_message(
-    data: dict
-) -> Optional[Message]:
-    """Validate message with debug logging and pattern tracking."""
+class ClientRole(str, Enum):
+    """Client roles for access control."""
+    ADMIN = "admin"
+    AGENT = "agent"
+    SUPPORT = "support"
+    USER = "user"
+
+class DomainType(str, Enum):
+    """Domain types for boundary validation."""
+    COGNITIVE = "cognitive"
+    SYSTEM = "system"
+    TASK = "task"
+    MEMORY = "memory"
+
+class BaseMessage(BaseModel):
+    """Base model for all WebSocket messages."""
+    type: str
+    timestamp: datetime = Field(default_factory=datetime.now)
+    client_id: str
+    channel: Optional[str] = None
+    domain: Optional[DomainType] = None
+
+    @validator('channel')
+    def validate_channel(cls, v):
+        if v and v not in {"NovaTeam", "NovaSupport"}:
+            raise ValueError(f"Invalid channel: {v}")
+        return v
+
+    class Config:
+        validate_assignment = True
+        extra = "forbid"
+
+class ChatMessage(BaseMessage):
+    """Chat message model."""
+    type: Literal["chat_message"]
+    data: Dict[str, Any] = Field(..., description="Message content and metadata")
+    thread_id: str
+    sender_id: str
+    domain: Optional[DomainType] = Field(default=None)  # Override with optional
+
+class TaskUpdate(BaseMessage):
+    """Task update model."""
+    type: Literal["task_update"]
+    data: Dict[str, Any] = Field(..., description="Task state and metadata")
+    task_id: str
+    status: str
+    domain: DomainType = Field(default=DomainType.TASK)  # Override with default
+
+class AgentStatus(BaseMessage):
+    """Agent status update model."""
+    type: Literal["agent_status"]
+    data: Dict[str, Any] = Field(..., description="Agent state and metadata")
+    agent_id: str
+    status: str
+    domain: DomainType = Field(default=DomainType.SYSTEM)  # Override with default
+
+class GraphUpdate(BaseMessage):
+    """Knowledge graph update model."""
+    type: Literal["graph_update"]
+    data: Dict[str, Any] = Field(..., description="Graph changes and metadata")
+    nodes: Optional[list] = None
+    edges: Optional[list] = None
+    domain: DomainType = Field(default=DomainType.MEMORY)  # Override with default
+
+class MemoryUpdate(BaseMessage):
+    """Memory system update model."""
+    type: Literal["memory_update"]
+    data: Dict[str, Any] = Field(..., description="Memory data including id, content, metadata")
+    memory_type: str = Field(..., description="Type of memory update (e.g. memory_stored, memory_retrieved)")
+    layer: str = Field(..., description="Memory layer (episodic/semantic)")
+    domain: DomainType = Field(default=DomainType.MEMORY)  # Override with default
+
+class LLMStreamData(BaseModel):
+    """LLM stream data model."""
+    stream_id: str = Field(..., description="Unique identifier for this stream")
+    chunk: str = Field(..., description="Text chunk from LLM")
+    is_final: bool = Field(default=False, description="Indicates if this is the final chunk")
+    template_id: str = Field(..., description="ID of template used for generation")
+
+    @validator('chunk')
+    def validate_chunk(cls, v):
+        if not v:
+            raise ValueError("Chunk cannot be empty")
+        return v
+
+class LLMStream(BaseMessage):
+    """LLM stream message model."""
+    type: Literal["llm_stream"]
+    data: LLMStreamData = Field(..., description="LLM stream data")
+    domain: DomainType = Field(default=DomainType.COGNITIVE)  # Override with default
+
+# Channel access configuration
+CHANNEL_ACCESS = {
+    "NovaTeam": {
+        "type": ChannelType.CORE,
+        "allowed_roles": {ClientRole.ADMIN, ClientRole.AGENT},
+        "allowed_domains": {DomainType.COGNITIVE, DomainType.TASK}
+    },
+    "NovaSupport": {
+        "type": ChannelType.SUPPORT,
+        "allowed_roles": {ClientRole.ADMIN, ClientRole.SUPPORT},
+        "allowed_domains": {DomainType.SYSTEM, DomainType.MEMORY}
+    }
+}
+
+# Client role cache (in practice, this would be backed by a database)
+CLIENT_ROLES: Dict[str, Set[ClientRole]] = {}
+
+def validate_message(message_type: str, data: Dict[str, Any]) -> Dict[str, Any]:
+    """Validate WebSocket message based on type."""
+    validators = {
+        "chat_message": ChatMessage,
+        "task_update": TaskUpdate,
+        "agent_status": AgentStatus,
+        "graph_update": GraphUpdate,
+        "llm_stream": LLMStream,
+        "memory_update": MemoryUpdate
+    }
+    
+    if message_type not in validators:
+        raise ValueError(f"Unknown message type: {message_type}")
+        
+    validator = validators[message_type]
+    validated = validator(**data)
+    return validated.dict()
+
+def validate_channel_access(client_id: str, channel: str) -> bool:
+    """Validate client's access to a channel."""
+    if channel not in CHANNEL_ACCESS:
+        return False
+        
+    # Get client roles (in practice, fetch from database)
+    client_roles = CLIENT_ROLES.get(client_id, {ClientRole.USER})
+    
+    # Check if client has any allowed roles for channel
+    channel_roles = CHANNEL_ACCESS[channel]["allowed_roles"]
+    return bool(client_roles & channel_roles)
+
+def validate_domain_boundaries(message: Dict[str, Any]) -> bool:
+    """Validate message against domain boundaries."""
+    # Skip validation if no channel specified
+    if not message.get("channel"):
+        return True
+        
+    channel = message["channel"]
+    if channel not in CHANNEL_ACCESS:
+        return False
+        
+    # Skip validation if no domain specified
+    if not message.get("domain"):
+        return True
+        
     try:
-        logger.debug(f"Validating message data: {data}")
-            
-        # Basic schema validation
-        message = Message(**data)
+        domain = DomainType(message["domain"])
+    except ValueError:
+        return False
         
-        # Additional validation rules
-        validation_issues = []
-        
-        # Content validation
-        if len(message.content) < 1:
-            issue = {
-                "type": "content_validation",
-                "severity": "high",
-                "description": "Message content cannot be empty"
-            }
-            validation_issues.append(issue)
-            validation_tracker.add_issue(issue)
-            
-        if len(message.content) > 10000:
-            issue = {
-                "type": "content_validation",
-                "severity": "medium", 
-                "description": "Message content exceeds maximum length"
-            }
-            validation_issues.append(issue)
-            validation_tracker.add_issue(issue)
-            
-        # Thread validation
-        if not message.thread_id.strip():
-            issue = {
-                "type": "thread_validation",
-                "severity": "high",
-                "description": "Thread ID cannot be empty"
-            }
-            validation_issues.append(issue)
-            validation_tracker.add_issue(issue)
-            
-        # Sender validation
-        if not message.sender_id.strip():
-            issue = {
-                "type": "sender_validation",
-                "severity": "high",
-                "description": "Sender ID cannot be empty"
-            }
-            validation_issues.append(issue)
-            validation_tracker.add_issue(issue)
-            
-        # Create validation result
-        validation_result = ValidationResult(
-            is_valid=len(validation_issues) == 0,
-            issues=validation_issues,
-            patterns=validation_tracker.get_patterns(),
-            metadata={
-                "message_type": message.sender_type,
-                "timestamp": datetime.now().isoformat()
-            }
-        )
-        
-        # Add validation result to message
-        message.validation = validation_result.dict()
-        
-        logger.debug(f"Validation result: {validation_result.dict()}")
-            
-        # Log critical patterns
-        critical_patterns = validation_tracker.get_critical_patterns()
-        if critical_patterns:
-            logger.warning(f"Critical validation patterns detected: {critical_patterns}")
-                
-        # Always raise on validation issues
-        if validation_issues:
-            raise ValidationError(f"Validation failed: {validation_issues}")
-            
-        return message
-        
-    except Exception as e:
-        logger.error(f"Validation failed: {str(e)}")
-        raise
+    # Check if domain is allowed in channel
+    allowed_domains = CHANNEL_ACCESS[channel]["allowed_domains"]
+    return domain in allowed_domains
 
-async def validate_thread_access(
-    thread_id: str,
-    user_id: str
-) -> ValidationResult:
-    """Validate thread access with debug logging and pattern tracking."""
-    try:
-        logger.debug(f"Validating thread access - thread: {thread_id}, user: {user_id}")
-            
-        validation_issues = []
-        
-        # Thread ID validation
-        if not thread_id.strip():
-            issue = {
-                "type": "thread_access",
-                "severity": "high",
-                "description": "Thread ID cannot be empty"
-            }
-            validation_issues.append(issue)
-            validation_tracker.add_issue(issue)
-            
-        # User ID validation
-        if not user_id.strip():
-            issue = {
-                "type": "thread_access",
-                "severity": "high",
-                "description": "User ID cannot be empty"
-            }
-            validation_issues.append(issue)
-            validation_tracker.add_issue(issue)
-            
-        # TODO: Implement actual access validation
-        # For now, create validation result
-        validation_result = ValidationResult(
-            is_valid=len(validation_issues) == 0,
-            issues=validation_issues,
-            patterns=validation_tracker.get_patterns(),
-            metadata={
-                "thread_id": thread_id,
-                "user_id": user_id,
-                "timestamp": datetime.now().isoformat()
-            }
-        )
-        
-        logger.debug(f"Thread access validation result: {validation_result.dict()}")
-            
-        # Log critical patterns
-        critical_patterns = validation_tracker.get_critical_patterns()
-        if critical_patterns:
-            logger.warning(f"Critical validation patterns detected: {critical_patterns}")
-                
-        return validation_result
-        
-    except Exception as e:
-        logger.error(f"Thread access validation failed: {str(e)}")
-        raise
-            
-        return ValidationResult(
-            is_valid=False,
-            issues=[{
-                "type": "validation_error",
-                "severity": "high",
-                "description": str(e)
-            }],
-            metadata={
-                "error": str(e),
-                "thread_id": thread_id,
-                "user_id": user_id
-            }
-        )
+def register_client_role(client_id: str, role: ClientRole):
+    """Register a client's role."""
+    if client_id not in CLIENT_ROLES:
+        CLIENT_ROLES[client_id] = set()
+    CLIENT_ROLES[client_id].add(role)
 
-async def validate_schema(
-    data: Dict[str, Any],
-    schema_type: str
-) -> ValidationResult:
-    """Validate data against a schema with debug logging and pattern tracking."""
-    try:
-        logger.debug(f"Validating schema - type: {schema_type}, data: {data}")
-            
-        validation_issues = []
-        
-        # TODO: Implement schema validation
-        # For now, create validation result
-        validation_result = ValidationResult(
-            is_valid=len(validation_issues) == 0,
-            issues=validation_issues,
-            patterns=validation_tracker.get_patterns(),
-            metadata={
-                "schema_type": schema_type,
-                "timestamp": datetime.now().isoformat()
-            }
-        )
-        
-        logger.debug(f"Schema validation result: {validation_result.dict()}")
-            
-        # Log critical patterns
-        critical_patterns = validation_tracker.get_critical_patterns()
-        if critical_patterns:
-            logger.warning(f"Critical validation patterns detected: {critical_patterns}")
-                
-        return validation_result
-        
-    except Exception as e:
-        logger.error(f"Schema validation failed: {str(e)}")
-        raise
-            
-        return ValidationResult(
-            is_valid=False,
-            issues=[{
-                "type": "validation_error",
-                "severity": "high",
-                "description": str(e)
-            }],
-            metadata={
-                "error": str(e),
-                "schema_type": schema_type
-            }
-        )
+def remove_client_role(client_id: str, role: ClientRole):
+    """Remove a client's role."""
+    if client_id in CLIENT_ROLES:
+        CLIENT_ROLES[client_id].discard(role)
+        if not CLIENT_ROLES[client_id]:
+            del CLIENT_ROLES[client_id]
+
+def get_client_roles(client_id: str) -> Set[ClientRole]:
+    """Get all roles for a client."""
+    return CLIENT_ROLES.get(client_id, {ClientRole.USER})

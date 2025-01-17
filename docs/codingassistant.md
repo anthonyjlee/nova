@@ -204,3 +204,65 @@ To feature TDD heavily in Nova’s coding assistant:
 	•	If code or test loops become unmanageable, Nova simply asks the user for guidance.
 
 This approach keeps the assistant autonomous yet safe, aligned with best dev practices for TDD, version control, and controlled task sizing—even with potential context truncation challenges.
+
+Below is a refined debugging plan geared toward Nova’s multi-agent system and two-layer memory architecture. We keep the essence of the original approach—isolating issues, introducing changes incrementally, etc.—but adapt it to fit Nova’s environment (e.g., domain separation, ephemeral/semantic memory, concurrency concerns).
+
+1. Acknowledge Interdependencies in a Multi-Agent System
+
+Why: Nova’s server logic depends on the correct functioning of multiple agents (e.g., memory_agent, vector store integrations, domain checks, etc.). A small update in how, say, the vector store is accessed can manifest as domain or authentication errors in an apparently unrelated API.
+
+Nova-Specific Twist:
+	1.	Check Cross-Domain Boundaries: If you see odd errors, confirm that cross-domain memory requests or domain-labeled data hasn’t shifted.
+	2.	Review Agent Lifecycle: Each specialized agent has an initialization step that may fail if it references outdated memory store configs.
+
+2. Isolate the Problem by Stripping Out Dependencies
+
+Why: Single components might work alone yet fail together.
+
+Nova-Specific Twist:
+	1.	Mock or Bypass Agents: For instance, disable the memory_agent or use a no-op vector store. If the error disappears, you know the problem was inside real memory usage.
+	2.	Minimal Agent Setup: Start a bare-bones Nova environment with the MetaAgent only, ignoring specialized agents. Verify the server can run a hello-world endpoint.
+
+3. Verify Basic Functionality
+
+Why: Ensures the baseline is stable.
+
+Nova-Specific Twist:
+	1.	Run a Minimal Chat: Just a thread endpoint with no tasks or complex domain rules.
+	2.	Check Logging: Ensure the logging level is at DEBUG/INFO, and confirm it’s capturing agent statuses (e.g., “Agent reflection_agent initialized”).
+
+4. Add Complexity Gradually
+
+Why: Avoid reintroducing multiple changes simultaneously.
+
+Nova-Specific Twist:
+	1.	Enable One Agent at a Time: E.g., first bring back memory_agent, then task_agent, etc.
+	2.	Run Automatic Tests at each step. If an error reappears after re-enabling the next agent, you can more easily pinpoint which agent introduced it.
+
+5. Examine Key Integration Points
+
+Why: Data structures or function signatures may have changed.
+
+Nova-Specific Twist:
+	1.	Check Domain Labeling: If the vector store changed how it tags memory, confirm the memory system is reading them correctly.
+	2.	Cross-Domain Approvals: Make sure each newly introduced domain crossing still matches the updated domain config.
+	3.	APIs & Agent Creation: Confirm that the code spawns agents with the correct updated arguments (e.g., domain, knowledge_vertical, etc.).
+
+6. Leverage Debugging Tools
+
+Why: Step-by-step inspection is vital, especially for asynchronous or multi-agent flows.
+
+Nova-Specific Twist:
+	1.	Use Debug Logs in Each Agent: Log “entering parse_text() with domain=retail” or “writing to Qdrant with config X.”
+	2.	Check Execution Flow: Use a debugger or strategic print statements in major agent methods (meta_agent.process_interaction, memory_agent.store_experience, etc.).
+	3.	Validate Fixtures: If your updated mock data no longer matches the agent’s expected config or memory schema, you’ll see subtle fails.
+
+7. Reconfirm Fixtures & Mocks
+
+Why: They can easily become outdated.
+
+Nova-Specific Twist:
+	1.	Align Mocks with the Latest Agent Requirements: If reflection_agent expects a memory object with domain=“professional”, make sure your mocks provide that.
+	2.	Ensure Domain/Vertical Fields appear in mock tasks or memory items.
+
+By weaving these debugging strategies into Nova’s environment—paying attention to domain checks, multi-agent initialization, and ephemeral/semantic memory interplay—you can systematically track down integration issues, confirm each piece’s basic functionality, and iteratively reintroduce complexity until everything works consistently again.

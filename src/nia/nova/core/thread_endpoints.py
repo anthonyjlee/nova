@@ -80,9 +80,9 @@ async def propose_task(
         )
         
         return {
-            "task_id": task_result.task_id,
+            "task_id": task_id,
             "status": "pending_approval",
-            "type": request["type"],
+            "type": request.get("type"),
             "content": request["content"],
             "timestamp": datetime.now().isoformat()
         }
@@ -109,14 +109,17 @@ async def approve_task(
             metadata={"domain": domain} if domain else None
         )
         
-        if task_result.status != "pending_approval":
+        if not task_result or not isinstance(task_result, dict):
+            raise ResourceNotFoundError(f"Task {task_id} not found")
+            
+        if task_result.get("status") != "pending_approval":
             raise ValidationError(f"Task {task_id} is not pending approval")
         
         # Update task status
         updated_task = await orchestration_agent.update_task(
             task_id=task_id,
             task_data={
-                **task_result.dict(),
+                **task_result,
                 "status": "approved",
                 "approved_at": datetime.now().isoformat()
             },
@@ -132,7 +135,7 @@ async def approve_task(
             domain=domain,
             metadata={
                 "domain": domain,
-                "task_type": updated_task.type,
+                "task_type": updated_task.get("type"),
                 "parent_thread_id": None
             } if domain else None
         )
@@ -148,6 +151,26 @@ async def approve_task(
             raise
         raise ServiceError(str(e))
 
+@thread_router.get("")
+@retry_on_error(max_retries=3)
+async def list_threads(
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("read")),
+    coordination_agent: CoordinationAgent = Depends(get_coordination_agent)
+) -> Dict:
+    """List all threads."""
+    try:
+        threads = await coordination_agent.list_threads(domain)
+        return {
+            "threads": threads,
+            "total": len(threads),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
 @thread_router.get("/{thread_id}")
 @retry_on_error(max_retries=3)
 async def get_thread_messages(
@@ -155,7 +178,8 @@ async def get_thread_messages(
     start: Optional[int] = 0,
     limit: Optional[int] = 100,
     domain: Optional[str] = None,
-    _: None = Depends(get_permission("read")),
+    _: None = Depends(check_rate_limit()),
+    __: None = Depends(get_permission("read")),
     coordination_agent: CoordinationAgent = Depends(get_coordination_agent)
 ) -> Dict:
     """Get messages from a thread with pagination."""
@@ -167,10 +191,16 @@ async def get_thread_messages(
             metadata={"domain": domain} if domain else None
         )
         
+        if not thread_result or not isinstance(thread_result, dict):
+            raise ResourceNotFoundError(f"Thread {thread_id} not found")
+            
+        task_id = thread_result.get("task_id")
+        message_count = thread_result.get("message_count", 0)
+        
         messages = await coordination_agent.get_messages(
             thread_id=thread_id,
-            start=start,
-            limit=limit,
+            start=start or 0,  # Handle None case
+            limit=limit or 100,  # Handle None case
             domain=domain,
             metadata={"domain": domain} if domain else None
         )
@@ -191,11 +221,11 @@ async def get_thread_messages(
         
         return {
             "thread_id": thread_id,
-            "task_id": thread_result.task_id,
+            "task_id": task_id,
             "messages": messages,
             "sub_threads": sub_threads,
             "summary": summary,
-            "total_messages": thread_result.message_count,
+            "total_messages": message_count,
             "timestamp": datetime.now().isoformat()
         }
     except Exception as e:
@@ -258,17 +288,38 @@ async def get_project_graph(
 ) -> Dict:
     """Get graph visualization data for a project."""
     try:
-        # Get project nodes and relationships
-        nodes = await memory_system.semantic.search(
-            query=f"project_id:{project_id}",
-            domain=domain
-        )
+        if not memory_system or not memory_system.semantic or not memory_system.semantic.store:
+            raise ServiceError("Memory system not available")
+            
+        # Get project nodes
+        nodes_result = await memory_system.semantic.run_query(
+            """
+            MATCH (n)
+            WHERE n.project_id = $project_id
+            RETURN n
+            """,
+            {"project_id": project_id}
+        ) or []
         
-        # Get relationships
-        relationships = await memory_system.semantic.get_relationships(
-            node_ids=[node["id"] for node in nodes],
-            domain=domain
-        )
+        nodes = [record["n"] for record in nodes_result]
+        
+        # Get relationships if nodes exist
+        relationships = []
+        if nodes:
+            rel_result = await memory_system.semantic.run_query(
+                """
+                MATCH (n)-[r]-(m)
+                WHERE n.project_id = $project_id
+                RETURN type(r) as type, startNode(r) as source, endNode(r) as target
+                """,
+                {"project_id": project_id}
+            ) or []
+            
+            relationships = [{
+                "type": record["type"],
+                "source": record["source"]["id"],
+                "target": record["target"]["id"]
+            } for record in rel_result]
         
         return {
             "project_id": project_id,

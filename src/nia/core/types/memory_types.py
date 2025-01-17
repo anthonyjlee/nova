@@ -206,6 +206,7 @@ class MemoryType(str, Enum):
     PROCEDURAL = "procedural"
     EMOTIONAL = "emotional"
     TASK_UPDATE = "task_update"  # For task state changes and updates
+    CROSS_DOMAIN_REQUEST = "cross_domain_request"  # For cross-domain access requests
 
 class TaskValidation(BaseModel):
     """Validation schema for task-related data."""
@@ -445,7 +446,6 @@ class Memory(BaseModel):
 class EpisodicMemory(Memory):
     """Episodic memory model."""
     type: Union[MemoryType, str] = Field(default=MemoryType.EPISODIC, description="Memory type, can be overridden")
-    location: Optional[str] = None
     participants: List[str] = Field(default_factory=list, max_items=10)  # Limit participants
     emotions: Dict[str, float] = Field(default_factory=dict)
     related_memories: List[str] = Field(default_factory=list, max_items=10)  # Limit related
@@ -465,7 +465,6 @@ class EpisodicMemory(Memory):
             }
             minimal_data = {
                 **base,
-                "location": self.location,
                 "participants": self.participants[:5] if self.participants else [],
                 "related_memories": self.related_memories[:5] if self.related_memories else [],
                 "metadata": getattr(self, "metadata", {})  # Preserve metadata

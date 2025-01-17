@@ -3,7 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from nia.nova.core.app import app
 from nia.nova.core.auth import API_KEYS
@@ -48,7 +48,7 @@ async def test_memory_api_store(memory_system, llm_interface, world):
             type=MemoryType.SEMANTIC,
             importance=0.8,
             context={"domain": "test"},
-            timestamp=datetime.now().isoformat()
+            timestamp=datetime.now(timezone.utc)
         )
         
         # Initialize memory system
@@ -67,7 +67,7 @@ async def test_memory_api_store(memory_system, llm_interface, world):
         # Verify storage
         stored_data = await memory_sys.query_episodic({
             "text": "Test memory content",
-            "type": memory.type.value
+            "type": MemoryType.SEMANTIC.value
         })
         assert len(stored_data) > 0
         
@@ -122,7 +122,7 @@ async def test_memory_api_query(memory_system, llm_interface, world):
             type=MemoryType.SEMANTIC,
             importance=0.8,
             context={"domain": "test"},
-            timestamp=datetime.now().isoformat()
+            timestamp=datetime.now(timezone.utc)
         )
         # Initialize memory system
         await memory_sys.initialize()
@@ -177,14 +177,14 @@ async def test_memory_api_consolidation(memory_system, llm_interface, world):
                 type=MemoryType.SEMANTIC,
                 importance=0.8,
                 context={"domain": "test"},
-                timestamp=datetime.now().isoformat()
+                timestamp=datetime.now(timezone.utc)
             ),
             Memory(
                 content={"text": "Second related memory"},
                 type=MemoryType.SEMANTIC,
                 importance=0.8,
                 context={"domain": "test"},
-                timestamp=datetime.now().isoformat()
+                timestamp=datetime.now(timezone.utc)
             )
         ]
         

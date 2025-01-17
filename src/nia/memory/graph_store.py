@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 import uuid
 
 from ..core.neo4j.base_store import Neo4jBaseStore
-from ..nova.core.websocket import manager
+from ..nova.core.websocket import websocket_manager
 
 logger = logging.getLogger(__name__)
 
@@ -374,8 +374,8 @@ class GraphStore(Neo4jBaseStore):
                 }
             
             # Broadcast graph update to all connected clients
-            for client_id in manager.active_connections:
-                await manager.send_json(client_id, {
+            for client_id in websocket_manager.active_connections:
+                await websocket_manager.broadcast_to_client(client_id, {
                     "type": "graph_update",
                     "data": graph_data,
                     "timestamp": datetime.now().isoformat()

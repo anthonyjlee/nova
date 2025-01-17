@@ -8,7 +8,7 @@ Messages aren't validating correctly between frontend and backend. We need to:
 
 ## Implementation
 
-### 1. Redis Feature Flags
+### 1. Redis Feature Flags (no longer implementing)
 ```python
 # src/nia/core/feature_flags.py
 class FeatureFlags:

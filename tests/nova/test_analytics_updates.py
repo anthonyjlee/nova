@@ -2,9 +2,11 @@
 
 import pytest
 from fastapi.testclient import TestClient
+from fastapi.websockets import WebSocket
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 import asyncio
+from typing import Optional, Dict, Any
 
 from nia.nova.core.app import app
 from nia.nova.core.auth import API_KEYS
@@ -15,6 +17,25 @@ from nia.nova.core.endpoints import (
     get_world
 )
 from nia.core.types.memory_types import Memory, MemoryType
+
+class WebSocketTestSession:
+    """Async-compatible WebSocket test session."""
+    def __init__(self, websocket):
+        self.websocket = websocket
+        
+    async def __aenter__(self):
+        return self
+        
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        pass
+        
+    async def send_json(self, data: Dict[str, Any]):
+        """Send JSON data through the WebSocket."""
+        self.websocket.send_json(data)
+        
+    async def receive_json(self) -> Optional[Dict[str, Any]]:
+        """Receive JSON data from the WebSocket."""
+        return self.websocket.receive_json()
 
 logger = logging.getLogger(__name__)
 
@@ -43,10 +64,11 @@ async def test_analytics_basic_update(memory_system, mock_analytics_agent, llm_i
         await memory_sys.initialize()
         
         # Connect WebSocket
-        with client.websocket_connect(
+        websocket = client.websocket_connect(
             "ws://testserver/api/analytics/ws",
             headers={"X-API-Key": TEST_API_KEY}
-        ) as websocket:
+        )
+        async with WebSocketTestSession(websocket) as session:
             # Send analytics request
             request_data = {
                 "type": "analytics_request",
@@ -57,11 +79,11 @@ async def test_analytics_basic_update(memory_system, mock_analytics_agent, llm_i
                     "embedding_model": "test-embedding-model"
                 }
             }
-            await websocket.send_json(request_data)
+            await session.send_json(request_data)
             
             # Wait for update with timeout
             try:
-                response = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
+                response = await asyncio.wait_for(session.receive_json(), timeout=5.0)
                 assert response is not None
                 assert response["type"] == "analytics_update"
                 assert "analytics" in response
@@ -94,10 +116,11 @@ async def test_analytics_update_sequence(memory_system, mock_analytics_agent, ll
         # Initialize systems
         await memory_sys.initialize()
         
-        with client.websocket_connect(
+        websocket = client.websocket_connect(
             "ws://testserver/api/analytics/ws",
             headers={"X-API-Key": TEST_API_KEY}
-        ) as websocket:
+        )
+        async with WebSocketTestSession(websocket) as session:
             # Send request that triggers multiple updates
             request_data = {
                 "type": "analytics_request",
@@ -109,7 +132,7 @@ async def test_analytics_update_sequence(memory_system, mock_analytics_agent, ll
                     "embedding_model": "test-embedding-model"
                 }
             }
-            await websocket.send_json(request_data)
+            await session.send_json(request_data)
             
             # Track updates
             updates_received = 0
@@ -118,7 +141,7 @@ async def test_analytics_update_sequence(memory_system, mock_analytics_agent, ll
             
             while (datetime.now() - start_time).total_seconds() < timeout:
                 try:
-                    response = await asyncio.wait_for(websocket.receive_json(), timeout=1.0)
+                    response = await asyncio.wait_for(session.receive_json(), timeout=1.0)
                     if response["type"] == "analytics_update":
                         updates_received += 1
                         # Verify update structure
@@ -163,7 +186,7 @@ async def test_analytics_update_memory(memory_system, mock_analytics_agent, llm_
             type=MemoryType.SEMANTIC,
             importance=0.8,
             context={"domain": "test"},
-            timestamp=datetime.now().isoformat()
+            timestamp=datetime.now(timezone.utc)
         )
         
         memory_id = await memory_sys.store(
@@ -174,10 +197,11 @@ async def test_analytics_update_memory(memory_system, mock_analytics_agent, llm_
         )
         assert memory_id is not None
         
-        with client.websocket_connect(
+        websocket = client.websocket_connect(
             "ws://testserver/api/analytics/ws",
             headers={"X-API-Key": TEST_API_KEY}
-        ) as websocket:
+        )
+        async with WebSocketTestSession(websocket) as session:
             # Request analytics for stored memory
             request_data = {
                 "type": "analytics_request",
@@ -188,11 +212,11 @@ async def test_analytics_update_memory(memory_system, mock_analytics_agent, llm_
                     "embedding_model": "test-embedding-model"
                 }
             }
-            await websocket.send_json(request_data)
+            await session.send_json(request_data)
             
             # Wait for update
             try:
-                response = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
+                response = await asyncio.wait_for(session.receive_json(), timeout=5.0)
                 assert response is not None
                 assert response["type"] == "analytics_update"
                 assert "analytics" in response
@@ -225,10 +249,11 @@ async def test_analytics_update_error_handling(memory_system, mock_analytics_age
         # Initialize systems
         await memory_sys.initialize()
         
-        with client.websocket_connect(
+        websocket = client.websocket_connect(
             "ws://testserver/api/analytics/ws",
             headers={"X-API-Key": TEST_API_KEY}
-        ) as websocket:
+        )
+        async with WebSocketTestSession(websocket) as session:
             # Test invalid memory ID
             request_data = {
                 "type": "analytics_request",
@@ -239,11 +264,11 @@ async def test_analytics_update_error_handling(memory_system, mock_analytics_age
                     "embedding_model": "test-embedding-model"
                 }
             }
-            await websocket.send_json(request_data)
+            await session.send_json(request_data)
             
             # Should receive error response
             try:
-                response = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
+                response = await asyncio.wait_for(session.receive_json(), timeout=5.0)
                 assert response is not None
                 assert response["type"] == "error"
                 assert "error" in response
@@ -262,11 +287,11 @@ async def test_analytics_update_error_handling(memory_system, mock_analytics_age
                     "embedding_model": "test-embedding-model"
                 }
             }
-            await websocket.send_json(request_data)
+            await session.send_json(request_data)
             
             # Should receive error response
             try:
-                response = await asyncio.wait_for(websocket.receive_json(), timeout=5.0)
+                response = await asyncio.wait_for(session.receive_json(), timeout=5.0)
                 assert response is not None
                 assert response["type"] == "error"
                 assert "error" in response

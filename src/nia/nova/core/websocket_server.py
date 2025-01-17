@@ -1,7 +1,7 @@
 """WebSocket server for real-time updates."""
 
 from fastapi import WebSocket, WebSocketDisconnect
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime
 import json
 import asyncio
@@ -137,27 +137,42 @@ class ConnectionManager:
             logger.error(f"Error preparing broadcast message: {str(e)}")
             logger.error(traceback.format_exc())
 
+    async def handle_ping(self, websocket: WebSocket, client_id: str):
+        """Handle ping message from client."""
+        try:
+            # Send pong response
+            pong_message = {
+                "type": "pong",
+                "client_id": client_id,
+                "timestamp": datetime.now().isoformat()
+            }
+            await websocket.send_json(pong_message)
+            logger.debug(f"Sent pong message to client {client_id}")
+        except Exception as e:
+            logger.error(f"Error sending pong message to client {client_id}: {str(e)}")
+            logger.error(traceback.format_exc())
+
 class WebSocketServer:
     """WebSocket server for real-time updates."""
-    def __init__(self, memory_system_provider: Any):
+    def __init__(self, memory_system_provider: Callable[[], Any]):
         """Initialize a new WebSocket server instance.
         
         Args:
-            memory_system_provider: Memory system provider function or instance
+            memory_system_provider: Memory system provider function
         """
         self.manager = ConnectionManager()
         self.memory_system_provider = memory_system_provider
-        self.memory_system = None
         self._initialized = False
         self._init_lock = asyncio.Lock()
         self._init_task = None
+        self._memory_update_task = None
 
     @classmethod
-    async def create(cls, memory_system_provider: Any) -> 'WebSocketServer':
+    async def create(cls, memory_system_provider: Callable[[], Any]) -> 'WebSocketServer':
         """Create and initialize a new WebSocket server instance.
         
         Args:
-            memory_system_provider: Memory system provider function or instance
+            memory_system_provider: Memory system provider function
             
         Returns:
             Initialized WebSocketServer instance
@@ -183,8 +198,7 @@ class WebSocketServer:
                 # Get memory system
                 logger.info("Getting memory system from provider...")
                 try:
-                    self.memory_system = self.memory_system_provider
-                    memory_system = await self.memory_system()
+                    memory_system = await self.memory_system_provider()
                     logger.debug("Successfully got memory system")
                 except Exception as e:
                     logger.error(f"Failed to get memory system: {str(e)}")
@@ -232,6 +246,71 @@ class WebSocketServer:
             logger.error(traceback.format_exc())
             raise RuntimeError("Failed to ensure WebSocket server initialization") from e
 
+    async def broadcast_memory_updates(self):
+        """Start background task for broadcasting memory updates."""
+        try:
+            if self._memory_update_task is not None:
+                logger.warning("Memory update task already running")
+                return
+
+            async def memory_update_loop():
+                logger.info("Starting memory update loop")
+                try:
+                    while True:
+                        try:
+                            # Get memory updates from both vector and graph stores
+                            memory_system = await self.memory_system_provider()
+                            vector_updates = await memory_system.vector_store.get_updates()
+                            graph_updates = await memory_system.graph_store.get_updates()
+
+                            # Broadcast vector store updates
+                            if vector_updates:
+                                await self.manager.broadcast(
+                                    {
+                                        "type": "memory_update",
+                                        "data": {
+                                            "store": "vector",
+                                            "updates": vector_updates
+                                        }
+                                    },
+                                    "graph"
+                                )
+
+                            # Broadcast graph store updates
+                            if graph_updates:
+                                await self.manager.broadcast(
+                                    {
+                                        "type": "memory_update",
+                                        "data": {
+                                            "store": "graph",
+                                            "updates": graph_updates
+                                        }
+                                    },
+                                    "graph"
+                                )
+
+                            # Wait before next update check
+                            await asyncio.sleep(1.0)  # 1 second interval
+
+                        except Exception as e:
+                            logger.error(f"Error in memory update loop: {str(e)}")
+                            logger.error(traceback.format_exc())
+                            await asyncio.sleep(5.0)  # Wait longer on error
+
+                except asyncio.CancelledError:
+                    logger.info("Memory update loop cancelled")
+                except Exception as e:
+                    logger.error(f"Memory update loop terminated with error: {str(e)}")
+                    logger.error(traceback.format_exc())
+
+            self._memory_update_task = asyncio.create_task(memory_update_loop())
+            logger.info("Memory update task started")
+
+        except Exception as e:
+            logger.error(f"Error starting memory updates: {str(e)}")
+            logger.error(traceback.format_exc())
+            raise
+
     async def handle_chat_connection(self, websocket: WebSocket, client_id: str):
         """Handle chat/channel WebSocket connections."""
         await self.ensure_initialized()
@@ -243,11 +322,7 @@ class WebSocketServer:
                 
                 try:
                     if data.get("type") == "ping":
-                        pong_message = {
-                            "type": "pong",
-                            "timestamp": data.get("timestamp")
-                        }
-                        await websocket.send_json(pong_message)
+                        await self.manager.handle_ping(websocket, client_id)
                     else:
                         # Store message using Celery task
                         store_chat_message.delay(data)
@@ -280,14 +355,17 @@ class WebSocketServer:
                 logger.debug(f"Received task update from {client_id}: {data}")
                 
                 try:
-                    # Store task update using Celery task
-                    store_task_update.delay(data)
-                    
-                    # Broadcast to other clients
-                    await self.manager.broadcast(
-                        {"type": "task_update", "data": data},
-                        "tasks"
-                    )
+                    if data.get("type") == "ping":
+                        await self.manager.handle_ping(websocket, client_id)
+                    else:
+                        # Store task update using Celery task
+                        store_task_update.delay(data)
+                        
+                        # Broadcast to other clients
+                        await self.manager.broadcast(
+                            {"type": "task_update", "data": data},
+                            "tasks"
+                        )
                 except Exception as e:
                     logger.error(f"Error processing task update: {str(e)}")
                     logger.error(traceback.format_exc())
@@ -311,13 +389,31 @@ class WebSocketServer:
             agent_store = await get_agent_store()
             agents = await agent_store.get_all_agents()
             
-            # Send initial agent list
-            agent_list_message = {
-                "type": "agent_list",
-                "data": agents,
-                "timestamp": datetime.now().isoformat()
+            # Format agents according to schema
+            formatted_agents = []
+            for agent in agents:
+                formatted_agent = {
+                    "id": agent["id"],
+                    "name": agent["name"],
+                    "type": agent.get("type", "agent"),
+                    "status": agent.get("status", "active"),
+                    "domain": agent.get("domain", "general"),
+                    "workspace": agent.get("workspace", "personal"),
+                }
+                if agent.get("metadata"):
+                    formatted_agent["metadata"] = agent["metadata"]
+                formatted_agents.append(formatted_agent)
+            
+            # Send initial agent team message
+            agent_team_message = {
+                "type": "agent_team_created",
+                "client_id": client_id,
+                "timestamp": datetime.now().isoformat(),
+                "data": {
+                    "agents": formatted_agents
+                }
             }
-            await websocket.send_json(agent_list_message)
+            await websocket.send_json(agent_team_message)
             
             # Handle incoming messages
             while True:
@@ -325,14 +421,17 @@ class WebSocketServer:
                 logger.debug(f"Received agent status from {client_id}: {data}")
                 
                 try:
-                    # Store agent status using Celery task
-                    store_agent_status.delay(data)
-                    
-                    # Broadcast to other clients
-                    await self.manager.broadcast(
-                        {"type": "agent_status", "data": data},
-                        "agents"
-                    )
+                    if data.get("type") == "ping":
+                        await self.manager.handle_ping(websocket, client_id)
+                    else:
+                        # Store agent status using Celery task
+                        store_agent_status.delay(data)
+                        
+                        # Broadcast to other clients
+                        await self.manager.broadcast(
+                            {"type": "agent_status", "data": data},
+                            "agents"
+                        )
                 except Exception as e:
                     logger.error(f"Error processing agent status: {str(e)}")
                     logger.error(traceback.format_exc())
@@ -367,14 +466,17 @@ class WebSocketServer:
                 logger.debug(f"Received graph update from {client_id}: {data}")
                 
                 try:
-                    # Store graph update using Celery task
-                    store_graph_update.delay(data)
-                    
-                    # Broadcast to other clients
-                    await self.manager.broadcast(
-                        {"type": "graph_update", "data": data},
-                        "graph"
-                    )
+                    if data.get("type") == "ping":
+                        await self.manager.handle_ping(websocket, client_id)
+                    else:
+                        # Store graph update using Celery task
+                        store_graph_update.delay(data)
+                        
+                        # Broadcast to other clients
+                        await self.manager.broadcast(
+                            {"type": "graph_update", "data": data},
+                            "graph"
+                        )
                 except Exception as e:
                     logger.error(f"Error processing graph update: {str(e)}")
                     logger.error(traceback.format_exc())

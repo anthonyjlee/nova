@@ -13,7 +13,7 @@ from nia.core.types.memory_types import AgentResponse, Memory, MemoryType
 from nia.nova.core.analytics import AnalyticsResult
 from nia.memory.two_layer import TwoLayerMemorySystem
 from nia.nova.core.llm import LMStudioLLM
-from .websocket import manager
+from .websocket import websocket_manager
 
 from .dependencies import (
     get_memory_system,
@@ -38,6 +38,7 @@ from .auth import (
     check_domain_access,
     get_permission,
     get_api_key,
+    get_api_key_dependency,
     get_ws_api_key,
     ws_auth,
     API_KEYS
@@ -84,9 +85,10 @@ from .models import (
     ThreadRequest,
     ThreadResponse,
     MessageRequest,
-    Message,  # Added Message model
+    Message,
     MessageResponse,
-    ThreadListResponse
+    ThreadListResponse,
+    ThreadValidation
 )
 
 logger = logging.getLogger(__name__)
@@ -96,7 +98,7 @@ logger.setLevel(logging.DEBUG)  # Set to DEBUG to see metadata processing logs
 root_router = APIRouter(
     prefix="/api",
     tags=["System"],
-    dependencies=[Depends(check_rate_limit)],
+    dependencies=[Depends(check_rate_limit())],
     responses={404: {"description": "Not found"}}
 )
 
@@ -113,7 +115,7 @@ async def get_status() -> Dict[str, str]:
 graph_router = APIRouter(
     prefix="/api/graph",
     tags=["Knowledge Graph"],
-    dependencies=[Depends(check_rate_limit)],
+    dependencies=[Depends(check_rate_limit())],
     responses={404: {"description": "Not found"}}
 )
 
@@ -141,7 +143,7 @@ async def get_graph_data(
 agent_router = APIRouter(
     prefix="/api/agents",
     tags=["Agent Management"],
-    dependencies=[Depends(check_rate_limit)],
+    dependencies=[Depends(check_rate_limit())],
     responses={404: {"description": "Not found"}}
 )
 
@@ -305,21 +307,21 @@ async def get_agent_graph(
 user_router = APIRouter(
     prefix="/api/users",
     tags=["User Management"],
-    dependencies=[Depends(check_rate_limit)],
+    dependencies=[Depends(check_rate_limit())],
     responses={404: {"description": "Not found"}}
 )
 
 analytics_router = APIRouter(
     prefix="/api/analytics",
     tags=["Analytics & Insights"],
-    dependencies=[Depends(check_rate_limit)],
+    dependencies=[Depends(check_rate_limit())],
     responses={404: {"description": "Not found"}}
 )
 
 orchestration_router = APIRouter(
     prefix="/api/orchestration",
     tags=["Task Orchestration"],
-    dependencies=[Depends(check_rate_limit)],
+    dependencies=[Depends(check_rate_limit())],
     responses={404: {"description": "Not found"}}
 )
 
@@ -330,7 +332,7 @@ from fastapi import Request
 chat_router = APIRouter(
     prefix="/api/chat",
     tags=["Chat & Threads"],
-    dependencies=[Depends(check_rate_limit)],
+    dependencies=[Depends(check_rate_limit()), Depends(get_api_key_dependency())],
     responses={404: {"description": "Not found"}}
 )
 
@@ -352,45 +354,50 @@ async def chat_options_handler(request: Request):
 async def list_threads(
     request: Request,
     thread_manager: Any = Depends(get_thread_manager)
-) -> JSONResponse:
+) -> ThreadListResponse:
     """List all chat threads with optional filtering."""
     try:
-        # API key validation is handled by dependencies
-        _: None = Depends(get_permission("read"))
-        
         raw_threads = await thread_manager.list_threads(None)
         
         # Convert thread data to match schema
         threads = []
         for thread in raw_threads:
-            # Convert created_at/updated_at to createdAt/updatedAt
-            thread_data = {
-                "id": thread["id"],
-                "name": thread.get("title", "Untitled"),  # title -> name
-                "domain": thread.get("domain"),
-                "messages": thread.get("messages", []),
-                "createdAt": thread.get("created_at"),  # created_at -> createdAt
-                "updatedAt": thread.get("updated_at"),  # updated_at -> updatedAt
-                "workspace": thread.get("workspace", "personal"),
-                "participants": thread.get("participants", []),
-                "metadata": thread.get("metadata", {})
-            }
+            # Ensure metadata has required fields
+            metadata = thread.get("metadata", {})
+            if not isinstance(metadata, dict):
+                metadata = {}
+            
+            # Set default metadata fields if missing
+            metadata.setdefault("type", "chat")
+            metadata.setdefault("system", False)
+            metadata.setdefault("pinned", False)
+            metadata.setdefault("description", "")
+            
+            # Create thread data matching ThreadResponse model
+            thread_data = ThreadResponse(
+                id=thread["id"],
+                title=thread.get("title", "Untitled"),
+                domain=thread.get("domain", "general"),
+                status=thread.get("status", "active"),
+                created_at=thread.get("created_at"),
+                updated_at=thread.get("updated_at"),
+                workspace=thread.get("workspace", "personal"),
+                participants=thread.get("participants", []),
+                metadata=metadata,
+                validation=ThreadValidation(
+                    domain=thread.get("domain", "general"),
+                    access_domain=thread.get("domain", "general"),
+                    confidence=1.0,
+                    source="system",
+                    timestamp=datetime.utcnow().isoformat()
+                )
+            )
             threads.append(thread_data)
             
-        response = ThreadListResponse(
-            threads=[ThreadResponse(**thread) for thread in threads],
+        return ThreadListResponse(
+            threads=threads,
             total=len(threads),
             timestamp=datetime.now().isoformat()
-        )
-        
-        return JSONResponse(
-            content=response.dict(),
-            headers={
-                "Access-Control-Allow-Origin": "http://localhost:5173",
-                "Access-Control-Allow-Methods": "*",
-                "Access-Control-Allow-Headers": "*",
-                "Access-Control-Allow-Credentials": "true",
-            }
         )
     except ServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -399,7 +406,7 @@ async def list_threads(
         raise HTTPException(status_code=500, detail="Internal server error")
 
 @chat_router.get("/agents", response_model=List[Dict[str, Any]])
-async def list_available_agents(
+async def list_thread_agents(
     _: None = Depends(get_permission("read")),
     agent_store: Any = Depends(get_agent_store)
 ) -> List[Dict[str, Any]]:
@@ -554,10 +561,9 @@ async def get_thread(
         logger.error(f"Unexpected error in get_thread: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
-@chat_router.post("/threads/create", response_model=ThreadResponse)
+@chat_router.post("/threads/create")
 async def create_thread(
     request: ThreadRequest,
-    _: None = Depends(get_permission("write")),
     thread_manager: Any = Depends(get_thread_manager)
 ) -> ThreadResponse:
     """Create a new chat thread with validation."""
@@ -591,16 +597,7 @@ async def create_thread(
             workspace=request.workspace or "personal"
         )
         
-        response = ThreadResponse(**thread)
-        return JSONResponse(
-            content=response.dict(),
-            headers={
-                "Access-Control-Allow-Origin": "http://localhost:5173",
-                "Access-Control-Allow-Methods": "*", 
-                "Access-Control-Allow-Headers": "*",
-                "Access-Control-Allow-Credentials": "true",
-            }
-        )
+        return ThreadResponse(**thread)
     except ServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
@@ -644,20 +641,10 @@ async def add_message(
         # Add message with verification
         thread = await thread_manager.add_message(thread_id, message.dict())
         
-        response = MessageResponse(
-            message=message,
-            thread_id=thread_id,
+        return MessageResponse(
+            id=message.id,
+            content=message.content,
             timestamp=datetime.now().isoformat()
-        )
-        
-        return JSONResponse(
-            content=response.dict(),
-            headers={
-                "Access-Control-Allow-Origin": "http://localhost:5173",
-                "Access-Control-Allow-Methods": "*",
-                "Access-Control-Allow-Headers": "*",
-                "Access-Control-Allow-Credentials": "true",
-            }
         )
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -732,7 +719,7 @@ async def analytics_websocket(
             return
         
         # Accept connection and add to manager
-        await manager.connect(websocket, client_id)
+        await websocket_manager.connect(websocket, client_id)
         
         try:
             while True:
@@ -741,7 +728,7 @@ async def analytics_websocket(
                 try:
                     # Handle different message types
                     if data.get("type") == "ping":
-                        await manager.send_json(client_id, {
+                        await websocket_manager.broadcast_to_client(client_id, {
                             "type": "pong",
                             "timestamp": datetime.now().isoformat()
                         })
@@ -753,7 +740,7 @@ async def analytics_websocket(
                         await handle_agent_coordination(client_id, data, analytics_agent, websocket)
                 except Exception as e:
                     logger.error(f"Error handling message: {e}")
-                    await manager.send_json(client_id, {
+                    await websocket_manager.broadcast_to_client(client_id, {
                         "type": "error",
                         "error": str(e),
                         "timestamp": datetime.now().isoformat()
@@ -763,7 +750,7 @@ async def analytics_websocket(
         except Exception as e:
             logger.error(f"WebSocket error: {e}")
         finally:
-            await manager.disconnect(client_id)
+            await websocket_manager.disconnect(websocket, client_id)
     except Exception as e:
         logger.error(f"WebSocket connection error: {e}")
         try:
@@ -817,7 +804,7 @@ async def handle_graph_subscribe(client_id: str, graph_store: Any):
         
         edges.append({"data": edge_data})
     
-    await manager.send_json(client_id, {
+    await websocket_manager.broadcast_to_client(client_id, {
         "type": "graph_update",
         "data": {
             "added": {
@@ -868,7 +855,7 @@ async def handle_agent_coordination(client_id: str, data: Dict, analytics_agent:
     
     if isinstance(result.analytics, dict):
         for agent, update in result.analytics.items():
-            await manager.send_json(client_id, {
+            await websocket_manager.broadcast_to_client(client_id, {
                 "type": "agent_update",
                 "agent": agent,
                 "update": update,

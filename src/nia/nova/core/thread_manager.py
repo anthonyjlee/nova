@@ -1,7 +1,7 @@
 """Thread management module for Nova's chat system."""
 
-from datetime import datetime
-from typing import Dict, Any, Optional, List
+from datetime import datetime, timezone
+from typing import Dict, Any, Optional, List, Literal
 from pathlib import Path
 import asyncio
 import uuid
@@ -9,6 +9,7 @@ import json
 import logging
 import traceback
 from logging.handlers import RotatingFileHandler
+from pydantic import BaseModel, Field
 
 from nia.core.types.memory_types import Memory, MemoryType, EpisodicMemory
 from nia.memory.two_layer import TwoLayerMemorySystem
@@ -17,67 +18,171 @@ from qdrant_client.http import models
 
 import os
 
-# Configure logging with consistent format
+# Pydantic models for validation
+class BaseMessage(BaseModel):
+    """Base message model for all WebSocket messages."""
+    type: str
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    client_id: str
+    channel: Optional[str] = None
+
+class ThreadParticipant(BaseModel):
+    """Model for thread participants (agents or users)."""
+    id: str
+    name: str
+    type: str
+    workspace: str = "personal"
+    domain: str = "general"
+    status: str = "active"
+    metadata_type: str
+    metadata_capabilities: List[str]
+    metadata_created_at: datetime
+
+class ThreadMetadata(BaseModel):
+    """Model for thread metadata."""
+    type: Literal["test", "system", "user", "agent", "chat", "task", "agent-team"]
+    system: bool = False
+    pinned: bool = False
+    description: str = ""
+
+class Thread(BaseModel):
+    """Model for thread data."""
+    id: str
+    name: str
+    domain: str = "general"
+    messages: List[Dict[str, Any]] = []
+    createdAt: datetime
+    updatedAt: datetime
+    workspace: str = "personal"
+    participants: List[ThreadParticipant] = []
+    metadata: ThreadMetadata
+
+class ThreadMessage(BaseMessage):
+    """Model for thread messages."""
+    type: Literal["thread_message"]
+    data: Dict[str, Any] = Field(
+        ...,
+        description="Message content and metadata"
+    )
+    thread_id: str
+    sender_id: str
+
+class ThreadUpdate(BaseMessage):
+    """Model for thread update notifications."""
+    type: Literal["thread_update"]
+    data: Thread
+    update_type: Literal["created", "updated", "deleted"]
+
+class AgentStatus(BaseMessage):
+    """Model for agent status updates."""
+    type: Literal["agent_status"]
+    data: Dict[str, Any] = Field(
+        ...,
+        description="Agent status information"
+    )
+    agent_id: str
+    status: str
+
+class ThreadValidation(BaseModel):
+    """Model for thread validation results."""
+    is_valid: bool
+    errors: List[str] = []
+    warnings: List[str] = []
+
+# Configure logging with file-only output and rotation
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-# Prevent propagation to root logger
-logger.propagate = False
+logger.setLevel(logging.INFO)  # Reduce logging level
+logger.propagate = False  # Prevent console output
 
 # Create logs directory if it doesn't exist
 LOGS_DIR = Path("logs/thread_manager")
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
-# Create session-specific log file
-session_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+# Create session-specific log file with smaller size and more backups
+session_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
 session_log = LOGS_DIR / f"session_{session_id}.json"
 
 class JsonFormatter(logging.Formatter):
-    """Format log records as JSON."""
+    """Format log records as JSON with minimal info."""
     def format(self, record):
         log_entry = {
-            "timestamp": datetime.fromtimestamp(record.created).isoformat(),
+            "timestamp": datetime.fromtimestamp(record.created, timezone.utc).isoformat(),
             "level": record.levelname,
-            "message": record.getMessage(),
-            "function": record.funcName,
-            "line": record.lineno,
-            "thread_id": record.thread,
-            "process_id": record.process
+            "message": record.getMessage()
         }
         
-        # Add exception info if present
-        if record.exc_info:
-            log_entry["exception"] = {
-                "type": record.exc_info[0].__name__,
-                "message": str(record.exc_info[1]),
-                "traceback": traceback.format_exception(*record.exc_info)
-            }
+        # Only add exception info for errors
+        if record.exc_info and record.levelno >= logging.ERROR:
+            log_entry["error"] = str(record.exc_info[1])
             
         return json.dumps(log_entry)
 
-# Configure logging with RotatingFileHandler
+# Configure logging with smaller file size and more backups
 handler = RotatingFileHandler(
     session_log,
-    maxBytes=10*1024*1024,  # 10MB
-    backupCount=5,
+    maxBytes=1*1024*1024,  # 1MB per file
+    backupCount=10,  # Keep more backup files
     encoding='utf-8'
 )
 handler.setFormatter(JsonFormatter())
 logger.addHandler(handler)
 
+# Add debug flags without Redis dependency
+DEBUG_FLAGS = {
+    'log_validation': False,
+    'log_websocket': False,
+    'log_storage': False,
+    'strict_mode': False
+}
+
 class ThreadManager:
     """Manages thread lifecycle and operations."""
     
-    def __init__(self, memory_system: TwoLayerMemorySystem):
-        self.memory_system = memory_system
-
     # System thread UUIDs
     NOVA_TEAM_UUID = "00000000-0000-4000-a000-000000000001"
     NOVA_UUID = "00000000-0000-4000-a000-000000000002"
+
+    def __init__(self, memory_system: TwoLayerMemorySystem):
+        if not memory_system:
+            raise ValueError("Memory system is required")
+        if not memory_system.episodic or not memory_system.semantic:
+            raise ValueError("Memory system must have both episodic and semantic layers")
+        self.memory_system = memory_system
+        self._initialized = False
+        
+    async def initialize(self) -> bool:
+        """Initialize the thread manager."""
+        logger.info("Initializing thread manager")
+        try:
+            # Verify memory system is ready
+            if not self.memory_system.episodic or not self.memory_system.semantic:
+                raise RuntimeError("Memory system layers not properly initialized")
+                
+            # Create system threads if they don't exist
+            await self.get_thread(self.NOVA_TEAM_UUID)
+            await self.get_thread(self.NOVA_UUID)
+            
+            self._initialized = True
+            logger.info("Thread manager initialization complete")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to initialize thread manager: {str(e)}")
+            self._initialized = False
+            raise
     
     async def get_thread(self, thread_id: str, max_retries: int = 3, retry_delay: float = 0.5) -> Dict[str, Any]:
         """Get a thread by ID, creating system threads if needed."""
         logger.debug(f"Getting thread {thread_id}")
         
+        if not self.memory_system:
+            raise ServiceError("Memory system not initialized")
+            
+        if not self.memory_system.episodic:
+            raise ServiceError("Episodic layer not initialized")
+            
+        if not self.memory_system.semantic:
+            raise ServiceError("Semantic layer not initialized")
+            
         # Map legacy IDs to UUIDs
         id_mapping = {
             "nova-team": self.NOVA_TEAM_UUID,
@@ -110,6 +215,9 @@ class ThreadManager:
                     ]
                 }
                 
+                if not self.memory_system.episodic.store:
+                    raise ServiceError("Episodic store not initialized")
+                    
                 result = await self.memory_system.episodic.store.search_vectors({
                     "content": {},
                     "filter": filter_dict,
@@ -118,9 +226,8 @@ class ThreadManager:
                     "score_threshold": 0.1
                 })
 
-                if result:
+                if result and len(result) > 0 and "content" in result[0]:
                     logger.debug("Found thread in episodic layer")
-                    # Get content directly without parsing
                     return result[0]["content"]
 
                 # Handle system threads
@@ -130,6 +237,9 @@ class ThreadManager:
 
                 # Check semantic layer as fallback
                 logger.debug("Checking semantic layer...")
+                if not self.memory_system.semantic:
+                    raise ServiceError("Semantic layer not initialized")
+                    
                 thread_exists = await self.memory_system.semantic.run_query(
                     """
                     MATCH (t:Thread {id: $id})
@@ -148,6 +258,7 @@ class ThreadManager:
                     await asyncio.sleep(retry_delay)
                     continue
 
+                # If we've exhausted all retries and still haven't found or created the thread
                 logger.error(f"Thread {thread_id} not found after {max_retries} attempts")
                 raise ResourceNotFoundError(f"Thread {thread_id} not found after {max_retries} attempts")
             except Exception as e:
@@ -157,11 +268,15 @@ class ThreadManager:
                     await asyncio.sleep(retry_delay)
                     continue
                 logger.error("Max retries reached, raising error")
-                raise e
+                raise ServiceError(f"Failed to get thread: {str(e)}") from e
+        
+        # This should never be reached due to the raise statements above,
+        # but we need it to satisfy the return type
+        raise ServiceError("Failed to get thread: Unexpected code path")
 
     async def _create_system_thread(self, thread_id: str) -> Dict[str, Any]:
         """Create a system thread."""
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc).isoformat()
         
         # Define core agents for nova-team
         core_agents = [
@@ -231,46 +346,36 @@ class ThreadManager:
     async def create_thread(self, title: str, domain: str = "general", metadata: Optional[Dict] = None, workspace: str = "personal") -> Dict[str, Any]:
         """Create a new thread with validation."""
         thread_id = str(uuid.uuid4())
-        now = datetime.now().isoformat()
+        now = datetime.now(timezone.utc)
         
-        # Validate metadata
-        if metadata is None:
-            metadata = {}
+        # Create thread metadata model with null checks
+        metadata_dict = metadata or {}
+        thread_metadata = ThreadMetadata(
+            type=metadata_dict.get("type", "user"),
+            system=metadata_dict.get("system", False),
+            pinned=metadata_dict.get("pinned", False),
+            description=metadata_dict.get("description", "")
+        )
         
-        # Ensure required metadata fields with defaults
-        required_metadata = {
-            "type": "user",  # Default type
-            "system": False,
-            "pinned": False,
-            "description": ""
-        }
-        
-        # Update with provided metadata
-        for key, default in required_metadata.items():
-            if key not in metadata:
-                metadata[key] = default
-        
-        # Validate thread type
-        valid_types = ["test", "system", "user", "agent", "chat", "task", "agent-team"]
-        if metadata["type"] not in valid_types:
-            raise ValueError(f"Invalid thread type. Must be one of: {valid_types}")
+        # Create thread model with validation
+        try:
+            thread_model = Thread(
+                id=thread_id,
+                name=title,
+                domain=domain,
+                messages=[],
+                createdAt=now,
+                updatedAt=now,
+                workspace=workspace,
+                participants=[ThreadParticipant(**p) for p in metadata_dict.get("participants", [])] if metadata_dict.get("participants") else [],
+                metadata=thread_metadata
+            )
             
-        # Validate domain
-        if not domain:
-            raise ValueError("Domain cannot be empty")
-            
-        # Create thread with validated data
-        thread = {
-            "id": thread_id,
-            "name": title,
-            "domain": domain,
-            "messages": [],
-            "createdAt": now,
-            "updatedAt": now,
-            "workspace": workspace,
-            "participants": metadata.get("participants", []),
-            "metadata": metadata
-        }
+            # Convert to dict for storage
+            thread = thread_model.model_dump()
+        except Exception as e:
+            logger.error(f"Failed to create thread model: {str(e)}")
+            raise ServiceError(f"Failed to create thread: {str(e)}") from e
 
         # Store with verification enabled
         await self._store_thread(thread, verify=True)
@@ -318,6 +423,9 @@ class ThreadManager:
             try:
                 logger.debug(f"Attempting to store thread {thread_id} (attempt {attempt + 1}/{max_retries})")
                 
+                if not self.memory_system.episodic or not self.memory_system.episodic.store:
+                    raise ServiceError("Episodic store not initialized")
+                    
                 # Check if thread already exists in episodic layer
                 logger.debug("Checking for existing thread...")
                 existing_thread = await self.memory_system.episodic.store.search_vectors({
@@ -374,7 +482,6 @@ class ThreadManager:
                 # Create memory data with enhanced thread ID handling
                 logger.info("Creating memory data for thread storage")
                 logger.info(f"Thread ID: {thread['id']}")
-                logger.info(f"Thread content: {json.dumps(thread, indent=2)}")
                 
                 # Create memory data with explicit thread ID handling
                 thread_id = thread["id"]  # Extract thread ID
@@ -383,7 +490,7 @@ class ThreadManager:
                     "content": thread,  # Store full thread data directly
                     "type": MemoryType.EPISODIC.value,  # Use proper memory type
                     "importance": 0.8,
-                    "timestamp": datetime.now().isoformat(),
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
                     "context": {
                         "domain": thread.get("domain", "general"),
                         "source": "nova",
@@ -399,21 +506,26 @@ class ThreadManager:
                         "source": "nova"
                     }
                 }
-                logger.info(f"Prepared memory data: {json.dumps(memory_data, indent=2)}")
                 
                 # Create EpisodicMemory object
                 logger.info("Creating EpisodicMemory object")
+                # Create memory with proper type handling
+                memory_data["type"] = str(memory_data["type"])  # Convert type to string
                 memory = EpisodicMemory(**memory_data)
                 logger.info(f"Created memory object with ID: {memory.id}")
                 
                 # Store memory directly in episodic layer
                 logger.info("Storing memory in episodic layer")
+                if not self.memory_system.episodic:
+                    raise ServiceError("Episodic layer not initialized")
                 store_result = await self.memory_system.episodic.store_memory(memory)
-                logger.info(f"Store result: {json.dumps(store_result, indent=2) if store_result else None}")
                 logger.debug("Successfully stored in episodic layer")
 
                 # Store in semantic layer with flattened metadata
                 logger.debug("Storing in semantic layer...")
+                if not self.memory_system.semantic:
+                    raise ServiceError("Semantic layer not initialized")
+                    
                 properties = {
                     "name": thread["name"],
                     "domain": thread["domain"],
@@ -439,8 +551,6 @@ class ThreadManager:
 
                 # Log successful storage
                 logger.info(f"Successfully stored thread {thread_id} in both layers")
-                logger.debug(f"Episodic store result: {store_result}")
-                logger.debug(f"Semantic store result: {result}")
 
                 # Verify storage if requested
                 if verify:
@@ -467,7 +577,7 @@ class ThreadManager:
             raise ResourceNotFoundError(f"Thread {thread['id']} not found")
             
         # Update timestamp
-        thread["updatedAt"] = datetime.now().isoformat()
+        thread["updatedAt"] = datetime.now(timezone.utc).isoformat()
         
         # Preserve creation time
         thread["createdAt"] = existing_thread["createdAt"]
@@ -515,35 +625,87 @@ class ThreadManager:
                 })
         
         try:
+                if not self.memory_system.episodic or not self.memory_system.episodic.store:
+                    raise ServiceError("Episodic store not initialized")
+                    
                 results = await self.memory_system.episodic.store.search_vectors({
-                "content": {},
-                "filter": filter_dict,
-                "layer": "episodic"
-            })
+                    "content": {},
+                    "filter": filter_dict,
+                    "layer": "episodic"
+                })
         except Exception as e:
             logger.error(f"Error querying threads: {str(e)}")
             raise ServiceError("Failed to list threads") from e
         
         # Parse JSON strings back into dicts
         threads = []
-        for result in results:
-            threads.append(result["content"])
+        if results:
+            for result in results:
+                if "content" in result:
+                    threads.append(result["content"])
         return threads
 
     async def add_message(self, thread_id: str, message: Dict[str, Any]) -> Dict[str, Any]:
         """Add a message to a thread."""
         thread = await self.get_thread(thread_id)
-        thread["messages"].append(message)
+        
+        # Validate message with ThreadMessage model
+        thread_message = ThreadMessage(
+            type="thread_message",
+            client_id=message.get("client_id", "system"),
+            data=message,
+            thread_id=thread_id,
+            sender_id=message.get("sender_id", "system")
+        )
+        
+        # Add validated message
+        thread["messages"].append(thread_message.model_dump())
         await self.update_thread(thread)
+        
+        # Broadcast update via WebSocket
+        thread_update = ThreadUpdate(
+            type="thread_update",
+            client_id=message.get("client_id", "system"),
+            data=Thread(**thread),
+            update_type="updated"
+        )
+        
+        # Return updated thread
         return thread
 
     async def add_participant(self, thread_id: str, participant: Dict[str, Any]) -> Dict[str, Any]:
         """Add a participant to a thread."""
         thread = await self.get_thread(thread_id)
+        
+        # Validate participant with ThreadParticipant model
+        participant_model = ThreadParticipant(
+            id=participant["id"],
+            name=participant["name"],
+            type=participant["type"],
+            workspace=participant.get("workspace", "personal"),
+            domain=participant.get("domain", "general"),
+            status=participant.get("status", "active"),
+            metadata_type=participant["metadata_type"],
+            metadata_capabilities=participant["metadata_capabilities"],
+            metadata_created_at=datetime.now(timezone.utc)
+        )
+        
+        # Add validated participant
         if not thread.get("participants"):
             thread["participants"] = []
-        thread["participants"].append(participant)
+        thread["participants"].append(participant_model.model_dump())
+        
+        # Update thread
         await self.update_thread(thread)
+        
+        # Broadcast update via WebSocket
+        thread_update = ThreadUpdate(
+            type="thread_update",
+            client_id=participant.get("client_id", "system"),
+            data=Thread(**thread),
+            update_type="updated"
+        )
+        
         return thread
 
     async def add_agent_team(self, thread_id: str, agent_specs: List[Dict[str, Any]], agent_store: Any) -> List[Dict[str, Any]]:
@@ -557,16 +719,24 @@ class ThreadManager:
             workspace = agent_spec.get("workspace", "personal")
             domain = agent_spec.get("domain")
             
+            # Ensure agent_type is not None and is a string
+            if not agent_type or not isinstance(agent_type, str):
+                raise ValueError("Agent type must be a non-empty string")
+                
+            # Create agent with safe string operations
+            agent_id = f"{agent_type}-{str(uuid.uuid4())[:8]}"
+            agent_name = f"{agent_type[0].upper()}{agent_type[1:]}Agent" if agent_type else "UnknownAgent"
+            
             agent = {
-                "id": f"{agent_type}-{str(uuid.uuid4())[:8]}",
-                "name": f"{agent_type.capitalize()}Agent",
+                "id": agent_id,
+                "name": agent_name,
                 "type": agent_type,
-                "workspace": workspace,
-                "domain": domain,
+                "workspace": workspace or "personal",
+                "domain": domain or "general",
                 "status": "active",
                 "metadata_type": "agent",
                 "metadata_capabilities": [f"{agent_type}_analysis"],
-                "metadata_created_at": datetime.now().isoformat()
+                "metadata_created_at": datetime.now(timezone.utc).isoformat()
             }
             
             # Store agent
@@ -611,6 +781,12 @@ class ThreadManager:
         try:
             logger.info(f"Updating existing thread {thread['id']}")
             
+            if not self.memory_system:
+                raise ServiceError("Memory system not initialized")
+                
+            if not self.memory_system.semantic:
+                raise ServiceError("Semantic layer not initialized")
+
             # Update semantic layer first since it's idempotent
             logger.debug("Updating semantic layer...")
             properties = {
@@ -636,12 +812,15 @@ class ThreadManager:
             
             # Update episodic layer
             logger.debug("Updating episodic layer...")
+            if not self.memory_system.episodic:
+                raise ServiceError("Episodic layer not initialized")
+                
             memory_data = {
                 "id": thread["id"],
                 "content": thread,
                 "type": MemoryType.EPISODIC.value,  # Use proper memory type
                 "importance": 0.8,
-                "timestamp": datetime.now().isoformat(),
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "context": {
                     "domain": thread.get("domain", "general"),
                     "source": "nova",
@@ -658,7 +837,10 @@ class ThreadManager:
                 }
             }
             
+            # Convert type to string for EpisodicMemory
+            memory_data["type"] = str(memory_data["type"])
             memory = EpisodicMemory(**memory_data)
+            
             await self.memory_system.episodic.store_memory(memory)
             logger.info(f"Successfully updated thread {thread['id']}")
             
@@ -671,8 +853,17 @@ class ThreadManager:
         try:
             logger.debug(f"Deleting thread {thread_id}")
             
+            if not self.memory_system:
+                raise ServiceError("Memory system not initialized")
+                
+            if not self.memory_system.episodic:
+                raise ServiceError("Episodic layer not initialized")
+                
+            if not self.memory_system.semantic:
+                raise ServiceError("Semantic layer not initialized")
+            
             # Delete from episodic layer
-            await self.memory_system.episodic.delete_memory(thread_id)
+            await self.memory_system.delete_memory(thread_id)
             
             # Delete from semantic layer
             await self.memory_system.semantic.run_query(
@@ -691,31 +882,43 @@ class ThreadManager:
 
     async def add_single_agent(self, thread_id: str, agent_type: str, workspace: str = "personal", domain: Optional[str] = None, agent_store: Any = None) -> Dict[str, Any]:
         """Add a single agent to a thread."""
-        thread = await self.get_thread(thread_id)
-        
-        # Create agent
-        agent = {
-            "id": f"{agent_type}-{str(uuid.uuid4())[:8]}",
-            "name": f"{agent_type.capitalize()}Agent",
-            "type": agent_type,
-            "workspace": workspace,
-            "domain": domain,
-            "status": "active",
-            "metadata_type": "agent",
-            "metadata_capabilities": [f"{agent_type}_analysis"],
-            "metadata_created_at": datetime.now().isoformat()
-        }
-        
-        # Store agent if agent_store provided
-        if agent_store:
-            await agent_store.store_agent(agent)
-        
-        # Add agent to thread participants
-        if not thread.get("participants"):
-            thread["participants"] = []
-        thread["participants"].append(agent)
-        
-        # Update thread
-        await self.update_thread(thread)
-        
-        return agent
+        try:
+            thread = await self.get_thread(thread_id)
+            
+            # Validate agent_type
+            if not agent_type or not isinstance(agent_type, str):
+                raise ValueError("Agent type must be a non-empty string")
+                
+            # Create agent with safe string operations
+            agent_id = f"{agent_type}-{str(uuid.uuid4())[:8]}"
+            agent_name = f"{agent_type[0].upper()}{agent_type[1:]}Agent" if agent_type else "UnknownAgent"
+            
+            agent = {
+                "id": agent_id,
+                "name": agent_name,
+                "type": agent_type,
+                "workspace": workspace or "personal",
+                "domain": domain or "general",
+                "status": "active",
+                "metadata_type": "agent",
+                "metadata_capabilities": [f"{agent_type}_analysis"],
+                "metadata_created_at": datetime.now(timezone.utc).isoformat()
+            }
+            
+            # Store agent if agent_store provided and is valid
+            if agent_store and hasattr(agent_store, 'store_agent'):
+                await agent_store.store_agent(agent)
+            
+            # Add agent to thread participants
+            if not thread.get("participants"):
+                thread["participants"] = []
+            thread["participants"].append(agent)
+            
+            # Update thread
+            await self.update_thread(thread)
+            
+            return agent
+            
+        except Exception as e:
+            logger.error(f"Failed to add agent to thread {thread_id}: {str(e)}")
+            raise ServiceError(f"Failed to add agent to thread {thread_id}: {str(e)}")
