@@ -1,15 +1,19 @@
-"""Tests for LM Studio integration."""
+"""Unit tests for LM Studio LLM implementation."""
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from typing import Dict, Any
+from typing import Dict, Any, List, AsyncIterator, Union
+import json
+import aiohttp
+from datetime import datetime
+from pydantic import BaseModel
 
 from nia.nova.core.llm import LMStudioLLM
 from nia.nova.core.llm_types import (
     LLMConcept,
     LLMAnalysisResult,
     LLMAnalyticsResult,
-    LLMErrorResponse
+    LLMError
 )
 
 @pytest.fixture
@@ -21,163 +25,227 @@ def llm():
         api_base="http://localhost:1234/v1"
     )
 
+@pytest.fixture
+def mock_response():
+    """Create mock response data."""
+    return {
+        "choices": [{
+            "message": {
+                "content": json.dumps({
+                    "response": "Test analysis",
+                    "concepts": ["concept1", "concept2"],
+                    "key_points": ["point1", "point2"],
+                    "implications": ["implication1"],
+                    "uncertainties": ["uncertainty1"],
+                    "reasoning": ["reason1"],
+                    "metadata": {
+                        "confidence": 0.8
+                    }
+                })
+            }
+        }]
+    }
+
+@pytest.fixture
+def mock_stream_response():
+    """Create mock streaming response."""
+    async def generate_chunks():
+        chunks = [
+            {
+                "choices": [{
+                    "delta": {
+                        "content": "chunk1"
+                    }
+                }]
+            },
+            {
+                "choices": [{
+                    "delta": {
+                        "content": "chunk2"
+                    }
+                }]
+            },
+            {
+                "choices": [{
+                    "delta": {
+                        "content": "chunk3"
+                    },
+                    "finish_reason": "stop"
+                }]
+            }
+        ]
+        for chunk in chunks:
+            yield json.dumps(chunk).encode() + b"\n"
+    
+    mock = AsyncMock()
+    mock.content.iter_any = generate_chunks
+    mock.status = 200
+    return mock
+
 @pytest.mark.asyncio
-async def test_structured_completion():
-    """Test getting structured completion."""
-    with patch("openai.OpenAI") as mock_openai, \
-         patch("outlines.generate.json") as mock_generator:
+async def test_analyze(llm, mock_response):
+    """Test content analysis."""
+    with patch.object(llm, "_make_request") as mock_request:
+        mock_request.return_value = mock_response
         
-        # Setup mock response
-        mock_response = LLMAnalyticsResult(
-            response="Test analysis",
-            confidence=0.8
+        result = await llm.analyze(
+            content={"text": "test content"},
+            template="parsing_analysis"
         )
-        mock_generator.return_value = MagicMock(return_value=mock_response)
         
-        # Create LLM instance
-        llm = LMStudioLLM("test_model", "test_embeddings")
+        assert result["response"] == "Test analysis"
+        assert len(result["concepts"]) == 2
+        assert len(result["key_points"]) == 2
+        assert result["confidence"] == 0.8
+
+@pytest.mark.asyncio
+async def test_streaming_analysis(llm, mock_stream_response):
+    """Test streaming analysis."""
+    with patch.object(llm, "_make_request") as mock_request:
+        mock_request.return_value = mock_stream_response
         
-        # Test completion
+        stream = await llm.analyze(
+            content={"text": "test content"},
+            template="parsing_analysis",
+            stream=True
+        )
+        
+        chunks = []
+        async for chunk in stream:
+            chunks.append(chunk)
+        
+        assert len(chunks) == 3
+        assert chunks[0]["data"]["content"] == "chunk1"
+        assert not chunks[0]["data"]["is_final"]
+        assert chunks[2]["data"]["is_final"]
+
+@pytest.mark.asyncio
+async def test_generate(llm, mock_response):
+    """Test text generation."""
+    with patch.object(llm, "_make_request") as mock_request:
+        mock_request.return_value = mock_response
+        
+        result = await llm.generate("Test prompt")
+        assert isinstance(result, str)
+        assert "Test analysis" in result
+
+@pytest.mark.asyncio
+async def test_streaming_generation(llm, mock_stream_response):
+    """Test streaming text generation."""
+    with patch.object(llm, "_make_request") as mock_request:
+        mock_request.return_value = mock_stream_response
+        
+        stream = await llm.generate("Test prompt", stream=True)
+        
+        chunks = []
+        async for chunk in stream:
+            chunks.append(chunk)
+        
+        assert len(chunks) == 3
+        assert all(isinstance(c["data"]["content"], str) for c in chunks)
+        assert chunks[-1]["data"]["is_final"]
+
+@pytest.mark.asyncio
+async def test_embeddings(llm):
+    """Test text embeddings."""
+    mock_embedding_response = {
+        "data": [{
+            "embedding": [0.1, 0.2, 0.3]
+        }]
+    }
+    
+    with patch.object(llm, "_make_request") as mock_request:
+        mock_request.return_value = mock_embedding_response
+        
+        result = await llm.embed("Test text")
+        assert isinstance(result, list)
+        assert len(result) == 3
+        assert all(isinstance(x, float) for x in result)
+
+@pytest.mark.asyncio
+async def test_error_handling(llm):
+    """Test error handling."""
+    with patch.object(llm, "_make_request") as mock_request:
+        mock_request.side_effect = LLMError(
+            code="TEST_ERROR",
+            message="Test error message"
+        )
+        
+        result = await llm.analyze(
+            content={"text": "test"},
+            template="parsing_analysis"
+        )
+        
+        assert "Error analyzing content" in result["response"]
+        assert result["concepts"][0]["type"] == "error"
+        assert "Test error message" in result["concepts"][0]["description"]
+        assert result["confidence"] == 0.0
+
+@pytest.mark.asyncio
+async def test_streaming_error_handling(llm):
+    """Test streaming error handling."""
+    with patch.object(llm, "_make_request") as mock_request:
+        mock_request.side_effect = LLMError(
+            code="TEST_ERROR",
+            message="Test error message"
+        )
+        
+        stream = await llm.analyze(
+            content={"text": "test"},
+            template="parsing_analysis",
+            stream=True
+        )
+        
+        chunks = []
+        async for chunk in stream:
+            chunks.append(chunk)
+        
+        assert len(chunks) == 1
+        assert chunks[0]["type"] == "error"
+        assert "Test error message" in chunks[0]["data"]["message"]
+
+@pytest.mark.asyncio
+async def test_session_management(llm):
+    """Test client session management."""
+    assert llm._session is None
+    
+    # First request creates session
+    with patch("aiohttp.ClientSession.post") as mock_post:
+        mock_post.return_value.__aenter__.return_value.status = 200
+        mock_post.return_value.__aenter__.return_value.json = AsyncMock(
+            return_value={"choices": [{"message": {"content": "test"}}]}
+        )
+        
+        await llm.generate("test")
+        assert llm._session is not None
+        
+        # Second request reuses session
+        old_session = llm._session
+        await llm.generate("test again")
+        assert llm._session is old_session
+        
+        # Close session
+        await llm.close()
+        assert llm._session.closed
+
+@pytest.mark.asyncio
+async def test_structured_completion(llm, mock_response):
+    """Test structured completion."""
+    with patch.object(llm, "_make_request") as mock_request:
+        mock_request.return_value = mock_response
+        
+        class TestResponse(BaseModel):
+            response: str
+            concepts: List[str]
+            metadata: Dict[str, Any]
+        
         result = await llm.get_structured_completion(
             prompt="Test prompt",
-            response_model=Dict[str, Any],
-            agent_type="test",
+            response_model=TestResponse,
             metadata={"test": "metadata"}
         )
         
-        # Verify response
-        assert result["response"] == "Test analysis"
-        assert result["confidence"] == 0.8
-        assert result["metadata"] == {"test": "metadata"}
-        
-        # Verify OpenAI client creation
-        mock_openai.assert_called_once_with(
-            base_url="http://localhost:1234/v1",
-            api_key="lm-studio"
-        )
-
-@pytest.mark.asyncio
-async def test_analytics_processing():
-    """Test analytics processing template."""
-    with patch("openai.OpenAI") as mock_openai, \
-         patch("outlines.generate.json") as mock_generator:
-        
-        # Setup mock response
-        mock_response = LLMAnalyticsResult(
-            response="Analytics insights",
-            confidence=0.9
-        )
-        mock_generator.return_value = MagicMock(return_value=mock_response)
-        
-        # Create LLM instance
-        llm = LMStudioLLM("test_model", "test_embeddings")
-        
-        # Test analytics
-        result = await llm.analyze(
-            content={
-                "text": "Test content",
-                "metadata": {
-                    "domain": "test_domain"
-                }
-            },
-            template="analytics_processing"
-        )
-        
-        # Verify response
-        assert result["response"] == "Analytics insights"
-        assert result["confidence"] == 0.9
-        assert result["metadata"]["domain"] == "test_domain"
-
-@pytest.mark.asyncio
-async def test_parsing_analysis():
-    """Test parsing analysis template."""
-    with patch("openai.OpenAI") as mock_openai, \
-         patch("outlines.generate.json") as mock_generator:
-        
-        # Setup mock response
-        mock_response = LLMAnalysisResult(
-            response="Parsing analysis",
-            concepts=[
-                LLMConcept(
-                    name="test_concept",
-                    type="test_type",
-                    description="test description",
-                    related=["related1", "related2"]
-                )
-            ],
-            key_points=["point1", "point2"],
-            implications=["implication1"],
-            uncertainties=["uncertainty1"],
-            reasoning=["reason1", "reason2"]
-        )
-        mock_generator.return_value = MagicMock(return_value=mock_response)
-        
-        # Create LLM instance
-        llm = LMStudioLLM("test_model", "test_embeddings")
-        
-        # Test parsing
-        result = await llm.analyze(
-            content={
-                "text": "Test content",
-                "metadata": {
-                    "domain": "test_domain"
-                }
-            },
-            template="parsing_analysis"
-        )
-        
-        # Verify response
-        assert result["response"] == "Parsing analysis"
-        assert len(result["concepts"]) == 1
-        assert result["concepts"][0]["name"] == "test_concept"
-        assert len(result["key_points"]) == 2
-        assert len(result["implications"]) == 1
-        assert len(result["uncertainties"]) == 1
-        assert len(result["reasoning"]) == 2
-        assert result["metadata"]["domain"] == "test_domain"
-
-@pytest.mark.asyncio
-async def test_error_handling():
-    """Test error handling in analysis."""
-    with patch("openai.OpenAI") as mock_openai, \
-         patch("outlines.generate.json") as mock_generator:
-        
-        # Setup mock to raise error
-        mock_generator.side_effect = Exception("Test error")
-        
-        # Create LLM instance
-        llm = LMStudioLLM("test_model", "test_embeddings")
-        
-        # Test error handling
-        result = await llm.analyze(
-            content={
-                "text": "Test content",
-                "metadata": {
-                    "domain": "test_domain"
-                }
-            },
-            template="parsing_analysis"
-        )
-        
-        # Verify error response structure
-        assert "Error analyzing content" in result["response"]
-        assert len(result["concepts"]) == 1
-        assert result["concepts"][0]["type"] == "error"
-        assert "Test error" in result["concepts"][0]["description"]
-        assert result["concepts"][0]["confidence"] == 0.0
-        assert "Error occurred during analysis" in result["key_points"]
-
-@pytest.mark.asyncio
-async def test_invalid_template():
-    """Test handling of invalid template."""
-    # Create LLM instance
-    llm = LMStudioLLM("test_model", "test_embeddings")
-    
-    # Test invalid template
-    with pytest.raises(ValueError) as exc_info:
-        await llm.analyze(
-            content={"text": "test"},
-            template="invalid_template"
-        )
-    
-    assert "Unknown template: invalid_template" in str(exc_info.value)
+        assert isinstance(result, TestResponse)
+        assert result.response == "Test analysis"
+        assert len(result.concepts) == 2
+        assert result.metadata["test"] == "metadata"

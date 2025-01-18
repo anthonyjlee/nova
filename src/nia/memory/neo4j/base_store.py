@@ -1,8 +1,11 @@
 """Base Neo4j store implementation."""
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, cast
+from typing_extensions import LiteralString
 from datetime import datetime
 import logging
+from neo4j import AsyncGraphDatabase, AsyncDriver, Query
+from neo4j.exceptions import Neo4jError
 
 logger = logging.getLogger(__name__)
 
@@ -15,14 +18,23 @@ class Neo4jBaseStore:
         self.uri = uri
         self.user = user
         self.password = password
-        self.driver = None
+        self.driver: Optional[AsyncDriver] = None
         
     async def connect(self):
         """Connect to Neo4j database."""
         try:
-            # Placeholder for actual Neo4j connection
-            self.driver = {}
-            logger.info("Connected to Neo4j")
+            self.driver = AsyncGraphDatabase.driver(
+                self.uri, 
+                auth=(self.user, self.password)
+            )
+            # Test connection
+            await self.driver.verify_connectivity()
+            # Test query to ensure we can execute queries
+            async with self.driver.session() as session:
+                async with await session.begin_transaction() as tx:
+                    result = await tx.run("RETURN 1")
+                    await result.data()
+            logger.info("Connected to Neo4j and verified query execution")
         except Exception as e:
             logger.error(f"Failed to connect to Neo4j: {str(e)}")
             raise
@@ -30,18 +42,23 @@ class Neo4jBaseStore:
     async def close(self):
         """Close Neo4j connection."""
         if self.driver:
-            # Placeholder for actual connection close
+            await self.driver.close()
             self.driver = None
             logger.info("Closed Neo4j connection")
             
     async def execute(self, query: str, params: Optional[Dict] = None) -> List[Dict]:
         """Execute Cypher query."""
+        if not self.driver:
+            raise RuntimeError("Not connected to Neo4j")
+            
         try:
-            # Placeholder for actual query execution
-            logger.debug(f"Executing query: {query} with params: {params}")
-            return []
+            async with self.driver.session() as session:
+                async with await session.begin_transaction() as tx:
+                    result = await tx.run(cast(LiteralString, query), parameters=params or {})
+                    records = await result.data()
+                    return records
         except Exception as e:
-            logger.error(f"Query execution failed: {str(e)}")
+            logger.error(f"Query execution failed: {str(e)}\nQuery: {query}\nParams: {params}")
             raise
             
     async def create_node(self, label: str, properties: Dict[str, Any]) -> str:

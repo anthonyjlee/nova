@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 # API key settings
 API_KEY_HEADER = APIKeyHeader(name="X-API-Key", auto_error=False)
-API_KEYS = ["development"]  # For testing only
+API_KEYS = ["valid-test-key"]  # For testing only
 
 # Rate limiting settings
 RATE_LIMIT_WINDOW = 60  # seconds
@@ -90,16 +90,16 @@ def reset_rate_limits():
 def get_permission(required_permission: str):
     """Get permission dependency."""
     def check_permission(api_key: str = Depends(get_api_key)) -> None:
-        # For testing, development key has all permissions
-        if api_key == "development":
-            return None
-            
-        # In production, would check permissions from a database
+        # Check if permission exists
         if required_permission not in PERMISSIONS:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid permission: {required_permission}"
             )
+            
+        # For testing, valid-test-key has all permissions
+        if api_key == "valid-test-key":
+            return None
             
         user_permissions = PERMISSIONS.get(required_permission, set())
         if not user_permissions:
@@ -113,8 +113,8 @@ def get_permission(required_permission: str):
 def check_domain_access(domain: str):
     """Check domain access permission."""
     def check_access(api_key: str = Depends(get_api_key)) -> None:
-        # For testing, development key has access to all domains
-        if api_key == "development":
+        # For testing, valid-test-key has access to all domains
+        if api_key == "valid-test-key":
             return None
             
         # In production, would check domain access from a database
@@ -124,4 +124,19 @@ def check_domain_access(domain: str):
 
 def ws_auth(api_key: Optional[str] = None) -> str:
     """Authenticate WebSocket connection."""
-    return validate_api_key(api_key)
+    if api_key is None:
+        raise HTTPException(
+            status_code=401,
+            detail="API key is missing",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+    # Log the API key and valid keys for debugging
+    logger.debug(f"Validating API key: {api_key}")
+    logger.debug(f"Valid API keys: {API_KEYS}")
+    if api_key not in API_KEYS:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Invalid API key: {api_key}",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+    return api_key

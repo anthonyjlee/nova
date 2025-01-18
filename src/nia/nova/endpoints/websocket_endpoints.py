@@ -1,16 +1,17 @@
 """WebSocket endpoints for real-time updates."""
 
-from fastapi import APIRouter, WebSocket, Depends, WebSocketDisconnect, Query
+from fastapi import APIRouter, WebSocket, Depends, WebSocketDisconnect, Query, HTTPException
 from typing import Dict, Any, Optional, Literal
 import uuid
 import logging
 import asyncio
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 from ..core.dependencies import get_memory_system
-from ..core.auth import validate_api_key
+from ..core.auth import validate_api_key, ws_auth, API_KEYS
 from ..core.websocket_server import WebSocketServer
 from nia.memory.two_layer import TwoLayerMemorySystem
 
@@ -65,43 +66,140 @@ async def startup_event():
 
 ConnectionType = Literal["chat", "tasks", "agents", "graph"]
 
-@ws_router.websocket("/{connection_type}/{client_id}")
+@ws_router.websocket("/debug/client_{client_id}")
+async def debug_websocket_endpoint(
+    websocket: WebSocket,
+    client_id: str,
+):
+    """Debug WebSocket endpoint."""
+    try:
+        # Accept connection first
+        await websocket.accept()
+
+        # Send initial connection message
+        await websocket.send_json({
+            "type": "connection_established",
+            "data": {
+                "message": "Connection established, waiting for authentication"
+            },
+            "timestamp": datetime.now().isoformat(),
+            "client_id": client_id
+        })
+
+        # Wait for authentication
+        while True:
+            try:
+                message = await websocket.receive_json()
+                logger.debug(f"Received debug message: {message}")
+
+                if message["type"] == "connect":
+                    # Handle authentication
+                    try:
+                        api_key = message["data"]["api_key"]
+                        ws_auth(api_key)
+                        await websocket.send_json({
+                            "type": "connection_success",
+                            "data": {
+                                "message": "Connected",
+                                "client_id": client_id
+                            },
+                            "timestamp": datetime.now().isoformat(),
+                            "client_id": client_id
+                        })
+                    except HTTPException as e:
+                        await websocket.send_json({
+                            "type": "error",
+                            "data": {
+                                "message": str(e.detail)
+                            },
+                            "timestamp": datetime.now().isoformat(),
+                            "client_id": client_id
+                        })
+                        await websocket.close(code=4000, reason=str(e.detail))
+                        return
+                else:
+                    # Echo back the message for testing
+                    await websocket.send_json({
+                        **message,
+                        "timestamp": datetime.now().isoformat(),
+                        "client_id": client_id
+                    })
+            except WebSocketDisconnect:
+                break
+
+    except WebSocketDisconnect:
+        logger.info("Debug client disconnected")
+    except Exception as e:
+        logger.error(f"Error in debug connection: {str(e)}")
+        try:
+            await websocket.close(code=1011, reason=str(e))
+        except Exception as close_error:
+            logger.error(f"Error closing debug websocket: {str(close_error)}")
+
+@ws_router.websocket("/client_{client_id}")
 async def websocket_endpoint(
     websocket: WebSocket,
-    connection_type: ConnectionType,
     client_id: str,
-    api_key: str = Query(...),
     memory_system=Depends(get_memory_system)
 ):
     """WebSocket endpoint for real-time updates."""
     try:
-        # Validate API key first
-        if not validate_api_key(api_key):
-            await websocket.close(code=4000, reason="Invalid API key")
-            return
-
-        # Accept connection after validation
+        # Accept connection first
         await websocket.accept()
+        logger.debug(f"WebSocket connection accepted for client {client_id}")
 
-        # Ensure server is initialized
-        server = get_websocket_server()
-        
-        # Map connection type to handler
-        handlers = {
-            "chat": server.handle_chat_connection,
-            "tasks": server.handle_task_connection,
-            "agents": server.handle_agent_connection,
-            "graph": server.handle_graph_connection
-        }
-        
-        if connection_type not in handlers:
-            raise ValueError(f"Invalid connection type: {connection_type}")
-            
-        handler = handlers[connection_type]
-        await handler(websocket, client_id)
+        # Send initial connection message
+        await websocket.send_json({
+            "type": "connection_established",
+            "data": {
+                "message": "Connection established, waiting for authentication"
+            },
+            "timestamp": datetime.now().isoformat(),
+            "client_id": client_id
+        })
+
+        # Wait for authentication
+        while True:
+            try:
+                message = await websocket.receive_json()
+                logger.debug(f"Received message: {message}")
+
+                if message["type"] == "connect":
+                    # Handle authentication
+                    try:
+                        api_key = message["data"]["api_key"]
+                        ws_auth(api_key)
+                        await websocket.send_json({
+                            "type": "connection_success",
+                            "data": {
+                                "message": "Connected",
+                                "client_id": client_id
+                            },
+                            "timestamp": datetime.now().isoformat(),
+                            "client_id": client_id
+                        })
+                    except HTTPException as e:
+                        await websocket.send_json({
+                            "type": "error",
+                            "data": {
+                                "message": str(e.detail)
+                            },
+                            "timestamp": datetime.now().isoformat(),
+                            "client_id": client_id
+                        })
+                        await websocket.close(code=4000, reason=str(e.detail))
+                        return
+
+                    # After successful authentication, handle the connection
+                    server = get_websocket_server()
+                    await server.handle_chat_connection(websocket, client_id)
+                    return
+
+            except WebSocketDisconnect:
+                break
         
     except WebSocketDisconnect:
-        logger.info(f"Client {client_id} disconnected from {connection_type}")
+        logger.info(f"Client {client_id} disconnected")
     except RuntimeError as e:
         logger.error(f"WebSocket server error: {str(e)}")
         try:
@@ -109,7 +207,7 @@ async def websocket_endpoint(
         except Exception as close_error:
             logger.error(f"Error closing websocket: {str(close_error)}")
     except Exception as e:
-        logger.error(f"Error handling {connection_type} connection: {str(e)}")
+        logger.error(f"Error handling client {client_id} connection: {str(e)}")
         try:
             await websocket.close(code=1011, reason=str(e))
         except Exception as close_error:

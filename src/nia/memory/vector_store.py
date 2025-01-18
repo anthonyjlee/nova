@@ -204,7 +204,7 @@ class VectorStore:
             logger.error(f"Failed to initialize vector store: {str(e)}")
             raise
 
-    def _normalize_vector(self, vector: Union[List[float], np.ndarray]) -> List[float]:
+    def _normalize_vector(self, vector: Union[List[float], np.ndarray, List[List[float]]]) -> List[float]:
         """Normalize vector to unit length.
         
         Args:
@@ -219,7 +219,11 @@ class VectorStore:
         try:
             # Convert to numpy array if needed
             if isinstance(vector, list):
-                vector = np.array(vector, dtype=np.float32)
+                # Handle nested lists
+                if vector and isinstance(vector[0], list):
+                    vector = np.array(vector[0], dtype=np.float32)
+                else:
+                    vector = np.array(vector, dtype=np.float32)
             elif not isinstance(vector, np.ndarray):
                 raise ValueError(f"Invalid vector type: {type(vector)}")
                 
@@ -275,7 +279,9 @@ class VectorStore:
             content_str = json.dumps(content) if isinstance(content, dict) else str(content)
             
             # Generate embedding and normalize
-            vector = await self.embedding_service.create_embedding(content_str)
+            vector = await self.embedding_service.create_embedding(content_str) 
+            if not isinstance(vector, (list, np.ndarray)):
+                raise ValueError(f"Invalid vector type from embedding service: {type(vector)}")
             vector_list = self._normalize_vector(vector)
                 
             # Get first few values safely
@@ -296,10 +302,10 @@ class VectorStore:
             
             # Create point with proper typing
             point_id = str(uuid.uuid4())
-            vector = models.Vector(list=vector_list)  # Create Vector instance first
+            # Create point with vector
             point = models.PointStruct(
                 id=point_id,
-                vector=vector,  # Use Vector instance
+                vector=vector_list,  # Vector list is already normalized
                 payload=payload
             )
             
@@ -364,6 +370,22 @@ class VectorStore:
             logger.error(f"Failed to store vector: {str(e)}")
             raise
             
+    async def delete_vector(self, vector_id: str):
+        """Delete a vector by ID."""
+        await self.delete_vectors([vector_id])
+
+    async def cleanup(self):
+        """Clean up resources."""
+        try:
+            # Close client connection if it exists
+            if VectorStore._client_instance:
+                VectorStore._client_instance.close()
+                VectorStore._client_instance = None
+            logger.info("Vector store cleanup complete")
+        except Exception as e:
+            logger.error(f"Failed to clean up vector store: {str(e)}")
+            raise
+            
     async def search_vectors(
         self,
         content: Dict,
@@ -402,10 +424,10 @@ class VectorStore:
             
             # Create query embedding and normalize
             query_vector = await self.embedding_service.create_embedding(content_str)
-            query_vector = self._normalize_vector(query_vector)
+            query_vector_list = self._normalize_vector(query_vector)
                 
             # Get first few values safely
-            first_values = query_vector[:5] if len(query_vector) >= 5 else query_vector
+            first_values = query_vector_list[:5] if len(query_vector_list) >= 5 else query_vector_list
             logger.info(f"Normalized query vector first values: {first_values}")
             
             # Process and validate filter conditions
@@ -457,7 +479,7 @@ class VectorStore:
                 # Perform single search operation
                 results = client.search(
                     collection_name=target_collection,
-                    query_vector=query_vector,
+                    query_vector=query_vector_list,
                     query_filter=search_filter,
                     limit=limit,
                     score_threshold=score_threshold,
@@ -673,12 +695,19 @@ class VectorStore:
             try:
                 # Convert vector_ids to list of strings and create selector
                 point_ids = [str(vid) for vid in vector_ids]
-                selector = models.PointIdsList(points=cast(List[str], point_ids))
+                selector = models.Filter(
+                    must=[
+                        models.FieldCondition(
+                            key="id",
+                            match=models.MatchAny(any=point_ids)
+                        )
+                    ]
+                )
                 
                 # Delete points with selector
                 client.delete(
                     collection_name=target_collection,
-                    points_selector=selector,
+                    points_filter=selector,
                     wait=True  # Wait for operation to complete
                 )
                 

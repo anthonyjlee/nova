@@ -12,7 +12,7 @@ from pathlib import Path
 project_root = str(Path(__file__).parent.parent)
 sys.path.insert(0, project_root)
 
-from src.nia.core.neo4j.base_store import Neo4jBaseStore
+from src.nia.memory.neo4j.base_store import Neo4jBaseStore
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ class InitializeStore(Neo4jBaseStore):
             # Check existing nodes
             logger.info("Checking existing nodes...")
             # Check existing nodes
-            result = await self.run_query("""
+            result = await self.execute("""
             MATCH (n) 
             RETURN labels(n) as labels, n.name as name
             """)
@@ -76,7 +76,7 @@ class InitializeStore(Neo4jBaseStore):
             for node in nodes_to_create:
                 node_key = f"{node[0]}:{node[1]}"
                 if node_key not in existing_nodes:
-                    await self.run_query(f"""
+                    await self.execute(f"""
                     CREATE (n:{node[0]} {{
                         id: randomUUID(),
                         name: '{node[1]}',
@@ -109,7 +109,7 @@ class InitializeStore(Neo4jBaseStore):
             logger.info("Creating relationships...")
             
             # Create concept relationships
-            await self.run_query("""
+            await self.execute("""
             MATCH (belief:Concept {name: 'Belief'})
             MATCH (desire:Concept {name: 'Desire'})
             MATCH (emotion:Concept {name: 'Emotion'})
@@ -119,7 +119,7 @@ class InitializeStore(Neo4jBaseStore):
             """)
             
             # Create channel relationships
-            await self.run_query("""
+            await self.execute("""
             MATCH (general:Concept)
             WHERE general.name = 'General' AND general.type = 'channel'
             MATCH (tasks:Concept)
@@ -135,12 +135,18 @@ class InitializeStore(Neo4jBaseStore):
             logger.info("Test data created successfully")
             
             # Verify data was created
-            result = await self.run_query("""
-            MATCH (n)
-            OPTIONAL MATCH (n)-[r]->()
-            RETURN count(DISTINCT n) as nodes, count(r) as edges
-            """)
-            logger.info(f"Graph contains {result[0]['nodes']} nodes and {result[0]['edges']} edges")
+            try:
+                result = await self.execute("""
+                MATCH (n)
+                OPTIONAL MATCH (n)-[r]->()
+                RETURN count(DISTINCT n) as nodes, count(r) as edges
+                """)
+                if result:
+                    logger.info(f"Graph contains {result[0]['nodes']} nodes and {result[0]['edges']} edges")
+                else:
+                    logger.info("Graph verification query returned no results")
+            except Exception as e:
+                logger.warning(f"Failed to verify graph data: {str(e)}")
             
         except Exception as e:
             logger.error(f"Error initializing graph: {str(e)}")

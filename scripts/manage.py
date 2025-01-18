@@ -2,6 +2,7 @@
 """Service management script for NIA."""
 
 import argparse
+import configparser
 import subprocess
 import sys
 import time
@@ -19,7 +20,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),  # Add console output
-        logging.FileHandler('logs/service_manager.log')  # Add file output
+        logging.FileHandler(str(Path.cwd() / 'logs' / 'service_manager.log'))  # Add file output
     ]
 )
 logger = logging.getLogger('service_manager')
@@ -39,8 +40,15 @@ class ServiceManager:
     
     def __init__(self):
         """Initialize service manager."""
-        self.docker_compose_file = "scripts/docker/docker-compose.yml"
-        self.debug = False  # Control debug output
+        self.docker_compose_file = "docker/docker-compose.yml"
+        self.debug = True  # Control debug output
+        self.session = requests.Session()
+        self.session.headers.update({"X-API-Key": "valid-test-key"})
+        
+        # Read config
+        self.config = configparser.ConfigParser()
+        self.config.read(str(Path.cwd().parent / 'config.ini'))
+        self.embedding_model = self.config.get('DEFAULT', 'embedding_model', fallback='text-embedding-nomic-embed-text-v1.5@f16')
         self.services = {
             "neo4j": {
                 "port": 7687,
@@ -64,7 +72,7 @@ class ServiceManager:
             },
             "fastapi": {
                 "port": 8000,
-                "health_url": "http://localhost:8000/api/status?key=development",
+                "health_url": "http://localhost:8000/api/status",  # Use status endpoint for health check
                 "startup_time": 3
             },
             "frontend": {
@@ -160,7 +168,7 @@ class ServiceManager:
                         return False
                     
                     # Then check if celery process exists
-                    subprocess.check_output(["pgrep", "-f", "celery worker"])
+                    subprocess.check_output(["pgrep", "-f", "celery.*nia.nova.core.celery_app.*worker"])
                     
                     # Finally check if worker is responding using our status check
                     status = celery_app.send_task('nova.check_status').get(timeout=5.0)
@@ -182,7 +190,10 @@ class ServiceManager:
                 try:
                     if url is None:
                         return False
-                    response = requests.get(url)
+                    headers = {}
+                    if name == "fastapi":
+                        headers["X-API-Key"] = "valid-test-key"
+                    response = self.session.get(url)
                     return response.status_code == 200
                 except Exception as e:
                     if self.debug:
@@ -281,8 +292,9 @@ class ServiceManager:
 
     def check_tinytroupe_config(self):
         """Check TinyTroupe configuration."""
-        site_packages_config = Path(".venv/lib/python3.12/site-packages/tinytroupe/config.ini")
-        custom_config = Path("config.ini")
+        site_packages_config = Path(Path.cwd().parent / ".venv/lib/python3.12/site-packages/tinytroupe/config.ini")
+        print(f"Looking for default config on: {site_packages_config}")
+        custom_config = Path(Path.cwd().parent / "config.ini")
         
         print("\n🔍 Checking TinyTroupe configuration...")
         logger.info(f"Site packages config: {site_packages_config.absolute()}")
@@ -293,7 +305,7 @@ class ServiceManager:
         # Try to read configs to verify they're valid
         configs_valid = False
         
-        if site_packages_config.exists():
+        if site_packages_config.exists() and site_packages_config.is_file():
             try:
                 with open(site_packages_config) as f:
                     content = f.read()
@@ -307,7 +319,8 @@ class ServiceManager:
                 logger.error(f"Error reading site packages config: {e}")
                 print(f"⚠️  Error reading site packages config: {e}")
         
-        if custom_config.exists():
+        if custom_config.exists() and custom_config.is_file():
+            print(f"Found custom config on: {custom_config}")
             try:
                 with open(custom_config) as f:
                     content = f.read()
@@ -320,6 +333,8 @@ class ServiceManager:
             except Exception as e:
                 logger.error(f"Error reading custom config: {e}")
                 print(f"⚠️  Error reading custom config: {e}")
+        else:
+            print(f"Failed to find custom config on: {custom_config}")
         
         if not configs_valid:
             logger.warning("No valid TinyTroupe configuration found")
@@ -406,7 +421,7 @@ finance_memory_threshold = 0.7
             
             # Set up environment with debug flags
             env = os.environ.copy()
-            env["PYTHONPATH"] = str(Path.cwd())
+            env["PYTHONPATH"] = str(Path.cwd().parent)
             env["LOG_LEVEL"] = "DEBUG"
             env["UVICORN_LOG_LEVEL"] = "debug"
             env["PYTHONUNBUFFERED"] = "1"
@@ -421,21 +436,9 @@ finance_memory_threshold = 0.7
             stdout_log = logs_dir / f"celery-{timestamp}.out"
             stderr_log = logs_dir / f"celery-{timestamp}.err"
             
-            # Start Celery worker with direct venv python path
-            venv_python = str(Path.cwd() / ".venv" / "bin" / "python")
-            celery_cmd = [
-                venv_python, "-m", "celery",
-                "-A", "nia.nova.core.celery_app",
-                "worker",
-                "--loglevel=info",
-                "--pool=solo",  # Use solo pool for better compatibility
-                "--concurrency=1",  # Single worker for predictable behavior
-                "--without-gossip",  # Disable gossip for better stability
-                "--without-mingle",  # Disable mingle
-                "--max-tasks-per-child=1000",  # Restart worker after 1000 tasks
-                "--max-memory-per-child=350000",  # 350MB memory limit
-                "--events"  # Enable events for monitoring
-            ]
+            # Start Celery worker with working command
+            env["PYTHONPATH"] = str(Path.cwd().parent)
+            celery_cmd = ["celery", "-A", "nia.nova.core.celery_app", "worker", "--loglevel=info"]
             
             # Open log files
             with open(stdout_log, 'w') as stdout, open(stderr_log, 'w') as stderr:
@@ -511,7 +514,7 @@ finance_memory_threshold = 0.7
         try:
             # Set up environment with debug flags
             env = os.environ.copy()
-            env["PYTHONPATH"] = str(Path.cwd())
+            env["PYTHONPATH"] = str(Path.cwd().parent)
             env["LOG_LEVEL"] = "DEBUG"
             env["UVICORN_LOG_LEVEL"] = "debug"
             env["PYTHONUNBUFFERED"] = "1"
@@ -526,13 +529,12 @@ finance_memory_threshold = 0.7
             stderr_log = logs_dir / f"fastapi-{timestamp}.err"
             
             # Start FastAPI server with uvicorn
-            venv_python = str(Path.cwd() / ".venv" / "bin" / "python")
+            venv_python = str(Path.cwd().parent / ".venv" / "bin" / "python")
             server_cmd = [
                 venv_python, "-m", "uvicorn",
                 "nia.nova.core.app:app",
                 "--host", "0.0.0.0",
                 "--port", "8000",
-                "--reload",
                 "--log-level", "debug"
             ]
             
@@ -560,7 +562,7 @@ finance_memory_threshold = 0.7
                 sys.exit(1)
                 
             # Wait for server to be ready with longer timeout
-            if not self.wait_for_service("fastapi", timeout=60):
+            if not self.wait_for_service("fastapi", timeout=120):  # Double timeout for FastAPI
                 # Check logs for errors
                 with open(stderr_log) as f:
                     error = f.read()
@@ -586,7 +588,7 @@ finance_memory_threshold = 0.7
     
     def check_frontend_deps(self):
         """Check and install frontend dependencies."""
-        frontend_path = Path.cwd() / "frontend"
+        frontend_path = Path.cwd().parent / "frontend"
         node_modules = frontend_path / "node_modules"
         
         if not node_modules.exists():
@@ -610,7 +612,7 @@ finance_memory_threshold = 0.7
         """Start frontend development server."""
         print("\n🎨 Starting frontend server...")
         try:
-            frontend_path = Path.cwd() / "frontend"
+            frontend_path = Path.cwd().parent / "frontend"
             
             # Check and install dependencies first
             if not self.check_frontend_deps():
@@ -696,6 +698,38 @@ finance_memory_threshold = 0.7
             logger.warning(f"Error stopping Celery worker: {e}")
             print(f"Warning: Error stopping Celery worker: {e}")
 
+    def stop_services(self):
+        """Stop all services."""
+        print("\n🛑 Stopping services...")
+        
+        # Stop all processes
+        processes = [
+            "uvicorn.*nia.nova.core",  # FastAPI (any module)
+            "celery worker",           # Celery
+            "vite",                    # Frontend
+            "redis-server"             # Redis
+        ]
+        
+        for process in processes:
+            try:
+                subprocess.run(["pkill", "-f", process], check=False)
+            except Exception as e:
+                logger.warning(f"Error stopping {process}: {e}")
+                print(f"Warning: Error stopping {process}: {e}")
+        
+        # Stop Docker services
+        try:
+            subprocess.run(
+                ["docker", "compose", "-f", self.docker_compose_file, "down"],
+                check=True
+            )
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Error stopping Docker services: {e}")
+            print(f"Error stopping Docker services: {e}")
+            sys.exit(1)
+        
+        print("✅ All services stopped")
+
     def cleanup_data(self):
         """Clean up all data stores."""
         print("\n🧹 Cleaning up data stores...")
@@ -728,14 +762,8 @@ finance_memory_threshold = 0.7
                 check=True
             )
             
-            # Clear Neo4j data
-            print("Clearing Neo4j data...")
-            data_path = Path("scripts/data/neo4j")
-            if data_path.exists():
-                subprocess.run(["rm", "-rf", str(data_path)], check=True)
-            
-            # Clear Qdrant data
-            print("Clearing Qdrant data...")
+            # Clear only Qdrant data since it's tied to the embedding model
+            print("\nℹ️  Preserving Neo4j graph data while clearing vector store for new embedding model...")
             qdrant_path = Path("scripts/data/qdrant")
             if qdrant_path.exists():
                 subprocess.run(["rm", "-rf", str(qdrant_path)], check=True)
@@ -758,10 +786,11 @@ finance_memory_threshold = 0.7
             
             # Initialize Qdrant collections
             print("\nInitializing Qdrant collections...")
+            collection_name = f"memories_{self.embedding_model.split('@')[0]}"
             subprocess.run(
-                ["curl", "-X", "PUT", "http://localhost:6333/collections/memories_text-embedding-nomic-embed-text-v1.5_q8_0_768d", 
+                ["curl", "-X", "PUT", f"http://localhost:6333/collections/{collection_name}", 
                  "-H", "Content-Type: application/json",
-                 "-d", '{"vectors": {"size": 768, "distance": "Cosine"}}'],
+                 "-d", '{"vectors": {"size": 768, "distance": "Cosine", "on_disk": true}}'],
                 check=True,
                 capture_output=True
             )
@@ -772,7 +801,7 @@ finance_memory_threshold = 0.7
             
             # Verify collection exists
             result = subprocess.run(
-                ["curl", "-s", "http://localhost:6333/collections/memories_text-embedding-nomic-embed-text-v1.5_q8_0_768d"],
+                ["curl", "-s", f"http://localhost:6333/collections/{collection_name}"],
                 check=True,
                 capture_output=True,
                 text=True
@@ -784,12 +813,12 @@ finance_memory_threshold = 0.7
             print("\nInitializing memory system...")
             env = os.environ.copy()
             env["PYTHONPATH"] = str(Path.cwd())
-            env["LOG_LEVEL"] = "ERROR"  # Reduce logging noise
+            env["LOG_LEVEL"] = "DEBUG"  # Increase logging for debugging
             subprocess.run(
-                [str(Path.cwd() / ".venv" / "bin" / "python"), "scripts/initialize_graph.py"],
+                [str(Path.cwd().parent / ".venv" / "bin" / "python"), str(Path.cwd() / "initialize_graph.py")],
                 check=True,
                 env=env,
-                capture_output=True  # Suppress verbose output
+                capture_output=False  # Show output for debugging
             )
             
             # Start remaining services
@@ -804,7 +833,7 @@ finance_memory_threshold = 0.7
             logger.error(f"Error during cleanup: {e}")
             print(f"❌ Error during cleanup: {e}")
             sys.exit(1)
-
+            
     def show_status(self):
         """Show status of all services."""
         print("\n📊 Service Status:")
@@ -839,40 +868,8 @@ finance_memory_threshold = 0.7
         print(f"Frontend: {status}")
 
         # Check Celery
-        status = "✅ Running" if self.check_service("celery") else "❌ Not running"
+        status = "✅ Running" if self.check_service("celery", None) else "❌ Not running"
         print(f"Celery Worker: {status}")
-
-    def stop_services(self):
-        """Stop all services."""
-        print("\n🛑 Stopping services...")
-        
-        # Stop all processes
-        processes = [
-            "uvicorn.*nia.nova.core",  # FastAPI (any module)
-            "celery worker",           # Celery
-            "vite",                    # Frontend
-            "redis-server"             # Redis
-        ]
-        
-        for process in processes:
-            try:
-                subprocess.run(["pkill", "-f", process], check=False)
-            except Exception as e:
-                logger.warning(f"Error stopping {process}: {e}")
-                print(f"Warning: Error stopping {process}: {e}")
-        
-        # Stop Docker services
-        try:
-            subprocess.run(
-                ["docker", "compose", "-f", self.docker_compose_file, "down"],
-                check=True
-            )
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Error stopping Docker services: {e}")
-            print(f"Error stopping Docker services: {e}")
-            sys.exit(1)
-        
-        print("✅ All services stopped")
 
 def main():
     """Main entry point."""

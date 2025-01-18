@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 from datetime import datetime
 from pathlib import Path
 
-from nia.nova.core.nova_endpoints import nova_router
+from nia.nova.endpoints.nova_endpoints import nova_router
 
 # Configure logging
 LOGS_DIR = Path("logs/tests")
