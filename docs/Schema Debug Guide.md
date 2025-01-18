@@ -28,52 +28,168 @@ ws.send({
     timestamp: "...",
     client_id: clientId,
     channel: null,
-    data: {}
+    data: {
+        connection_type: "chat"
+    }
 }
 ```
 
 2. Channel Subscription (REQUIRED BEFORE SENDING CHANNEL MESSAGES)
 ```typescript
-// After auth success, subscribe to channels
+// Subscribe to channel
 ws.send({
-    type: "subscribe", 
+    type: "subscribe",
     timestamp: new Date().toISOString(),
     client_id: clientId,
-    channel: "desired-channel",
-    data: {}
+    channel: null,
+    data: {
+        channel: "nova-team" // or "nova-support"
+    }
 });
 
-// Wait for subscription confirmation
+// Wait for subscription success
 {
     type: "subscription_success",
     timestamp: "...",
     client_id: clientId,
-    channel: "desired-channel",
-    data: {}
+    channel: null,
+    data: {
+        channel: "nova-team"
+    }
+}
+
+// Unsubscribe from channel
+ws.send({
+    type: "unsubscribe",
+    timestamp: "...",
+    client_id: clientId,
+    channel: null,
+    data: {
+        channel: "nova-team"
+    }
+});
+
+// Wait for unsubscription success
+{
+    type: "unsubscription_success",
+    timestamp: "...",
+    client_id: clientId,
+    channel: null,
+    data: {
+        channel: "nova-team"
+    }
 }
 ```
 
-3. Message Format (MUST MATCH EXACTLY)
+3. Channel Messages (MUST BE SUBSCRIBED FIRST)
 ```typescript
-// Base message format expected by backend
-interface BaseMessage {
-    type: string;
-    timestamp: string; // ISO date
-    client_id: string;
-    channel: string | null;
-    data: any;
-}
-
-// Example chat message
-{
+// Send message to nova-team channel
+ws.send({
     type: "chat_message",
-    timestamp: "2025-01-20T12:34:56.789Z",
-    client_id: "user-123",
+    timestamp: new Date().toISOString(),
+    client_id: clientId,
     channel: null,
     data: {
-        content: "Hello",
-        thread_id: "thread-123"
+        content: "Hello team",
+        channel: "nova-team",
+        message_type: "task_detection" // or "cognitive_processing"
     }
+});
+
+// Send message to nova-support channel
+ws.send({
+    type: "chat_message",
+    timestamp: new Date().toISOString(),
+    client_id: clientId,
+    channel: null,
+    data: {
+        content: "System alert",
+        channel: "nova-support",
+        message_type: "resource_allocation" // or "system_health"
+    }
+});
+
+// Receive channel message
+{
+    type: "message",
+    timestamp: "...",
+    client_id: senderId,
+    channel: null,
+    data: {
+        content: "Hello team",
+        channel: "nova-team",
+        message_type: "task_detection"
+    }
+}
+
+// Receive delivery confirmation
+{
+    type: "message_delivered",
+    timestamp: "...",
+    client_id: clientId,
+    channel: null,
+    data: {
+        message: "Chat message received and processed",
+        original_type: "chat_message",
+        status: "success"
+    }
+}
+```
+
+4. Error Messages
+```typescript
+// Invalid channel
+{
+    type: "error",
+    timestamp: "...",
+    client_id: clientId,
+    channel: null,
+    data: {
+        error: "Invalid channel: unknown-channel"
+    }
+}
+
+// Invalid message type for channel
+{
+    type: "error",
+    timestamp: "...",
+    client_id: clientId,
+    channel: null,
+    data: {
+        error: "Invalid message type for nova-team channel"
+    }
+}
+
+// Not subscribed to channel
+{
+    type: "error",
+    timestamp: "...",
+    client_id: clientId,
+    channel: null,
+    data: {
+        error: "Failed to join channel nova-team"
+    }
+}
+```
+
+5. Ping/Pong Messages
+```typescript
+// Send ping
+ws.send({
+    type: "ping",
+    timestamp: new Date().toISOString(),
+    client_id: clientId,
+    channel: null,
+    data: {}
+});
+
+// Receive pong
+{
+    type: "pong",
+    timestamp: "...",
+    client_id: clientId,
+    channel: null,
+    data: {}
 }
 ```
 

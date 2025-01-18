@@ -1,49 +1,207 @@
 """Channel management endpoints for persistent spaces with settings, members, and pinned content.
 
-These endpoints handle the structural aspects of channels like:
-- Graph visualization data
+These endpoints handle:
 - Channel metadata and settings
 - Member management 
 - Pinned content
+- WebSocket connections
+- Real-time state management
+- Event handling
 
 For messaging and conversation functionality, use the chat/threads endpoints instead.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import (
+    APIRouter, Depends, HTTPException, status, 
+    WebSocket, WebSocketDisconnect
+)
 from fastapi.responses import JSONResponse
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 import json
+import asyncio
+from uuid import uuid4
 
 from ..core.dependencies import get_memory_system
 from ..core.auth import get_permission
+from ..core.auth.token import verify_token
 from ..core.error_handling import ServiceError
-from ..core.models import (
+from ..core.channel_types import (
     ChannelDetails, ChannelMember, PinnedItem, ChannelSettings,
-    AgentMetrics, AgentInteraction, AgentInfo
+    ChannelState, ChannelSubscription, ChannelEventType, ChannelEvent,
+    ChannelType, ChannelStatus, ChannelRole
 )
+from ..core.websocket_types import (
+    WebSocketState, WebSocketError, WebSocketSession,
+    WebSocketConfig, WebSocketEvent, WebSocketMessageType
+)
+from ..core.models import AgentInfo, AgentMetrics, AgentInteraction
 from nia.core.types.memory_types import Memory, MemoryType
 
 channel_router = APIRouter(
     prefix="/api/channels",
-    tags=["Channels"],
-    dependencies=[Depends(get_permission("write"))]
+    tags=["Channels"]
 )
 
-@channel_router.options("/{path:path}")
-async def channel_options_handler():
-    """Handle CORS preflight requests for channel endpoints."""
-    return JSONResponse(
-        content={},
-        headers={
-            "Access-Control-Allow-Origin": "http://localhost:5173",
-            "Access-Control-Allow-Methods": "*",
-            "Access-Control-Allow-Headers": "*",
-            "Access-Control-Allow-Credentials": "true",
-        }
-    )
+# Store active WebSocket connections
+active_connections: Dict[str, Dict[str, Any]] = {}  # connection_id -> {session, websocket}
+# Store channel subscriptions
+channel_subscriptions: Dict[str, List[str]] = {}  # channel_id -> [connection_id]
+# Store channel states
+channel_states: Dict[str, ChannelState] = {}
 
-@channel_router.get("/graph/concepts", response_model=Dict[str, Any])
+@channel_router.websocket("/{channel_id}/ws")
+async def channel_websocket(
+    websocket: WebSocket,
+    channel_id: str,
+    token: str,
+    memory_system: Any = Depends(get_memory_system)
+):
+    """WebSocket endpoint for channel connections."""
+    connection_id = str(uuid4())
+    try:
+        # Verify token
+        user = await verify_token(token)
+        if not user:
+            await websocket.close(code=4000)
+            return
+
+        # Accept connection
+        await websocket.accept()
+        
+        # Create session
+        session = WebSocketSession(
+            id=connection_id,
+            state=WebSocketState.NOT_AUTHENTICATED,
+            client_id=user.id,
+            workspace=user.workspace,
+            domain=user.domain
+        )
+        
+        # Store both session and websocket
+        active_connections[connection_id] = {
+            "session": session,
+            "websocket": websocket
+        }
+        
+        # Initialize channel state if needed
+        if channel_id not in channel_states:
+            channel_states[channel_id] = ChannelState(
+                channel_id=channel_id,
+                status=ChannelStatus.ACTIVE,
+                connection_state="connected"
+            )
+        
+        # Add to channel subscriptions
+        if channel_id not in channel_subscriptions:
+            channel_subscriptions[channel_id] = []
+        channel_subscriptions[channel_id].append(connection_id)
+        
+        # Update session state
+        session.state = WebSocketState.AUTHENTICATED
+        session.subscribed_channels.append(channel_id)
+        
+        # Send welcome message
+        await websocket.send_json({
+            "type": "connection_established",
+            "data": {
+                "connection_id": connection_id,
+                "channel_id": channel_id,
+                "timestamp": datetime.now().isoformat()
+            }
+        })
+        
+        # Listen for messages
+        try:
+            while True:
+                data = await websocket.receive_json()
+                await handle_channel_message(websocket, data, session, channel_id, memory_system)
+        except WebSocketDisconnect:
+            # Clean up on disconnect
+            await handle_disconnect(connection_id, channel_id)
+            
+    except Exception as e:
+        # Handle errors
+        if connection_id in active_connections:
+            await handle_disconnect(connection_id, channel_id)
+        await websocket.close(code=1011)
+
+async def handle_channel_message(
+    websocket: WebSocket,
+    data: Dict[str, Any],
+    session: WebSocketSession,
+    channel_id: str,
+    memory_system: Any
+):
+    """Handle incoming channel WebSocket messages."""
+    try:
+        msg_type = data.get("type")
+        
+        if msg_type == "ping":
+            await websocket.send_json({"type": "pong"})
+            return
+            
+        # Create channel event
+        event = ChannelEvent(
+            id=str(uuid4()),
+            channel_id=channel_id,
+            event_type=ChannelEventType(msg_type),
+            actor_id=session.client_id,
+            data=data.get("data", {})
+        )
+        
+        # Store event
+        await memory_system.store_experience(Memory(
+            id=event.id,
+            type="channel_event",
+            content=event.dict(),
+            metadata={
+                "channel_id": channel_id,
+                "event_type": msg_type
+            }
+        ))
+        
+        # Broadcast to channel subscribers
+        await broadcast_channel_event(channel_id, event)
+        
+    except Exception as e:
+        error = WebSocketError(
+            type="error",
+            code=1011,
+            message=str(e),
+            error_type="message_handling_error"
+        )
+        await websocket.send_json(error.dict())
+
+async def broadcast_channel_event(channel_id: str, event: ChannelEvent):
+    """Broadcast event to all channel subscribers."""
+    if channel_id not in channel_subscriptions:
+        return
+        
+    for conn_id in channel_subscriptions[channel_id]:
+        if conn_id in active_connections:
+            connection = active_connections[conn_id]
+            try:
+                websocket = connection["websocket"]
+                await websocket.send_json(event.dict())
+            except:
+                continue
+
+async def handle_disconnect(connection_id: str, channel_id: str):
+    """Handle WebSocket disconnection."""
+    if connection_id in active_connections:
+        del active_connections[connection_id]
+        
+    if channel_id in channel_subscriptions:
+        if connection_id in channel_subscriptions[channel_id]:
+            channel_subscriptions[channel_id].remove(connection_id)
+            
+        # Update channel state if no more connections
+        if not channel_subscriptions[channel_id]:
+            if channel_id in channel_states:
+                channel_states[channel_id].connection_state = "disconnected"
+
+@channel_router.get("/graph/concepts", response_model=Dict[str, Any], dependencies=[Depends(get_permission("read"))])
 async def get_graph_concepts(
     memory_system: Any = Depends(get_memory_system)
 ) -> JSONResponse:
@@ -99,7 +257,7 @@ agent_router = APIRouter(
     dependencies=[Depends(get_permission("write"))]
 )
 
-@channel_router.get("/{channel_id}/details", response_model=ChannelDetails)
+@channel_router.get("/{channel_id}/details", response_model=ChannelDetails, dependencies=[Depends(get_permission("read"))])
 async def get_channel_details(
     channel_id: str,
     memory_system: Any = Depends(get_memory_system)
@@ -141,17 +299,21 @@ async def get_channel_details(
             except:
                 pass
         
-        # Create ChannelDetails instance
+        # Create ChannelDetails instance with required fields
         channel_details = ChannelDetails(
             id=channel_data['id'],
             name=channel_data['name'],
-            workspace=channel_data['workspace'],
+            type=ChannelType(channel_data.get('type', 'channel')),
+            status=ChannelStatus.ACTIVE,
+            created_by=channel_data.get('created_by', 'system'),
+            settings=ChannelSettings(
+                name=channel_data['name'],
+                type=ChannelType(channel_data.get('type', 'channel')),
+                description=channel_data.get('description'),
+                is_public=channel_data.get('is_public', True)
+            ),
             description=channel_data.get('description'),
-            created_at=channel_data['created_at'],  # Already a datetime from Neo4j
-            updated_at=channel_data['updated_at'],  # Already a datetime from Neo4j
-            is_public=channel_data.get('is_public', True),
-            domain=channel_data.get('domain', 'general'),
-            type=channel_data.get('type', 'channel'),
+            created_at=channel_data['created_at'],
             metadata=metadata
         )
         return JSONResponse(
@@ -168,7 +330,7 @@ async def get_channel_details(
     except Exception as e:
         raise ServiceError(str(e))
 
-@channel_router.get("/{channel_id}/members", response_model=List[ChannelMember])
+@channel_router.get("/{channel_id}/members", response_model=List[ChannelMember], dependencies=[Depends(get_permission("read"))])
 async def get_channel_members(
     channel_id: str,
     memory_system: Any = Depends(get_memory_system)
@@ -204,20 +366,18 @@ async def get_channel_members(
                 except:
                     pass
             
-            # Create ChannelMember instance
+            # Create ChannelMember instance with required fields
             member = ChannelMember(
-                id=member_data['id'],
-                name=member_data['name'],
-                type=member_data['type'],
-                role=member_data['role'],
-                status=member_data['status'],
+                user_id=member_data['id'],
+                role=ChannelRole(member_data.get('role', 'member')),
+                permissions=[],  # Initialize empty permissions list
                 joined_at=member_data['joined_at'],
                 metadata=metadata
             )
             member_list.append(member)
         
         return JSONResponse(
-            content=member_list,
+            content=[m.dict() for m in member_list],
             headers={
                 "Access-Control-Allow-Origin": "http://localhost:5173",
                 "Access-Control-Allow-Methods": "*",
@@ -228,7 +388,7 @@ async def get_channel_members(
     except Exception as e:
         raise ServiceError(str(e))
 
-@channel_router.get("/{channel_id}/pinned", response_model=List[PinnedItem])
+@channel_router.get("/{channel_id}/pinned", response_model=List[PinnedItem], dependencies=[Depends(get_permission("read"))])
 async def get_pinned_items(
     channel_id: str,
     memory_system: Any = Depends(get_memory_system)
@@ -256,7 +416,7 @@ async def get_pinned_items(
     except Exception as e:
         raise ServiceError(str(e))
 
-@channel_router.post("/{channel_id}/settings", response_model=ChannelSettings)
+@channel_router.post("/{channel_id}/settings", response_model=ChannelSettings, dependencies=[Depends(get_permission("write"))])
 async def update_channel_settings(
     channel_id: str,
     settings: ChannelSettings,
@@ -288,7 +448,101 @@ async def update_channel_settings(
     except Exception as e:
         raise ServiceError(str(e))
 
-@agent_router.get("/{agent_id}/details", response_model=AgentInfo)
+@channel_router.get("/{channel_id}/state", response_model=ChannelState, dependencies=[Depends(get_permission("read"))])
+async def get_channel_state(
+    channel_id: str,
+    memory_system: Any = Depends(get_memory_system)
+) -> JSONResponse:
+    """Get current state of a channel."""
+    try:
+        if channel_id not in channel_states:
+            channel_states[channel_id] = ChannelState(
+                channel_id=channel_id,
+                status=ChannelStatus.ACTIVE,
+                connection_state="disconnected"
+            )
+            
+        return JSONResponse(
+            content=channel_states[channel_id].dict(),
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:5173",
+                "Access-Control-Allow-Methods": "*",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@channel_router.get("/{channel_id}/subscriptions", response_model=List[ChannelSubscription], dependencies=[Depends(get_permission("read"))])
+async def get_channel_subscriptions(
+    channel_id: str,
+    memory_system: Any = Depends(get_memory_system)
+) -> JSONResponse:
+    """Get list of subscriptions for a channel."""
+    try:
+        # Get subscriptions from memory
+        subscriptions = await memory_system.episodic.search(
+            filter={
+                "type": "channel_subscription",
+                "channel_id": channel_id
+            },
+            limit=100,
+            sort=[("created_at", "desc")]
+        )
+        
+        return JSONResponse(
+            content=[ChannelSubscription(**sub).dict() for sub in subscriptions],
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:5173",
+                "Access-Control-Allow-Methods": "*",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@channel_router.post("/{channel_id}/subscribe", response_model=ChannelSubscription, dependencies=[Depends(get_permission("write"))])
+async def subscribe_to_channel(
+    channel_id: str,
+    subscription_type: str,
+    memory_system: Any = Depends(get_memory_system)
+) -> JSONResponse:
+    """Subscribe to a channel."""
+    try:
+        subscription = ChannelSubscription(
+            id=str(uuid4()),
+            channel_id=channel_id,
+            subscriber_id=str(uuid4()),  # TODO: Get from auth
+            state="active",
+            subscription_type=subscription_type
+        )
+        
+        # Store subscription
+        await memory_system.store_experience(Memory(
+            id=subscription.id,
+            type="channel_subscription",
+            content=subscription.dict(),
+            metadata={
+                "channel_id": channel_id,
+                "subscription_type": subscription_type
+            }
+        ))
+        
+        return JSONResponse(
+            content=subscription.dict(),
+            headers={
+                "Access-Control-Allow-Origin": "http://localhost:5173",
+                "Access-Control-Allow-Methods": "*",
+                "Access-Control-Allow-Headers": "*",
+                "Access-Control-Allow-Credentials": "true",
+            }
+        )
+    except Exception as e:
+        raise ServiceError(str(e))
+
+@agent_router.get("/{agent_id}/details", response_model=AgentInfo, dependencies=[Depends(get_permission("read"))])
 async def get_agent_details(
     agent_id: str,
     memory_system: Any = Depends(get_memory_system)
@@ -316,7 +570,7 @@ async def get_agent_details(
     except Exception as e:
         raise ServiceError(str(e))
 
-@agent_router.get("/{agent_id}/metrics", response_model=AgentMetrics)
+@agent_router.get("/{agent_id}/metrics", response_model=AgentMetrics, dependencies=[Depends(get_permission("read"))])
 async def get_agent_metrics(
     agent_id: str,
     memory_system: Any = Depends(get_memory_system)
@@ -345,7 +599,7 @@ async def get_agent_metrics(
     except Exception as e:
         raise ServiceError(str(e))
 
-@agent_router.get("/{agent_id}/interactions", response_model=List[AgentInteraction])
+@agent_router.get("/{agent_id}/interactions", response_model=List[AgentInteraction], dependencies=[Depends(get_permission("read"))])
 async def get_agent_interactions(
     agent_id: str,
     memory_system: Any = Depends(get_memory_system)

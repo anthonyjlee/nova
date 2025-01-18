@@ -70,6 +70,7 @@ class BaseDomain(str, Enum):
     PERSONAL = "personal"
     PROFESSIONAL = "professional"
     GENERAL = "general"  # For cross-domain or general knowledge
+    SYSTEM = "system"    # For system-level operations
 
     def __str__(self):
         return self.value

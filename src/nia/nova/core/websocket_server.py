@@ -16,13 +16,17 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 class ConnectionManager:
-    """Manage WebSocket connections."""
+    """Manage WebSocket connections and channels."""
     def __init__(self):
         self.active_connections: Dict[str, Dict[str, WebSocket]] = {
             "chat": {},      # Chat/channel connections
             "tasks": {},     # Task board connections
             "agents": {},    # Agent status connections
             "graph": {}      # Knowledge graph connections
+        }
+        self.channel_subscriptions: Dict[str, Dict[str, set[str]]] = {
+            "nova-team": {},      # NovaTeam channel subscriptions
+            "nova-support": {}    # NovaSupport channel subscriptions
         }
         
     async def connect(self, websocket: WebSocket, client_id: str, connection_type: str):
@@ -48,9 +52,12 @@ class ConnectionManager:
             # Send initial connection success message
             message = {
                 "type": "connection_success",
-                "connection_type": connection_type,
+                "timestamp": datetime.now().isoformat(),
                 "client_id": client_id,
-                "timestamp": datetime.now().isoformat()
+                "channel": None,
+                "data": {
+                    "connection_type": connection_type
+                }
             }
             try:
                 await websocket.send_json(message)
@@ -93,8 +100,8 @@ class ConnectionManager:
             logger.error(f"Error disconnecting client {client_id}: {str(e)}")
             logger.error(traceback.format_exc())
             
-    async def broadcast(self, message: Dict[str, Any], connection_type: str):
-        """Broadcast message to all connections of a specific type."""
+    async def broadcast(self, message: Dict[str, Any], connection_type: str, channel: Optional[str] = None):
+        """Broadcast message to all connections of a specific type or channel."""
         if connection_type not in self.active_connections:
             logger.warning(f"Invalid connection type for broadcast: {connection_type}")
             return
@@ -103,19 +110,27 @@ class ConnectionManager:
             # Add timestamp to message
             message["timestamp"] = datetime.now().isoformat()
             
-            # Get active connections
-            connections = list(self.active_connections[connection_type].items())
-            if not connections:
-                logger.debug(f"No active connections for {connection_type}")
+            # Get target clients based on channel
+            if channel and channel in self.channel_subscriptions:
+                target_clients = self.channel_subscriptions[channel].keys()
+                logger.debug(f"Broadcasting to {len(target_clients)} clients in channel {channel}")
+            else:
+                target_clients = self.active_connections[connection_type].keys()
+                logger.debug(f"Broadcasting to {len(target_clients)} {connection_type} connections")
+            
+            if not target_clients:
+                logger.debug(f"No target clients for broadcast")
                 return
-                
-            logger.debug(f"Broadcasting to {len(connections)} {connection_type} connections")
             
             # Track failed connections for cleanup
             failed_clients = []
             
-            # Broadcast to all connected clients
-            for client_id, connection in connections:
+            # Broadcast to target clients
+            for client_id in target_clients:
+                if client_id not in self.active_connections[connection_type]:
+                    continue
+                    
+                connection = self.active_connections[connection_type][client_id]
                 try:
                     await connection.send_json(message)
                     logger.debug(f"Successfully sent message to client {client_id}")
@@ -132,10 +147,46 @@ class ConnectionManager:
             for client_id in failed_clients:
                 logger.info(f"Removing failed connection for client {client_id}")
                 self.active_connections[connection_type].pop(client_id, None)
+                # Remove from channel subscriptions
+                if channel:
+                    self.channel_subscriptions[channel].pop(client_id, None)
                 
         except Exception as e:
             logger.error(f"Error preparing broadcast message: {str(e)}")
             logger.error(traceback.format_exc())
+
+    async def join_channel(self, client_id: str, channel: str) -> bool:
+        """Subscribe a client to a channel."""
+        try:
+            if channel not in self.channel_subscriptions:
+                logger.error(f"Invalid channel: {channel}")
+                return False
+                
+            self.channel_subscriptions[channel][client_id] = set()
+            logger.debug(f"Client {client_id} joined channel {channel}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error joining channel: {str(e)}")
+            logger.error(traceback.format_exc())
+            return False
+            
+    async def leave_channel(self, client_id: str, channel: str) -> bool:
+        """Unsubscribe a client from a channel."""
+        try:
+            if channel not in self.channel_subscriptions:
+                logger.error(f"Invalid channel: {channel}")
+                return False
+                
+            if client_id in self.channel_subscriptions[channel]:
+                self.channel_subscriptions[channel].pop(client_id)
+                logger.debug(f"Client {client_id} left channel {channel}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error leaving channel: {str(e)}")
+            logger.error(traceback.format_exc())
+            return False
 
     async def handle_ping(self, websocket: WebSocket, client_id: str):
         """Handle ping message from client."""
@@ -143,8 +194,10 @@ class ConnectionManager:
             # Send pong response
             pong_message = {
                 "type": "pong",
+                "timestamp": datetime.now().isoformat(),
                 "client_id": client_id,
-                "timestamp": datetime.now().isoformat()
+                "channel": None,
+                "data": {}
             }
             await websocket.send_json(pong_message)
             logger.debug(f"Sent pong message to client {client_id}")
@@ -268,6 +321,9 @@ class WebSocketServer:
                                 await self.manager.broadcast(
                                     {
                                         "type": "memory_update",
+                                        "timestamp": datetime.now().isoformat(),
+                                        "client_id": None,
+                                        "channel": None,
                                         "data": {
                                             "store": "vector",
                                             "updates": vector_updates
@@ -281,6 +337,9 @@ class WebSocketServer:
                                 await self.manager.broadcast(
                                     {
                                         "type": "memory_update",
+                                        "timestamp": datetime.now().isoformat(),
+                                        "client_id": None,
+                                        "channel": None,
                                         "data": {
                                             "store": "graph",
                                             "updates": graph_updates
@@ -323,22 +382,119 @@ class WebSocketServer:
                 try:
                     if data.get("type") == "ping":
                         await self.manager.handle_ping(websocket, client_id)
-                    else:
+                        
+                    elif data.get("type") == "subscribe":
+                        channel = data.get("data", {}).get("channel")
+                        if not channel or channel not in ["nova-team", "nova-support"]:
+                            raise ValueError(f"Invalid channel: {channel}")
+                            
+                        # Join channel
+                        success = await self.manager.join_channel(client_id, channel)
+                        if success:
+                            # Send subscription success
+                            await websocket.send_json({
+                                "type": "subscription_success",
+                                "timestamp": datetime.now().isoformat(),
+                                "client_id": client_id,
+                                "channel": None,
+                                "data": {
+                                    "channel": channel
+                                }
+                            })
+                        else:
+                            raise RuntimeError(f"Failed to join channel {channel}")
+                            
+                    elif data.get("type") == "unsubscribe":
+                        channel = data.get("data", {}).get("channel")
+                        if not channel or channel not in ["nova-team", "nova-support"]:
+                            raise ValueError(f"Invalid channel: {channel}")
+                            
+                        # Leave channel
+                        success = await self.manager.leave_channel(client_id, channel)
+                        if success:
+                            # Send unsubscription success
+                            await websocket.send_json({
+                                "type": "unsubscription_success",
+                                "timestamp": datetime.now().isoformat(),
+                                "client_id": client_id,
+                                "channel": None,
+                                "data": {
+                                    "channel": channel
+                                }
+                            })
+                        else:
+                            raise RuntimeError(f"Failed to leave channel {channel}")
+                            
+                    elif data.get("type") == "chat_message":
+                        # Validate message format
+                        if "data" not in data or "content" not in data["data"]:
+                            raise ValueError("Invalid message format")
+                            
+                        # Get channel from data object
+                        channel = data.get("data", {}).get("channel")
+                        if channel:
+                            if channel not in ["nova-team", "nova-support"]:
+                                raise ValueError(f"Invalid channel: {channel}")
+                                
+                            # Validate message type for channels
+                            if channel == "nova-team":
+                                if data["data"].get("message_type") not in ["task_detection", "cognitive_processing"]:
+                                    raise ValueError("Invalid message type for nova-team channel")
+                            elif channel == "nova-support":
+                                if data["data"].get("message_type") not in ["resource_allocation", "system_health"]:
+                                    raise ValueError("Invalid message type for nova-support channel")
+                        
                         # Store message using Celery task
                         store_chat_message.delay(data)
                         
-                        # Broadcast to other clients
-                        await self.manager.broadcast(
-                            {"type": "message", "data": data},
-                            "chat"
-                        )
+                        # Broadcast to appropriate clients
+                        if channel:
+                            await self.manager.broadcast(
+                                {
+                                    "type": "message",
+                                    "timestamp": datetime.now().isoformat(),
+                                    "client_id": client_id,
+                                    "channel": None,
+                                    "data": data["data"]
+                                },
+                                "chat",
+                                channel
+                            )
+                        else:
+                            await self.manager.broadcast(
+                                {
+                                    "type": "message",
+                                    "timestamp": datetime.now().isoformat(),
+                                    "client_id": client_id,
+                                    "channel": None,
+                                    "data": data["data"]
+                                },
+                                "chat"
+                            )
+                            
+                        # Send delivery confirmation
+                        await websocket.send_json({
+                            "type": "message_delivered",
+                            "timestamp": datetime.now().isoformat(),
+                            "client_id": client_id,
+                            "channel": None,
+                            "data": {
+                                "message": "Chat message received and processed",
+                                "original_type": "chat_message",
+                                "status": "success"
+                            }
+                        })
                 except Exception as e:
                     logger.error(f"Error processing chat message: {str(e)}")
                     logger.error(traceback.format_exc())
                     error_message = {
                         "type": "error",
-                        "error": str(e),
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now().isoformat(),
+                        "client_id": client_id,
+                        "channel": None,
+                        "data": {
+                            "error": str(e)
+                        }
                     }
                     await websocket.send_json(error_message)
         except WebSocketDisconnect:
@@ -363,7 +519,13 @@ class WebSocketServer:
                         
                         # Broadcast to other clients
                         await self.manager.broadcast(
-                            {"type": "task_update", "data": data},
+                            {
+                                "type": "task_update",
+                                "timestamp": datetime.now().isoformat(),
+                                "client_id": client_id,
+                                "channel": None,
+                                "data": data["data"]
+                            },
                             "tasks"
                         )
                 except Exception as e:
@@ -371,8 +533,12 @@ class WebSocketServer:
                     logger.error(traceback.format_exc())
                     error_message = {
                         "type": "error",
-                        "error": str(e),
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now().isoformat(),
+                        "client_id": client_id,
+                        "channel": None,
+                        "data": {
+                            "error": str(e)
+                        }
                     }
                     await websocket.send_json(error_message)
         except WebSocketDisconnect:
@@ -407,8 +573,9 @@ class WebSocketServer:
             # Send initial agent team message
             agent_team_message = {
                 "type": "agent_team_created",
-                "client_id": client_id,
                 "timestamp": datetime.now().isoformat(),
+                "client_id": client_id,
+                "channel": None,
                 "data": {
                     "agents": formatted_agents
                 }
@@ -429,7 +596,13 @@ class WebSocketServer:
                         
                         # Broadcast to other clients
                         await self.manager.broadcast(
-                            {"type": "agent_status", "data": data},
+                            {
+                                "type": "agent_status",
+                                "timestamp": datetime.now().isoformat(),
+                                "client_id": client_id,
+                                "channel": None,
+                                "data": data["data"]
+                            },
                             "agents"
                         )
                 except Exception as e:
@@ -437,8 +610,12 @@ class WebSocketServer:
                     logger.error(traceback.format_exc())
                     error_message = {
                         "type": "error",
-                        "error": str(e),
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now().isoformat(),
+                        "client_id": client_id,
+                        "channel": None,
+                        "data": {
+                            "error": str(e)
+                        }
                     }
                     await websocket.send_json(error_message)
         except WebSocketDisconnect:
@@ -449,8 +626,12 @@ class WebSocketServer:
             logger.error(traceback.format_exc())
             error_message = {
                 "type": "error",
-                "error": str(e),
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "client_id": client_id,
+                "channel": None,
+                "data": {
+                    "error": str(e)
+                }
             }
             await websocket.send_json(error_message)
             # Ensure we still disconnect on error
@@ -474,7 +655,13 @@ class WebSocketServer:
                         
                         # Broadcast to other clients
                         await self.manager.broadcast(
-                            {"type": "graph_update", "data": data},
+                            {
+                                "type": "graph_update",
+                                "timestamp": datetime.now().isoformat(),
+                                "client_id": client_id,
+                                "channel": None,
+                                "data": data["data"]
+                            },
                             "graph"
                         )
                 except Exception as e:
@@ -482,8 +669,12 @@ class WebSocketServer:
                     logger.error(traceback.format_exc())
                     error_message = {
                         "type": "error",
-                        "error": str(e),
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.now().isoformat(),
+                        "client_id": client_id,
+                        "channel": None,
+                        "data": {
+                            "error": str(e)
+                        }
                     }
                     await websocket.send_json(error_message)
         except WebSocketDisconnect:

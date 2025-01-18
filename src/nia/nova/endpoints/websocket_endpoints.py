@@ -158,37 +158,119 @@ async def debug_websocket_endpoint(
                         await websocket.close(code=4000)
                         return
                 elif message["type"] == "join_channel":
-                    # Handle channel subscription
-                    channel = message["data"]["channel"]
-                    await websocket.send_json({
-                        "type": "subscription_success",
-                        "data": {
+                    try:
+                        # Validate channel name
+                        channel = message["data"]["channel"]
+                        if channel not in ["NovaTeam", "NovaSupport"]:
+                            raise ValueError(f"Invalid channel: {channel}")
+                            
+                        # Send delivery confirmation
+                        await websocket.send_json({
+                            "type": "message_delivered",
+                            "data": {
+                                "message": "Join channel request received",
+                                "original_type": "join_channel",
+                                "status": "success"
+                            },
+                            "timestamp": datetime.now().isoformat(),
+                            "client_id": client_id
+                        })
+                        
+                        # Send subscription success
+                        await websocket.send_json({
+                            "type": "subscription_success",
+                            "data": {
+                                "channel": channel,
+                                "status": "success",
+                                "message": "Successfully joined channel"
+                            },
+                            "timestamp": datetime.now().isoformat(),
+                            "client_id": client_id,
                             "channel": channel
-                        },
-                        "timestamp": datetime.now().isoformat(),
-                        "client_id": client_id
-                    })
+                        })
+                    except Exception as e:
+                        logger.error(f"Error joining channel: {str(e)}")
+                        await websocket.send_json({
+                            "type": "error",
+                            "data": {
+                                "message": f"Failed to join channel: {str(e)}",
+                                "error_type": "channel_error",
+                                "code": 400
+                            },
+                            "timestamp": datetime.now().isoformat(),
+                            "client_id": client_id
+                        })
 
                 elif message["type"] == "leave_channel":
-                    # Handle channel unsubscription
-                    channel = message["data"]["channel"]
-                    await websocket.send_json({
-                        "type": "unsubscription_success",
-                        "data": {
+                    try:
+                        # Validate channel name
+                        channel = message["data"]["channel"]
+                        if channel not in ["NovaTeam", "NovaSupport"]:
+                            raise ValueError(f"Invalid channel: {channel}")
+                            
+                        # Send delivery confirmation
+                        await websocket.send_json({
+                            "type": "message_delivered",
+                            "data": {
+                                "message": "Leave channel request received",
+                                "original_type": "leave_channel",
+                                "status": "success"
+                            },
+                            "timestamp": datetime.now().isoformat(),
+                            "client_id": client_id
+                        })
+                        
+                        # Send unsubscription success
+                        await websocket.send_json({
+                            "type": "unsubscription_success",
+                            "data": {
+                                "channel": channel,
+                                "status": "success",
+                                "message": "Successfully left channel"
+                            },
+                            "timestamp": datetime.now().isoformat(),
+                            "client_id": client_id,
                             "channel": channel
-                        },
-                        "timestamp": datetime.now().isoformat(),
-                        "client_id": client_id
-                    })
+                        })
+                    except Exception as e:
+                        logger.error(f"Error leaving channel: {str(e)}")
+                        await websocket.send_json({
+                            "type": "error",
+                            "data": {
+                                "message": f"Failed to leave channel: {str(e)}",
+                                "error_type": "channel_error",
+                                "code": 400
+                            },
+                            "timestamp": datetime.now().isoformat(),
+                            "client_id": client_id
+                        })
 
                 elif message["type"] == "chat_message":
-                    # Handle chat messages
-                        # Echo message back with delivery confirmation
+                    try:
+                        # Validate message format
+                        if "data" not in message or "content" not in message["data"]:
+                            raise ValueError("Invalid message format")
+                            
+                        # Validate channel if present
+                        channel = message.get("channel")
+                        if channel and channel not in ["NovaTeam", "NovaSupport"]:
+                            raise ValueError(f"Invalid channel: {channel}")
+                            
+                        # Validate message type for channels
+                        if channel == "NovaTeam":
+                            if message["data"].get("message_type") not in ["task_detection", "cognitive_processing"]:
+                                raise ValueError("Invalid message type for NovaTeam channel")
+                        elif channel == "NovaSupport":
+                            if message["data"].get("message_type") not in ["resource_allocation", "system_health"]:
+                                raise ValueError("Invalid message type for NovaSupport channel")
+                                
+                        # Echo message back
                         await websocket.send_json({
                             **message,
                             "timestamp": datetime.now().isoformat(),
                             "client_id": client_id
                         })
+                        
                         # Send delivery confirmation
                         await websocket.send_json({
                             "type": "message_delivered",
@@ -196,6 +278,18 @@ async def debug_websocket_endpoint(
                                 "message": "Chat message received and processed",
                                 "original_type": "chat_message",
                                 "status": "success"
+                            },
+                            "timestamp": datetime.now().isoformat(),
+                            "client_id": client_id
+                        })
+                    except Exception as e:
+                        logger.error(f"Error processing chat message: {str(e)}")
+                        await websocket.send_json({
+                            "type": "error",
+                            "data": {
+                                "message": f"Failed to process message: {str(e)}",
+                                "error_type": "message_error",
+                                "code": 400
                             },
                             "timestamp": datetime.now().isoformat(),
                             "client_id": client_id
