@@ -778,7 +778,25 @@ def main():
     
     manager = ServiceManager()
     
-    if args.command == "start":
+    if args.command == "clean":
+        print("\n🧹 Cleaning and reinitializing system...")
+        # Stop all services first
+        manager.stop_services()
+        
+        # Run initialization script
+        print("\n🔄 Running initialization script...")
+        try:
+            subprocess.run(
+                ["./scripts/initialization/initialize.sh"],
+                check=True
+            )
+            print("✅ System reinitialized successfully")
+        except subprocess.CalledProcessError as e:
+            logger.error(f"Initialization failed: {e}")
+            print("❌ Initialization failed. Please check the logs.")
+            sys.exit(1)
+            
+    elif args.command == "start":
         manager.start_docker_services()
         manager.check_lmstudio()
         manager.start_celery()

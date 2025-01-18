@@ -45,8 +45,8 @@ test.describe('WebSocket Endpoints', () => {
         await wsHelper.authenticate('valid-test-key');
         await wsHelper.waitForAuthStatus('Authenticated');
 
-        // Join NovaTeam channel
-        await wsHelper.joinChannel('NovaTeam');
+        // Join novateam channel
+        await wsHelper.joinChannel('novateam');
         await wsHelper.waitForMessage('subscription_success');
 
         // Generate unique thread ID
@@ -63,7 +63,7 @@ test.describe('WebSocket Endpoints', () => {
             },
             timestamp: new Date().toISOString(),
             client_id: 'test',
-            channel: 'NovaTeam'
+            channel: 'novateam'
         });
 
         // Verify message in channel
@@ -80,11 +80,11 @@ test.describe('WebSocket Endpoints', () => {
             },
             timestamp: new Date().toISOString(),
             client_id: 'test',
-            channel: 'NovaTeam'
+            channel: 'novateam'
         });
 
         // Leave channel and verify auth status maintained
-        await wsHelper.leaveChannel('NovaTeam');
+        await wsHelper.leaveChannel('novateam');
         await wsHelper.waitForMessage('unsubscription_success');
         await wsHelper.waitForAuthStatus('Authenticated');
 
@@ -99,7 +99,7 @@ test.describe('WebSocket Endpoints', () => {
             },
             timestamp: new Date().toISOString(),
             client_id: 'test',
-            channel: 'NovaTeam'
+            channel: 'novateam'
         });
 
         await expect(page.locator('[data-testid="message-content"]')).not.toContainText('Should not receive');
@@ -114,8 +114,8 @@ test.describe('WebSocket Endpoints', () => {
         await wsHelper.authenticate('valid-test-key');
         await wsHelper.waitForAuthStatus('Authenticated');
 
-        // Subscribe to NovaSupport channel
-        await wsHelper.joinChannel('NovaSupport');
+        // Subscribe to novasupport channel
+        await wsHelper.joinChannel('novasupport');
         await wsHelper.waitForMessage('subscription_success');
 
         // Generate unique thread ID
@@ -132,14 +132,14 @@ test.describe('WebSocket Endpoints', () => {
             },
             timestamp: new Date().toISOString(),
             client_id: 'test',
-            channel: 'NovaSupport'
+            channel: 'novasupport'
         });
 
         // Verify message in channel
         await expect(page.locator('[data-testid="message-content"]')).toContainText('Resource allocation request');
 
         // Leave channel and verify auth status maintained
-        await wsHelper.leaveChannel('NovaSupport');
+        await wsHelper.leaveChannel('novasupport');
         await wsHelper.waitForMessage('unsubscription_success');
         await wsHelper.waitForAuthStatus('Authenticated');
 
@@ -154,7 +154,7 @@ test.describe('WebSocket Endpoints', () => {
             },
             timestamp: new Date().toISOString(),
             client_id: 'test',
-            channel: 'NovaSupport'
+            channel: 'novasupport'
         });
 
         await expect(page.locator('[data-testid="message-content"]')).not.toContainText('Should not receive');

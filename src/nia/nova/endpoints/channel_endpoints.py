@@ -24,7 +24,7 @@ from uuid import uuid4
 
 from ..core.dependencies import get_memory_system
 from ..core.auth import get_permission
-from ..core.auth.token import verify_token
+from ..core.auth import verify_token
 from ..core.error_handling import ServiceError
 from ..core.channel_types import (
     ChannelDetails, ChannelMember, PinnedItem, ChannelSettings,
@@ -60,24 +60,26 @@ async def channel_websocket(
     """WebSocket endpoint for channel connections."""
     connection_id = str(uuid4())
     try:
-        # Verify token
-        user = await verify_token(token)
-        if not user:
+        # Verify token and create session
+        try:
+            # Verify token returns the normalized token string
+            normalized_token = await verify_token(token)
+            
+            # Accept connection
+            await websocket.accept()
+            
+            # Create session with default values since we only have the token
+            session = WebSocketSession(
+                id=connection_id,
+                state=WebSocketState.NOT_AUTHENTICATED,
+                client_id=normalized_token,  # Use token as client ID for now
+                workspace="default",
+                domain="default"
+            )
+        except Exception as e:
             await websocket.close(code=4000)
             return
-
-        # Accept connection
-        await websocket.accept()
-        
-        # Create session
-        session = WebSocketSession(
-            id=connection_id,
-            state=WebSocketState.NOT_AUTHENTICATED,
-            client_id=user.id,
-            workspace=user.workspace,
-            domain=user.domain
-        )
-        
+            
         # Store both session and websocket
         active_connections[connection_id] = {
             "session": session,

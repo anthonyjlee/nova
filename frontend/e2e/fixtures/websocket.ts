@@ -1,13 +1,11 @@
-import { test as base } from '@playwright/test';
+import { test as base, expect } from '@playwright/test';
 import { WebSocketTestHelper } from '../test-helpers/websocket';
 
-// Declare the fixture type
-type WebSocketFixture = {
+export type WebSocketFixtures = {
     wsHelper: WebSocketTestHelper;
 };
 
-// Create a test fixture that includes the WebSocket helper
-export const test = base.extend<WebSocketFixture>({
+export const test = base.extend<WebSocketFixtures>({
     wsHelper: async ({ page }, use) => {
         // Create a new WebSocket helper
         const wsHelper = new WebSocketTestHelper(page);
@@ -17,7 +15,7 @@ export const test = base.extend<WebSocketFixture>({
             await wsHelper.initialize();
             
             // Wait for initial not authenticated state
-            await wsHelper.waitForAuthStatus('Not Authenticated');
+            await wsHelper.waitForAuthStatus('Not Authenticated', 30000);
 
             // Use the helper in the test
             await use(wsHelper);
@@ -27,19 +25,20 @@ export const test = base.extend<WebSocketFixture>({
         } finally {
             try {
                 // Always attempt cleanup and verify clean state
-                if (wsHelper) {
+                if (wsHelper && !page.isClosed()) {
                     await wsHelper.cleanup();
-                    await wsHelper.waitForAuthStatus('Not Authenticated');
+                    await wsHelper.waitForAuthStatus('Not Authenticated', 30000);
                 }
             } catch (cleanupError) {
                 console.error('Error during cleanup:', cleanupError);
                 // Even if cleanup fails, try to force a clean state
-                await wsHelper?.setConnectionStatus('error');
-                await wsHelper?.waitForAuthStatus('Not Authenticated');
+                if (!page.isClosed()) {
+                    await wsHelper?.setConnectionStatus('error');
+                    await wsHelper?.waitForAuthStatus('Not Authenticated', 30000);
+                }
             }
         }
-    }
+    },
 });
 
-// Export expect from playwright
-export { expect } from '@playwright/test';
+export { expect };

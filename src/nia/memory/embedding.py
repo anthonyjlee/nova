@@ -12,7 +12,7 @@ class EmbeddingService:
     
     def __init__(
         self,
-        model_name: str = "text-embedding-nomic-embed-text-v1.5@q8_0",
+        model_name: str = "text-embedding-nomic-embed-text-v1.5@f16",
         api_base: str = "http://127.0.0.1:1234/v1"
     ):
         """Initialize embedding service.

@@ -6,13 +6,14 @@ import sys
 import os
 import logging
 import subprocess
+import time
 from pathlib import Path
 from datetime import datetime
 from typing import List, Any, Dict, Optional
 
-# Add project root to Python path
-project_root = str(Path(__file__).parent.parent)
-sys.path.insert(0, project_root)
+# Add current directory to Python path
+current_dir = os.getcwd()
+sys.path.insert(0, current_dir)
 
 from scripts.memory.initialize_memory import MemoryInitializer
 from scripts.tasks.initialize_tasks import TaskInitializer
@@ -119,12 +120,40 @@ class SystemInitializer(Neo4jBaseStore):
                 "domain": BaseDomain.GENERAL
             }
         )
-        base_agents.append(base_agent)
         
+        # Create agent node in Neo4j
+        import json
+        
+        await self.run_query(
+                """
+                MERGE (a:Agent {name: $name})
+                SET a.type = $type,
+                    a.emotions = $emotions,
+                    a.capabilities = $capabilities
+                """,
+                {
+                    "name": base_agent.name,
+                    "type": base_agent.agent_type,
+                    "emotions": json.dumps({
+                        "task_focus": "neutral",
+                        "collaboration_readiness": "active",
+                        "domain_confidence": "high"
+                    }),
+                    "capabilities": [
+                        "emotional_processing",
+                        "goal_management",
+                        "world_interaction"
+                    ]
+                }
+            )
+        
+        base_agents.append(base_agent)
         return base_agents
         
     async def _initialize_emotional_states(self, agents: List[BaseAgent]):
         """Initialize emotional states for agents."""
+        import json
+        
         for agent in agents:
             await self.run_query(
                 """
@@ -133,11 +162,11 @@ class SystemInitializer(Neo4jBaseStore):
                 """,
                 {
                     "name": agent.name,
-                    "emotions": {
+                    "emotions": json.dumps({
                         "task_focus": "neutral",
                         "collaboration_readiness": "active",
                         "domain_confidence": "high"
-                    }
+                    })
                 }
             )
             
@@ -188,6 +217,33 @@ class SystemInitializer(Neo4jBaseStore):
                 ]
             }
         )
+        
+        # Create meta agent node in Neo4j
+        import json
+        
+        await self.run_query(
+                """
+                MERGE (a:Agent {name: $name})
+                SET a.type = $type,
+                    a.emotions = $emotions,
+                    a.capabilities = $capabilities
+                """,
+                {
+                    "name": meta_agent.name,
+                    "type": meta_agent.agent_type,
+                    "emotions": json.dumps({
+                        "task_focus": "neutral",
+                        "collaboration_readiness": "active",
+                        "domain_confidence": "high"
+                    }),
+                    "capabilities": [
+                        "team_coordination",
+                        "task_distribution",
+                        "cognitive_oversight"
+                    ]
+                }
+            )
+        
         return meta_agent
         
     async def _initialize_core_agents(
@@ -243,6 +299,33 @@ class SystemInitializer(Neo4jBaseStore):
         
         # Set up relationships with meta agent
         for agent in core_agents:
+            # Create agent node first, then set properties
+            import json
+            
+            await self.run_query(
+                """
+                MERGE (a:Agent {name: $name})
+                SET a.type = $type,
+                    a.emotions = $emotions,
+                    a.capabilities = $capabilities
+                """,
+                {
+                    "name": agent.name,
+                    "type": agent.agent_type,
+                    "emotions": json.dumps({
+                        "task_focus": "neutral",
+                        "collaboration_readiness": "active",
+                        "domain_confidence": "high"
+                    }),
+                    "capabilities": [
+                        "emotional_processing",
+                        "goal_management",
+                        "world_interaction"
+                    ]
+                }
+            )
+            
+            # Create relationship with meta agent
             await self.run_query(
                 """
                 MATCH (m:Agent {name: $meta_name})
@@ -331,8 +414,7 @@ class SystemInitializer(Neo4jBaseStore):
             # 1. Verify Memory System
             self.logger.info("Verifying Memory System...")
             memory_init = MemoryInitializer()
-            await memory_init.connect()
-            await memory_init.vector_store.connect()
+            await memory_init.initialize()  # Initialize first
             self.logger.info("Memory System verification successful")
             
             # 2. Verify TinyWorld Environment
@@ -445,6 +527,59 @@ async def main():
         
         # Set up environment
         setup_env()
+        
+        # Start Docker services first
+        subprocess.run(
+            ["docker", "compose", "-f", "scripts/docker/docker-compose.yml", "up", "-d"],
+            check=True
+        )
+        
+        # Wait for services to be healthy
+        logger.info("Waiting for services to be healthy...")
+        max_retries = 30
+        retry_interval = 2
+        
+        # Wait for Qdrant
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                response = subprocess.run(
+                    ["curl", "-f", "http://localhost:6333/healthz"],
+                    capture_output=True,
+                    text=True
+                )
+                if response.returncode == 0:
+                    logger.info("Qdrant is healthy")
+                    break
+            except Exception:
+                pass
+            logger.info(f"Waiting for Qdrant... ({retry_count + 1}/{max_retries})")
+            time.sleep(retry_interval)
+            retry_count += 1
+        
+        if retry_count >= max_retries:
+            raise RuntimeError("Qdrant failed to become healthy")
+            
+        # Wait for Neo4j
+        retry_count = 0
+        while retry_count < max_retries:
+            try:
+                response = subprocess.run(
+                    ["docker", "exec", "docker-neo4j-1", "cypher-shell", "-u", "neo4j", "-p", "password", "RETURN 1"],
+                    capture_output=True,
+                    text=True
+                )
+                if response.returncode == 0:
+                    logger.info("Neo4j is healthy")
+                    break
+            except Exception:
+                pass
+            logger.info(f"Waiting for Neo4j... ({retry_count + 1}/{max_retries})")
+            time.sleep(retry_interval)
+            retry_count += 1
+            
+        if retry_count >= max_retries:
+            raise RuntimeError("Neo4j failed to become healthy")
         
         # Initialize all systems
         initializer = SystemInitializer()

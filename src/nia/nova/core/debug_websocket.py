@@ -2,8 +2,8 @@
 
 import json
 import logging
-from typing import List
-from fastapi import WebSocket, WebSocketDisconnect, Query, Depends
+from typing import Dict, Any, List, Tuple
+from fastapi import WebSocket, WebSocketDisconnect, Query
 from .auth import validate_api_key
 
 logger = logging.getLogger(__name__)
@@ -11,26 +11,31 @@ logger = logging.getLogger(__name__)
 class DebugConnectionManager:
     """Manages debug WebSocket connections."""
     
-    def __init__(self):
-        self.active_connections: List[WebSocket] = []
+    def __init__(self) -> None:
+        """Initialize the connection manager."""
+        self._active_sockets: Dict[str, WebSocket] = {}
         
-    async def connect(self, websocket: WebSocket):
-        """Connect a new client."""
+    async def connect(self, websocket: WebSocket) -> Tuple[WebSocket, str]:
+        """Connect a new client and return socket with ID."""
         await websocket.accept()
-        self.active_connections.append(websocket)
+        socket_id = str(id(websocket))
+        self._active_sockets[socket_id] = websocket
+        return websocket, socket_id
         
-    def disconnect(self, websocket: WebSocket):
-        """Disconnect a client."""
-        self.active_connections.remove(websocket)
+    async def disconnect(self, socket_id: str) -> None:
+        """Disconnect a client by ID."""
+        if socket_id in self._active_sockets:
+            del self._active_sockets[socket_id]
         
-    async def broadcast(self, message: dict):
+    async def broadcast(self, message: Dict[str, Any]) -> None:
         """Broadcast message to all connected clients."""
-        for connection in self.active_connections:
+        # Convert to list to avoid dictionary size change during iteration
+        for socket_id, websocket in list(self._active_sockets.items()):
             try:
-                await connection.send_json(message)
+                await websocket.send_json(message)
             except Exception as e:
                 logger.error(f"Failed to send debug message: {str(e)}")
-                await self.disconnect(connection)
+                await self.disconnect(socket_id)
 
 # Global connection manager
 manager = DebugConnectionManager()
@@ -38,18 +43,21 @@ manager = DebugConnectionManager()
 async def debug_websocket_endpoint(
     websocket: WebSocket,
     key: str = Query(...),  # API key is required
-):
+) -> None:
     """Debug WebSocket endpoint."""
     # Validate API key
-    if not validate_api_key(key):
+    try:
+        await validate_api_key(key)
+    except:
         await websocket.close(code=4003)
         return
         
+    socket_id = ""
     try:
-        await manager.connect(websocket)
+        socket, socket_id = await manager.connect(websocket)
         
         # Send initial connection message
-        await websocket.send_json({
+        await socket.send_json({
             "type": "debug_update",
             "data": {
                 "type": "connection",
@@ -61,11 +69,11 @@ async def debug_websocket_endpoint(
         try:
             while True:
                 # Keep connection alive and handle any incoming messages
-                data = await websocket.receive_text()
+                data = await socket.receive_text()
                 try:
                     message = json.loads(data)
                     # Echo back any received messages for now
-                    await websocket.send_json({
+                    await socket.send_json({
                         "type": "debug_update",
                         "data": {
                             "type": "echo",
@@ -77,7 +85,7 @@ async def debug_websocket_endpoint(
                     logger.warning(f"Received invalid JSON: {data}")
                     
         except WebSocketDisconnect:
-            manager.disconnect(websocket)
+            await manager.disconnect(socket_id)
             
     except Exception as e:
         logger.error(f"Debug WebSocket error: {str(e)}")
@@ -86,8 +94,7 @@ async def debug_websocket_endpoint(
         except:
             pass
 
-# Broadcast debug message to all connected clients
-async def broadcast_debug(message_type: str, level: str, data: any):
+async def broadcast_debug(message_type: str, level: str, data: Any) -> None:
     """Broadcast debug message to all connected clients."""
     await manager.broadcast({
         "type": "debug_update",

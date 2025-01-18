@@ -9,7 +9,7 @@ from uuid import uuid4
 
 from nia.nova.core.app import app
 from nia.nova.core.auth import API_KEYS
-from nia.nova.core.auth.token import verify_token
+from nia.nova.core.auth import verify_token
 from nia.nova.core.endpoints import get_memory_system
 from nia.nova.core.channel_types import (
     ChannelType, ChannelStatus, ChannelRole,
