@@ -1,21 +1,26 @@
 """WebSocket endpoints for real-time updates."""
 
-from fastapi import APIRouter, WebSocket, Depends, WebSocketDisconnect, Query, HTTPException
+from fastapi import APIRouter, Depends, WebSocketDisconnect, Query, HTTPException
+from ..core.websocket import NovaWebSocket
 from typing import Dict, Any, Optional, Literal
 import uuid
 import logging
 import asyncio
+import base64
+import hashlib
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
 from ..core.dependencies import get_memory_system
-from ..core.auth import validate_api_key, ws_auth, API_KEYS
+from ..core.auth import ws_auth, API_KEYS
 from ..core.websocket_server import WebSocketServer
 from nia.memory.two_layer import TwoLayerMemorySystem
 
-ws_router = APIRouter(prefix="/api/ws", tags=["WebSocket"])
+ws_router = APIRouter(
+    tags=["WebSocket"]
+)
 
 # Initialize WebSocket server and memory system
 _websocket_server: Optional[WebSocketServer] = None
@@ -38,6 +43,7 @@ async def initialize_websocket_server():
 
 def get_websocket_server() -> WebSocketServer:
     """Get the WebSocket server instance. Must be initialized first."""
+    global _websocket_server
     if _websocket_server is None:
         raise RuntimeError("WebSocket server not initialized")
     return _websocket_server
@@ -51,30 +57,33 @@ async def start_memory_updates():
         logger.error(f"Error starting memory updates: {str(e)}")
         raise
 
-# Register startup event handler
-@ws_router.on_event("startup")
-async def startup_event():
-    """Handle FastAPI startup event."""
-    try:
-        logger.info("Starting WebSocket server initialization...")
-        # Initialize server and wait for completion
-        await initialize_websocket_server()
-        logger.info("WebSocket server initialization completed")
-    except Exception as e:
-        logger.error(f"Error in startup event: {str(e)}", exc_info=True)
-        raise
+# Initialize server at module load time
+_websocket_server = None
 
 ConnectionType = Literal["chat", "tasks", "agents", "graph"]
 
 @ws_router.websocket("/debug/client_{client_id}")
 async def debug_websocket_endpoint(
-    websocket: WebSocket,
+    websocket: NovaWebSocket,
     client_id: str,
+    api_key: Optional[str] = None,
 ):
     """Debug WebSocket endpoint."""
+    logger.debug(f"Received WebSocket connection request for client {client_id}")
+    logger.debug(f"WebSocket headers: {websocket.headers}")
+    logger.debug(f"WebSocket scope: {websocket.scope}")
     try:
-        # Accept connection first
+        # Check origin before accepting connection
+        origin = websocket.headers.get("origin")
+        logger.debug(f"Origin: {origin}")
+        if origin != "http://localhost:5173":
+            logger.error(f"Invalid origin: {origin}")
+            return
+            
+        # Accept connection without authentication
+        logger.debug("Accepting WebSocket connection")
         await websocket.accept()
+        logger.debug("WebSocket connection accepted")
 
         # Send initial connection message
         await websocket.send_json({
@@ -95,8 +104,16 @@ async def debug_websocket_endpoint(
                 if message["type"] == "connect":
                     # Handle authentication
                     try:
-                        api_key = message["data"]["api_key"]
-                        ws_auth(api_key)
+                        api_key = message.get("data", {}).get("api_key")
+                        if not isinstance(api_key, str) or not api_key.strip():
+                            raise HTTPException(
+                                status_code=403,
+                                detail="Invalid API key format"
+                            )
+                            
+                        normalized_key = ws_auth(api_key.strip())
+                        logger.debug(f"API key validated: {normalized_key}")
+                        
                         await websocket.send_json({
                             "type": "connection_success",
                             "data": {
@@ -106,19 +123,86 @@ async def debug_websocket_endpoint(
                             "timestamp": datetime.now().isoformat(),
                             "client_id": client_id
                         })
-                    except HTTPException as e:
+                        # Send delivery confirmation
                         await websocket.send_json({
-                            "type": "error",
+                            "type": "message_delivered",
                             "data": {
-                                "message": str(e.detail)
+                                "message": "Authentication message received and processed",
+                                "original_type": "connect",
+                                "status": "success"
                             },
                             "timestamp": datetime.now().isoformat(),
                             "client_id": client_id
                         })
-                        await websocket.close(code=4000, reason=str(e.detail))
+                        continue
+                    except HTTPException as e:
+                        error_type = "token_expired" if "expired" in str(e.detail).lower() else "invalid_key"
+                        await websocket.send_json({
+                            "type": "error",
+                            "data": {
+                                "message": str(e.detail),
+                                "error_type": error_type,
+                                "code": 403
+                            },
+                            "timestamp": datetime.now().isoformat(),
+                            "client_id": client_id
+                        })
+                        await websocket.send_json({
+                            "type": "disconnect",
+                            "data": {
+                                "reason": str(e.detail)
+                            },
+                            "timestamp": datetime.now().isoformat(),
+                            "client_id": client_id
+                        })
+                        await websocket.close(code=4000)
                         return
+                elif message["type"] == "join_channel":
+                    # Handle channel subscription
+                    channel = message["data"]["channel"]
+                    await websocket.send_json({
+                        "type": "subscription_success",
+                        "data": {
+                            "channel": channel
+                        },
+                        "timestamp": datetime.now().isoformat(),
+                        "client_id": client_id
+                    })
+
+                elif message["type"] == "leave_channel":
+                    # Handle channel unsubscription
+                    channel = message["data"]["channel"]
+                    await websocket.send_json({
+                        "type": "unsubscription_success",
+                        "data": {
+                            "channel": channel
+                        },
+                        "timestamp": datetime.now().isoformat(),
+                        "client_id": client_id
+                    })
+
+                elif message["type"] == "chat_message":
+                    # Handle chat messages
+                        # Echo message back with delivery confirmation
+                        await websocket.send_json({
+                            **message,
+                            "timestamp": datetime.now().isoformat(),
+                            "client_id": client_id
+                        })
+                        # Send delivery confirmation
+                        await websocket.send_json({
+                            "type": "message_delivered",
+                            "data": {
+                                "message": "Chat message received and processed",
+                                "original_type": "chat_message",
+                                "status": "success"
+                            },
+                            "timestamp": datetime.now().isoformat(),
+                            "client_id": client_id
+                        })
+
                 else:
-                    # Echo back the message for testing
+                    # Echo back other messages for testing
                     await websocket.send_json({
                         **message,
                         "timestamp": datetime.now().isoformat(),
@@ -129,22 +213,55 @@ async def debug_websocket_endpoint(
 
     except WebSocketDisconnect:
         logger.info("Debug client disconnected")
-    except Exception as e:
-        logger.error(f"Error in debug connection: {str(e)}")
+    except HTTPException as e:
+        logger.error(f"HTTP error in debug connection: {str(e)}")
         try:
-            await websocket.close(code=1011, reason=str(e))
+            error_type = "token_expired" if "expired" in str(e.detail).lower() else "invalid_key"
+            await websocket.send_json({
+                "type": "error",
+                "data": {
+                    "message": str(e.detail),
+                    "error_type": error_type,
+                    "code": e.status_code
+                },
+                "timestamp": datetime.now().isoformat(),
+                "client_id": client_id
+            })
+            await websocket.close(code=4000, reason=str(e.detail))
+        except Exception as close_error:
+            logger.error(f"Error closing debug websocket: {str(close_error)}")
+    except Exception as e:
+        logger.error(f"Unexpected error in debug connection: {str(e)}")
+        try:
+            await websocket.send_json({
+                "type": "error",
+                "data": {
+                    "message": "Internal server error",
+                    "error_type": "server_error",
+                    "code": 500
+                },
+                "timestamp": datetime.now().isoformat(),
+                "client_id": client_id
+            })
+            await websocket.close(code=1011, reason="Internal server error")
         except Exception as close_error:
             logger.error(f"Error closing debug websocket: {str(close_error)}")
 
 @ws_router.websocket("/client_{client_id}")
 async def websocket_endpoint(
-    websocket: WebSocket,
+    websocket: NovaWebSocket,
     client_id: str,
-    memory_system=Depends(get_memory_system)
 ):
     """WebSocket endpoint for real-time updates."""
     try:
-        # Accept connection first
+        # Check origin before accepting connection
+        origin = websocket.headers.get("origin")
+        logger.debug(f"Origin: {origin}")
+        if origin != "http://localhost:5173":
+            logger.error(f"Invalid origin: {origin}")
+            return
+            
+        # Accept connection
         await websocket.accept()
         logger.debug(f"WebSocket connection accepted for client {client_id}")
 
@@ -167,8 +284,15 @@ async def websocket_endpoint(
                 if message["type"] == "connect":
                     # Handle authentication
                     try:
-                        api_key = message["data"]["api_key"]
-                        ws_auth(api_key)
+                        api_key = message.get("data", {}).get("api_key")
+                        if not isinstance(api_key, str) or not api_key.strip():
+                            raise HTTPException(
+                                status_code=403,
+                                detail="Invalid API key format"
+                            )
+                            
+                        auth_result = ws_auth(api_key.strip())
+                        logger.debug(f"Auth result: {auth_result}")
                         await websocket.send_json({
                             "type": "connection_success",
                             "data": {
@@ -179,14 +303,29 @@ async def websocket_endpoint(
                             "client_id": client_id
                         })
                     except HTTPException as e:
-                        await websocket.send_json({
+                        # Send error with specific type for expired vs invalid
+                        error_type = "token_expired" if "expired" in str(e.detail).lower() else "invalid_key"
+                        error_message = {
                             "type": "error",
                             "data": {
-                                "message": str(e.detail)
+                                "message": str(e.detail),
+                                "error_type": error_type
+                            },
+                            "timestamp": datetime.now().isoformat(),
+                            "client_id": client_id
+                        }
+                        await websocket.send_json(error_message)
+                        
+                        # Send disconnect status before closing
+                        await websocket.send_json({
+                            "type": "disconnect",
+                            "data": {
+                                "reason": str(e.detail)
                             },
                             "timestamp": datetime.now().isoformat(),
                             "client_id": client_id
                         })
+                        
                         await websocket.close(code=4000, reason=str(e.detail))
                         return
 
@@ -200,15 +339,52 @@ async def websocket_endpoint(
         
     except WebSocketDisconnect:
         logger.info(f"Client {client_id} disconnected")
+    except HTTPException as e:
+        logger.error(f"HTTP error in connection: {str(e)}")
+        try:
+            error_type = "token_expired" if "expired" in str(e.detail).lower() else "invalid_key"
+            await websocket.send_json({
+                "type": "error",
+                "data": {
+                    "message": str(e.detail),
+                    "error_type": error_type,
+                    "code": e.status_code
+                },
+                "timestamp": datetime.now().isoformat(),
+                "client_id": client_id
+            })
+            await websocket.close(code=4000, reason=str(e.detail))
+        except Exception as close_error:
+            logger.error(f"Error closing websocket: {str(close_error)}")
     except RuntimeError as e:
         logger.error(f"WebSocket server error: {str(e)}")
         try:
+            await websocket.send_json({
+                "type": "error",
+                "data": {
+                    "message": "Server error",
+                    "error_type": "server_error",
+                    "code": 500
+                },
+                "timestamp": datetime.now().isoformat(),
+                "client_id": client_id
+            })
             await websocket.close(code=1011, reason=str(e))
         except Exception as close_error:
             logger.error(f"Error closing websocket: {str(close_error)}")
     except Exception as e:
-        logger.error(f"Error handling client {client_id} connection: {str(e)}")
+        logger.error(f"Unexpected error in connection: {str(e)}")
         try:
-            await websocket.close(code=1011, reason=str(e))
+            await websocket.send_json({
+                "type": "error",
+                "data": {
+                    "message": "Internal server error",
+                    "error_type": "server_error",
+                    "code": 500
+                },
+                "timestamp": datetime.now().isoformat(),
+                "client_id": client_id
+            })
+            await websocket.close(code=1011, reason="Internal server error")
         except Exception as close_error:
             logger.error(f"Error closing websocket: {str(close_error)}")

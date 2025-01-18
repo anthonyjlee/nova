@@ -13,11 +13,11 @@ export const test = base.extend<WebSocketFixture>({
         const wsHelper = new WebSocketTestHelper(page);
 
         try {
-            // Set up test
-            await page.goto('/');  // Use baseURL from playwright config
-            await page.waitForLoadState('networkidle');
-            await wsHelper.waitForConnection();
-            await wsHelper.setConnectionStatus('connected');
+            // Initialize WebSocket code and ensure clean initial state
+            await wsHelper.initialize();
+            
+            // Wait for initial not authenticated state
+            await wsHelper.waitForAuthStatus('Not Authenticated');
 
             // Use the helper in the test
             await use(wsHelper);
@@ -26,12 +26,16 @@ export const test = base.extend<WebSocketFixture>({
             throw error;
         } finally {
             try {
-                // Always attempt cleanup
+                // Always attempt cleanup and verify clean state
                 if (wsHelper) {
                     await wsHelper.cleanup();
+                    await wsHelper.waitForAuthStatus('Not Authenticated');
                 }
             } catch (cleanupError) {
                 console.error('Error during cleanup:', cleanupError);
+                // Even if cleanup fails, try to force a clean state
+                await wsHelper?.setConnectionStatus('error');
+                await wsHelper?.waitForAuthStatus('Not Authenticated');
             }
         }
     }

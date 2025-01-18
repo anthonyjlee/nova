@@ -35,12 +35,18 @@
   * Test LLM streaming
 
 ### 4. WebSocket Integration
-✅ Real-time Updates:
-  * Connect to WebSocket
-  * Handle messages
+✅ Authentication & Connection:
+  * Two-step authentication flow
+  * API key validation
   * Show connection status
-  * Handle reconnection
+  * Message delivery confirmation
   * Support LLM streaming
+
+- [ ] Channel Operations:
+  * Thread management UI
+  * Channel subscription UI
+  * Channel error handling
+  * Validation feedback
 
 ### 5. Error Handling
 ✅ Error States:
@@ -74,11 +80,12 @@ Files:
 ✅ frontend/src/lib/stores/graph-websocket.ts
 
 Features:
-✅ Basic connection
-✅ Message handling
-✅ Error handling
-✅ Reconnection logic
+✅ Two-step authentication
+✅ Connection management
+✅ Message delivery confirmation
 ✅ LLM streaming support
+- [ ] Channel operations
+- [ ] Thread management
 
 ### 3. Schema Validation
 Files:

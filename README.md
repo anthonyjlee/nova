@@ -42,6 +42,11 @@
   * Purpose: Asynchronous task processing
   * Workers: Memory consolidation, batch operations
   * Broker: Redis
+  * Note: Must be started manually:
+    ```bash
+    # From project root
+    celery -A nia.nova.core.celery_app worker --loglevel=info
+    ```
 
 ### Application Layer
 - FastAPI Server
@@ -59,6 +64,11 @@
   * Purpose: Web interface
   * Port: 5173
   * Status: http://localhost:5173
+  * Note: Must be started manually:
+    ```bash
+    # From frontend directory
+    npm run dev:managed
+    ```
   * Features:
     - Slack-inspired three-panel layout
     - Real-time updates via WebSocket
@@ -69,6 +79,14 @@
     - Dark theme support
     - Template selection
     - Connection status indicators
+
+### Service Management
+Use manage.py to start core services (Neo4j, Redis, Qdrant, FastAPI):
+```bash
+python scripts/manage.py start
+```
+
+Note: Frontend and Celery worker must be started manually in separate terminals due to TTY requirements.
 
 ### WebSocket Integration
 - Base WebSocket client

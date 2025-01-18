@@ -86,11 +86,13 @@
 ## Component Architecture
 
 1. WebSocket Integration
-- Base WebSocket client
-- Graph-specific WebSocket
+- Base WebSocket client with two-step authentication
+- Graph-specific WebSocket endpoints (in progress)
 - LLM streaming support
 - Error handling and recovery
 - Connection management
+- Channel operations (pending implementation)
+- Message validation and delivery confirmation
 
 2. Schema Validation
 - Shared validation rules

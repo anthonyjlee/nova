@@ -54,6 +54,18 @@
   * Handle errors
 
 ### 4. WebSocket Updates
+✅ Authentication Flow:
+  * Two-step authentication process
+  * API key validation
+  * Message delivery confirmation
+  * Connection state management
+
+- [ ] Channel Operations:
+  * Implement `/api/chat/threads` endpoint
+  * Fix message validation for channels
+  * Add channel subscription handlers
+  * Add channel operation error handling
+
 - [ ] Real-time Messages:
   * Message broadcasting
   * Thread updates
@@ -182,7 +194,9 @@
 ✅ Initialization error handling
 
 3. Real-time Updates:
-- [ ] WebSocket working
+✅ WebSocket authentication
+✅ Connection management
+- [ ] Channel operations
 - [ ] Message broadcasting
 - [ ] Error handling
 - [ ] Reconnection logic

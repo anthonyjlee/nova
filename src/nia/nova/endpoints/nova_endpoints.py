@@ -14,7 +14,7 @@ from fastapi.responses import JSONResponse
 
 from ...core.types.memory_types import EpisodicMemory
 from ..core.auth import validate_api_key, check_rate_limit, get_permission
-from ..core.websocket import websocket_manager
+from ..core.websocket import NovaWebSocket
 from ..core.dependencies import (
     get_memory_system,
     get_meta_agent,
@@ -642,7 +642,7 @@ async def create_agent_team(
 
 @ws_router.websocket("/ws")
 async def analytics_websocket(
-    websocket: WebSocket,
+    websocket: NovaWebSocket,
     analytics_agent: Any = Depends(get_analytics_agent),
     graph_store: Any = Depends(get_graph_store)
 ):

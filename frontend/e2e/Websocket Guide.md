@@ -1,249 +1,262 @@
 # WebSocket Testing Guide (Updated 2025-01-21)
 
-This guide documents the WebSocket testing infrastructure, message formats, and test cases. It serves as a comprehensive reference for WebSocket functionality in the application, including end-to-end tests using Playwright.
+This guide documents the WebSocket testing infrastructure and current implementation status.
 
-## LM Studio Integration
+## Testing Architecture
 
-### Configuration
-```typescript
-const llm = new LMStudioLLM({
-    chat_model: "llama-3.2-3b-instruct",
-    embedding_model: "text-embedding-nomic-embed-text-v1.5@f16",
-    api_base: "http://localhost:1234/v1"
-});
-```
+The WebSocket tests use the main application's WebSocket infrastructure:
 
-### Message Types
+1. The main app's WebSocket store (`src/lib/stores/websocket.ts`) handles WebSocket connections and events
+2. The ConnectionStatus component (`src/lib/components/shared/ConnectionStatus.svelte`) displays connection state
+3. The WebSocket endpoints (`src/nia/nova/endpoints/websocket_endpoints.py`) include a debug endpoint for testing
+4. The test helper (`frontend/e2e/test-helpers/websocket.ts`) uses the app's event system for testing
 
-#### LLM Request
-```typescript
-interface LLMRequest extends BaseMessage {
-    type: "llm_request";
-    data: {
-        content: string;
-        template: string;
-        metadata?: {
-            domain: string;
-            type: string;
-        };
-    };
-}
-```
+### Port Configuration
+- Frontend app runs on port 5173 (Vite dev server)
+- WebSocket server runs on port 8000
+- Tests connect to frontend on 5173 and WebSocket on 8000
+- API keys:
+  * 'development' for main app
+  * 'valid-test-key' for tests
 
-#### LLM Response
-```typescript
-interface LLMChunk extends BaseMessage {
-    type: "llm_chunk";
-    data: {
-        chunk: string;
-        is_final: boolean;
-    };
-}
-```
+## Current Test Status
 
-### Test Examples
+### Passing Tests
+1. Basic Connection (3 tests)
+   - Successful connection in Chromium (583ms)
+   - Successful connection in Firefox (1.0s)
+   - Successful connection in WebKit (2.6s)
 
-1. Basic LLM Request
-```typescript
-test('should handle direct LLM request', async ({ page, wsHelper }) => {
-    await wsHelper.waitForConnection();
-    await wsHelper.authenticate('test-key');
+2. Authentication (2 tests in Firefox)
+   - Successful authentication
+   - Authentication failure handling
 
-    await wsHelper.sendMessage({
-        type: 'llm_request',
-        data: {
-            content: 'Test query',
-            template: 'parsing_analysis',
-            metadata: {
-                domain: 'test',
-                type: 'analysis'
-            }
-        },
-        timestamp: new Date().toISOString(),
-        client_id: 'test'
-    });
-
-    await wsHelper.waitForMessage('llm_chunk');
-    await expect(page.locator('[data-testid="llm-response"]')).toBeVisible();
-});
-```
-
-2. Streaming Response
-```typescript
-test('should handle streaming responses', async ({ page, wsHelper }) => {
-    await wsHelper.waitForConnection();
-    await wsHelper.authenticate('test-key');
-
-    await wsHelper.sendMessage({
-        type: 'llm_request',
-        data: {
-            content: 'Long query requiring streaming',
-            template: 'analytics_processing'
-        },
-        timestamp: new Date().toISOString(),
-        client_id: 'test'
-    });
-
-    let chunkCount = 0;
-    let isFinal = false;
-
-    while (!isFinal) {
-        await wsHelper.waitForMessage('llm_chunk');
-        chunkCount++;
-        await expect(page.locator('[data-testid="llm-chunk"]')).toBeVisible();
-
-        const isFinalText = await page.getAttribute('[data-testid="llm-chunk"]', 'data-final');
-        isFinal = isFinalText === 'true';
-    }
-
-    expect(chunkCount).toBeGreaterThan(1);
-});
-```
-
-3. Error Recovery
-```typescript
-test('should handle error recovery', async ({ page, wsHelper }) => {
-    await wsHelper.waitForConnection();
-    await wsHelper.authenticate('test-key');
-
-    // Test with invalid API base
-    await wsHelper.sendMessage({
-        type: 'llm_request',
-        data: {
-            content: 'Test query',
-            template: 'parsing_analysis',
-            api_base: 'http://localhost:9999/v1'
-        },
-        timestamp: new Date().toISOString(),
-        client_id: 'test'
-    });
-
-    await wsHelper.waitForMessage('error');
-    await expect(page.locator('[data-testid="error-message"]')).toContainText('failed to connect');
-
-    // Test recovery with correct API base
-    await wsHelper.sendMessage({
-        type: 'llm_request',
-        data: {
-            content: 'Test query',
-            template: 'parsing_analysis',
-            api_base: 'http://localhost:1234/v1'
-        },
-        timestamp: new Date().toISOString(),
-        client_id: 'test'
-    });
-
-    await wsHelper.waitForMessage('llm_chunk');
-    await expect(page.locator('[data-testid="error-message"]')).not.toBeVisible();
-});
-```
-
-4. Connection Stability
-```typescript
-test('should maintain connection stability', async ({ page, wsHelper }) => {
-    await wsHelper.waitForConnection();
-    await wsHelper.authenticate('test-key');
-
-    // Send long-running query
-    await wsHelper.sendMessage({
-        type: 'llm_request',
-        data: {
-            content: 'Very long query requiring extensive processing',
-            template: 'analytics_processing'
-        },
-        timestamp: new Date().toISOString(),
-        client_id: 'test'
-    });
-
-    // Monitor connection status
-    await expect(page.locator('[data-testid="connection-status"]')).toHaveText('Connected');
-
-    // Collect chunks with timeout monitoring
-    const startTime = Date.now();
-    let chunkCount = 0;
-
-    while (true) {
-        await wsHelper.waitForMessage('llm_chunk', 5000);
-        chunkCount++;
-
-        // Verify connection remains stable
-        await expect(page.locator('[data-testid="connection-status"]')).toHaveText('Connected');
-
-        // Check if this is the final chunk
-        const isFinalText = await page.getAttribute('[data-testid="llm-chunk"]', 'data-final');
-        if (isFinalText === 'true') break;
-    }
-
-    const elapsedTime = Date.now() - startTime;
-    expect(elapsedTime).toBeGreaterThan(1000); // Should take some time
-    expect(chunkCount).toBeGreaterThan(5); // Should have multiple chunks
-});
-```
-
-## Test Data Attributes
-
-### LLM Integration
-- `data-testid="llm-chunk"` - Individual LLM response chunk
-- `data-testid="llm-response"` - Complete LLM response
-- `data-testid="error-message"` - Error message display
+### Test Data Attributes
 - `data-testid="connection-status"` - WebSocket connection status
+- `data-testid="auth-status"` - Authentication status ('Authenticated' | 'Not Authenticated')
+- `data-testid="error-message"` - Error message display
+- `data-testid="reconnect-info"` - Reconnection attempt information
+- `data-testid="error-details"` - Detailed error information
 
-## Implementation Status (2025-01-21)
+### Server Configuration
 
-1. ✓ LM Studio Integration
-   - Configured models (llama-3.2-3b-instruct, text-embedding-nomic-embed-text-v1.5@f16)
-   - Implemented WebSocket streaming
-   - Added template-based analysis
-   - Added error handling and recovery
+The WebSocket server is part of the main FastAPI application (`nia.nova.core.app`) and can be started in two ways:
 
-2. ✓ Frontend Components
-   - Created LLMChat component with WebSocket support
-   - Added template selection dropdown
-   - Implemented streaming response display
-   - Added error handling and status indicators
+1. Development Mode (manage.py):
+   ```bash
+   python scripts/manage.py start
+   ```
+   - Starts all services including Neo4j, Redis, FastAPI, etc.
+   - Uses uvicorn with debug mode enabled
+   - Provides comprehensive logging and monitoring
 
-3. ✓ Testing Infrastructure
-   - Added end-to-end WebSocket tests
-   - Added LLM integration tests
-   - Added error recovery tests
-   - Added performance tests
+2. Server Only (run_server.py):
+   ```bash
+   python scripts/run_server.py
+   ```
+   - Focused on running the FastAPI server
+   - Includes service verification and monitoring
+   - More suitable for production-like environments
 
-4. ✓ Documentation
-   - Added message format documentation
-   - Added troubleshooting guide
-   - Added test data attributes
-   - Added implementation examples
+Both methods use the same FastAPI application and WebSocket endpoints, ensuring consistent behavior.
 
-## Timeline
+### Authentication Flow and Error Handling
 
-- Day 1: Configure LM Studio and implement backend handlers
-- Day 2: Add frontend integration and basic testing
-- Day 3: Complete end-to-end testing and agent coordination
+The WebSocket authentication in this app follows a two-step process with comprehensive error handling:
+
+1. Initial Connection
+   - Client connects to `/debug/client_{client_id}` or `/client_{client_id}`
+   - Server accepts connection without authentication
+   - Server sends `connection_established` message
+   ```json
+   {
+     "type": "connection_established",
+     "data": {
+       "message": "Connection established, waiting for authentication"
+     }
+   }
+   ```
+
+2. Authentication Message
+   - Client sends `connect` message with API key
+   ```json
+   {
+     "type": "connect",
+     "data": {
+       "api_key": "valid-test-key",
+       "connection_type": "chat",
+       "domain": "personal",
+       "workspace": "personal"
+     }
+   }
+   ```
+   - Server validates API key using `ws_auth()` function
+   - On success, server sends `connection_success` followed by `message_delivered`
+   ```json
+   {
+     "type": "connection_success",
+     "data": {
+       "message": "Connected"
+     }
+   }
+   {
+     "type": "message_delivered",
+     "data": {
+       "message": "Authentication message received and processed",
+       "original_type": "connect",
+       "status": "success"
+     }
+   }
+   ```
+   - On failure, server sends error message and closes connection
+   ```json
+   {
+     "type": "error",
+     "data": {
+       "message": "Invalid API key",
+       "error_type": "invalid_key"
+     }
+   }
+   {
+     "type": "disconnect",
+     "data": {
+       "reason": "Invalid API key"
+     }
+   }
+   ```
+
+3. Post-Authentication
+   - All subsequent messages require prior successful authentication
+   - Connection is maintained until explicitly closed or error occurs
+   - Server tracks authentication state per connection
+   - Reconnection requires re-authentication
+
+4. Error Handling
+   - Authentication Errors (403/4000)
+     ```json
+     // Invalid API key
+     {
+       "type": "error",
+       "data": {
+         "message": "Invalid API key",
+         "error_type": "invalid_key",
+         "code": 403
+       }
+     }
+     // Expired token
+     {
+       "type": "error",
+       "data": {
+         "message": "Token expired",
+         "error_type": "token_expired",
+         "code": 403
+       }
+     }
+     ```
+     Followed by disconnect message:
+     ```json
+     {
+       "type": "disconnect",
+       "data": {
+         "reason": "Invalid API key"
+       }
+     }
+     ```
+     Connection closed with code 4000
+
+   - Server Errors (500/1011)
+     ```json
+     {
+       "type": "error",
+       "data": {
+         "message": "Internal server error",
+         "error_type": "server_error",
+         "code": 500
+       }
+     }
+     ```
+     Connection closed with code 1011
+
+5. API Keys
+   - Development: 'development' key for main app
+   - Testing: 'valid-test-key' for automated tests
+   - Keys are validated against TEST_API_KEYS in auth.py
+   - Keys can have expiration and permission levels
+
+6. WebSocket Close Codes
+   - 1000: Normal closure
+   - 1011: Server error
+   - 4000: Authentication error
+   - 4001: Rate limit exceeded
+   - 4002: Invalid message format
+   - 4003: Protocol violation
+
+### Authentication States
+The system maintains consistent authentication states:
+1. Initial state: 'Not Authenticated'
+2. After successful auth: 'Authenticated'
+3. After connection error: 'Not Authenticated'
+4. After reconnection: Requires re-authentication
+5. After cleanup: 'Not Authenticated'
+
+Authentication status is preserved during:
+- Channel operations (join/leave)
+- Agent status updates
+- Message sending/receiving
+
+## Implementation Status
+
+1. Working Features
+   - Basic WebSocket connection across browsers
+   - Authentication with API key validation
+   - Connection status display
+   - Basic error message handling
+   - Consistent auth state management
+   - Auth status preservation during operations
+   - Clean state reset after tests
+
+2. Pending Implementation
+   - Message delivery confirmation
+   - Reconnection handling
+   - Message broadcasting
+   - Error recovery strategies
+   - Performance monitoring
+   - Load balancing
+
+3. Known Issues
+   - Message delivery unconfirmed
+   - Reconnection scenarios need improvement
+   - Performance under high load untested
+   - Error recovery needs enhancement
 
 ## Next Steps
 
-1. Complete remaining LM Studio configuration
-   - Set up llama-3.2-3b-instruct model
-   - Configure text-embedding-nomic-embed-text-v1.5@f16
-   - Test model loading
+1. Debug Endpoint Updates
+   - ✓ Fixed premature exit after auth by implementing two-step authentication
+   - ✓ Added message delivery confirmation
+   - Implement channel operations:
+     * Need to implement `/api/chat/threads` endpoint (currently 404)
+     * Need to fix message validation for channel operations
+     * Need to implement channel subscription/unsubscription handlers
+   - Add proper error handling:
+     * Need to handle channel operation failures
+     * Need to implement retry logic for failed operations
+     * Need to add timeout handling for operations
 
-2. Implement WebSocket handlers
-   - Add LLM request handling
-   - Add streaming response
-   - Add error handling
+2. Test Infrastructure
+   - Add channel subscription tests
+   - Add message delivery tests
+   - Add reconnection tests
+   - Add error recovery tests
 
-3. Add frontend integration
-   - Create LLMClient class
-   - Add streaming support
-   - Add error handling
+3. Error Handling
+   - Add retry logic
+   - Add timeout handling
+   - Add error recovery
+   - Add error reporting
 
-4. Test end-to-end flow
-   - Test with frontend
-   - Verify streaming works
-   - Check error handling
-
-5. Additional Improvements
-   - Add more templates for different analysis types
-   - Improve error handling with retry logic
-   - Add unit tests for edge cases
-   - Document WebSocket message formats
+4. Performance Testing
+   - Add load tests
+   - Add stress tests
+   - Add latency tests
+   - Add connection limit tests

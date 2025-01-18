@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Service management script for NIA."""
 
 import argparse
@@ -16,11 +15,11 @@ from celery.app.control import Control
 
 # Configure logging
 logging.basicConfig(
-    level=logging.DEBUG,  # Change to DEBUG level
+    level=logging.INFO,  # Change to INFO level to reduce noise
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     handlers=[
-        logging.StreamHandler(),  # Add console output
-        logging.FileHandler(str(Path.cwd() / 'logs' / 'service_manager.log'))  # Add file output
+        logging.StreamHandler(),
+        logging.FileHandler(str(Path.cwd() / 'logs' / 'service_manager.log'))
     ]
 )
 logger = logging.getLogger('service_manager')
@@ -40,8 +39,8 @@ class ServiceManager:
     
     def __init__(self):
         """Initialize service manager."""
-        self.docker_compose_file = "docker/docker-compose.yml"
-        self.debug = True  # Control debug output
+        self.docker_compose_file = "scripts/docker/docker-compose.yml"
+        self.debug = False  # Disable debug output
         self.session = requests.Session()
         self.session.headers.update({"X-API-Key": "valid-test-key"})
         
@@ -53,7 +52,8 @@ class ServiceManager:
             "neo4j": {
                 "port": 7687,
                 "health_url": "http://localhost:7474/browser/",
-                "startup_time": 30
+                "startup_time": 30,
+                "check_interval": 5  # Add check interval to reduce frequency
             },
             "qdrant": {
                 "port": 6333,
@@ -62,7 +62,7 @@ class ServiceManager:
             },
             "redis": {
                 "port": 6379,
-                "health_url": None,  # Redis doesn't use HTTP
+                "health_url": None,
                 "startup_time": 2
             },
             "lmstudio": {
@@ -72,7 +72,7 @@ class ServiceManager:
             },
             "fastapi": {
                 "port": 8000,
-                "health_url": "http://localhost:8000/api/status",  # Use status endpoint for health check
+                "health_url": "http://localhost:8000/api/status",
                 "startup_time": 3
             },
             "frontend": {
@@ -86,7 +86,7 @@ class ServiceManager:
                 "startup_time": 2
             }
         }
-    
+
     def check_service(self, name: str, url: str | None = None) -> bool:
         """Check if a service is responding."""
         try:
@@ -204,7 +204,7 @@ class ServiceManager:
             if self.debug:
                 logger.debug(f"Error checking {name}: {str(e)}")
             return False
-    
+
     def check_docker(self):
         """Check if Docker is running."""
         try:
@@ -220,6 +220,22 @@ class ServiceManager:
             print("❌ Docker is not running")
             print("Please start Docker Desktop")
             return False
+
+    def wait_for_service(self, name: str, timeout: int = 30, interval: int = 1):
+        """Wait for service to be ready with timeout."""
+        print(f"⏳ Waiting for {name} to start...")
+        start_time = time.time()
+        check_interval = self.services[name].get("check_interval", interval)
+        
+        while time.time() - start_time < timeout:
+            if self.check_service(name, self.services[name]["health_url"]):
+                print(f"✅ {name} is running")
+                return True
+            time.sleep(check_interval)  # Use service-specific interval
+            
+        logger.warning(f"{name} did not start within {timeout} seconds")
+        print(f"⚠️  {name} did not start within {timeout} seconds")
+        return False
 
     def start_docker_services(self):
         """Start Neo4j and Qdrant containers."""
@@ -241,7 +257,7 @@ class ServiceManager:
             
             # Neo4j needs extra time to initialize
             print("\n⏳ Waiting for Neo4j to initialize (this may take a minute)...")
-            if not self.wait_for_service("neo4j", timeout=120):
+            if not self.wait_for_service("neo4j", timeout=120):  # 2 minutes timeout
                 services_ready = False
             
             # Then check Qdrant
@@ -256,18 +272,19 @@ class ServiceManager:
                 
             # Give Neo4j extra time to complete initialization
             print("✅ Docker services started, waiting for full initialization...")
-            time.sleep(5)
+            time.sleep(30)  # Increased from 20s to 30s
                 
         except subprocess.CalledProcessError as e:
             logger.error(f"Error starting Docker services: {e}")
             print(f"❌ Error starting Docker services: {e}")
             sys.exit(1)
-    
+
     def check_lmstudio(self):
         """Check if LMStudio is running."""
         print("\n🤖 Checking LMStudio...")
         if self.check_service("lmstudio", self.services["lmstudio"]["health_url"]):
             print("✅ LMStudio is running")
+            return True
         else:
             logger.error("LMStudio is not running")
             print("❌ LMStudio is not running")
@@ -275,135 +292,7 @@ class ServiceManager:
             print("1. Open LMStudio application")
             print("2. Load your preferred model")
             print("3. Start the local server")
-            sys.exit(1)
-    
-    def check_dependencies(self):
-        """Check if required Python packages are installed."""
-        try:
-            import uvicorn
-            import fastapi
-            import tinytroupe
-            return True
-        except ImportError as e:
-            logger.error(f"Missing dependencies: {e}")
-            print(f"❌ Missing dependencies: {e}")
-            print("Please run: pdm install")
             return False
-
-    def check_tinytroupe_config(self):
-        """Check TinyTroupe configuration."""
-        site_packages_config = Path(Path.cwd().parent / ".venv/lib/python3.12/site-packages/tinytroupe/config.ini")
-        print(f"Looking for default config on: {site_packages_config}")
-        custom_config = Path(Path.cwd().parent / "config.ini")
-        
-        print("\n🔍 Checking TinyTroupe configuration...")
-        logger.info(f"Site packages config: {site_packages_config.absolute()}")
-        logger.info(f"Custom config: {custom_config.absolute()}")
-        print(f"Site packages config: {site_packages_config.absolute()}")
-        print(f"Custom config: {custom_config.absolute()}")
-        
-        # Try to read configs to verify they're valid
-        configs_valid = False
-        
-        if site_packages_config.exists() and site_packages_config.is_file():
-            try:
-                with open(site_packages_config) as f:
-                    content = f.read()
-                    if "[DEFAULT]" in content and "[MEMORY]" in content and "[WORKSPACES]" in content:
-                        print("✅ Site packages config is valid")
-                        configs_valid = True
-                    else:
-                        logger.warning("Site packages config is invalid")
-                        print("⚠️  Site packages config is invalid")
-            except Exception as e:
-                logger.error(f"Error reading site packages config: {e}")
-                print(f"⚠️  Error reading site packages config: {e}")
-        
-        if custom_config.exists() and custom_config.is_file():
-            print(f"Found custom config on: {custom_config}")
-            try:
-                with open(custom_config) as f:
-                    content = f.read()
-                    if "[DEFAULT]" in content and "[MEMORY]" in content and "[WORKSPACES]" in content:
-                        print("✅ Custom config is valid")
-                        configs_valid = True
-                    else:
-                        logger.warning("Custom config is invalid")
-                        print("⚠️  Custom config is invalid")
-            except Exception as e:
-                logger.error(f"Error reading custom config: {e}")
-                print(f"⚠️  Error reading custom config: {e}")
-        else:
-            print(f"Failed to find custom config on: {custom_config}")
-        
-        if not configs_valid:
-            logger.warning("No valid TinyTroupe configuration found")
-            print("\n⚠️  No valid TinyTroupe configuration found")
-            print("Creating default config.ini...")
-            
-            config_content = """[DEFAULT]
-model_api_type = lmstudio
-model_api_base = http://localhost:1234/v1
-model_name = local-model
-
-[MEMORY]
-consolidation_interval = 300
-importance_threshold = 0.5
-
-[WORKSPACES]
-# Access level configuration
-personal_enabled = true
-professional_enabled = true
-
-[DOMAINS]
-# Knowledge domains for Professional workspace
-domains = retail,bfsi,finance
-default_domain = retail
-
-# Domain-specific settings
-retail_memory_threshold = 0.6
-bfsi_memory_threshold = 0.7
-finance_memory_threshold = 0.7
-"""
-            try:
-                with open(custom_config, "w") as f:
-                    f.write(config_content)
-                logger.info(f"Created default config.ini at {custom_config.absolute()}")
-                print(f"✅ Created default config.ini at {custom_config.absolute()}")
-                print("Please customize if needed, especially:")
-                print("- model_api_type")
-                print("- model_api_base")
-                print("- model_name")
-            except Exception as e:
-                logger.error(f"Failed to create config.ini: {e}")
-                print(f"❌ Failed to create config.ini: {e}")
-                sys.exit(1)
-
-    def wait_for_service(self, name: str, timeout: int = 30, interval: int = 1):
-        """Wait for service to be ready with timeout."""
-        print(f"⏳ Waiting for {name} to start...")
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            if self.check_service(name, self.services[name]["health_url"]):
-                print(f"✅ {name} is running")
-                return True
-            time.sleep(interval)
-        logger.warning(f"{name} did not start within {timeout} seconds")
-        print(f"⚠️  {name} did not start within {timeout} seconds")
-        return False
-
-    def wait_for_redis(self, timeout=30):
-        """Wait for Redis to be fully ready."""
-        print("⏳ Waiting for Redis to be ready...")
-        start_time = time.time()
-        while time.time() - start_time < timeout:
-            if self.check_service("redis", None):
-                print("✅ Redis is ready")
-                return True
-            time.sleep(1)
-        logger.error("Redis failed to become ready")
-        print("❌ Redis failed to become ready")
-        return False
 
     def start_celery(self):
         """Start Celery worker."""
@@ -529,9 +418,8 @@ finance_memory_threshold = 0.7
             stderr_log = logs_dir / f"fastapi-{timestamp}.err"
             
             # Start FastAPI server with uvicorn
-            venv_python = str(Path.cwd().parent / ".venv" / "bin" / "python")
             server_cmd = [
-                venv_python, "-m", "uvicorn",
+                "python", "-m", "uvicorn",
                 "nia.nova.core.app:app",
                 "--host", "0.0.0.0",
                 "--port", "8000",
@@ -575,44 +463,12 @@ finance_memory_threshold = 0.7
             logger.error(f"Error starting FastAPI server: {e}")
             print(f"❌ Error starting FastAPI server: {e}")
             sys.exit(1)
-            
-    def stop_fastapi(self):
-        """Stop FastAPI server."""
-        try:
-            # Kill any uvicorn process running our FastAPI server
-            subprocess.run(["pkill", "-f", "uvicorn.*nia.nova.core"], check=False)
-            time.sleep(1)  # Give time for the process to fully stop
-        except Exception as e:
-            logger.warning(f"Error stopping FastAPI: {e}")
-            print(f"Warning: Error stopping FastAPI: {e}")
-    
-    def check_frontend_deps(self):
-        """Check and install frontend dependencies."""
-        frontend_path = Path.cwd().parent / "frontend"
-        node_modules = frontend_path / "node_modules"
-        
-        if not node_modules.exists():
-            print("📦 Installing frontend dependencies...")
-            try:
-                subprocess.run(
-                    ["npm", "install"],
-                    check=True,
-                    cwd=str(frontend_path),
-                    capture_output=True,
-                    text=True
-                )
-                print("✅ Frontend dependencies installed")
-            except subprocess.CalledProcessError as e:
-                logger.error(f"Failed to install frontend dependencies:\n{e.stderr}")
-                print(f"❌ Failed to install frontend dependencies:\n{e.stderr}")
-                return False
-        return True
 
     def start_frontend(self):
         """Start frontend development server."""
         print("\n🎨 Starting frontend server...")
         try:
-            frontend_path = Path.cwd().parent / "frontend"
+            frontend_path = Path.cwd() / "frontend"
             
             # Check and install dependencies first
             if not self.check_frontend_deps():
@@ -681,14 +537,6 @@ finance_memory_threshold = 0.7
             self.stop_frontend()
             sys.exit(1)
 
-    def stop_frontend(self):
-        """Stop frontend server."""
-        try:
-            subprocess.run(["pkill", "-f", "vite"], check=False)
-        except Exception as e:
-            logger.warning(f"Error stopping frontend: {e}")
-            print(f"Warning: Error stopping frontend: {e}")
-
     def stop_celery(self):
         """Stop Celery worker."""
         print("Stopping Celery worker...")
@@ -697,6 +545,24 @@ finance_memory_threshold = 0.7
         except Exception as e:
             logger.warning(f"Error stopping Celery worker: {e}")
             print(f"Warning: Error stopping Celery worker: {e}")
+
+    def stop_fastapi(self):
+        """Stop FastAPI server."""
+        try:
+            # Kill any uvicorn process running our FastAPI server
+            subprocess.run(["pkill", "-f", "uvicorn.*nia.nova.core"], check=False)
+            time.sleep(1)  # Give time for the process to fully stop
+        except Exception as e:
+            logger.warning(f"Error stopping FastAPI: {e}")
+            print(f"Warning: Error stopping FastAPI: {e}")
+
+    def stop_frontend(self):
+        """Stop frontend server."""
+        try:
+            subprocess.run(["pkill", "-f", "vite"], check=False)
+        except Exception as e:
+            logger.warning(f"Error stopping frontend: {e}")
+            print(f"Warning: Error stopping frontend: {e}")
 
     def stop_services(self):
         """Stop all services."""
@@ -730,110 +596,6 @@ finance_memory_threshold = 0.7
         
         print("✅ All services stopped")
 
-    def cleanup_data(self):
-        """Clean up all data stores."""
-        print("\n🧹 Cleaning up data stores...")
-        
-        # Stop all services first
-        self.stop_services()
-        
-        try:
-            # Clean up any orphan containers first
-            print("Cleaning up orphan containers...")
-            subprocess.run(
-                ["docker", "compose", "-f", self.docker_compose_file, "down", "--remove-orphans"],
-                check=True
-            )
-            
-            # Start Redis first
-            print("Starting Redis...")
-            subprocess.run(
-                ["docker", "compose", "-f", self.docker_compose_file, "up", "-d", "redis"],
-                check=True
-            )
-            
-            # Wait for Redis to be ready
-            time.sleep(5)
-            
-            # Clear Redis data
-            print("Clearing Redis data...")
-            subprocess.run(
-                ["docker", "compose", "-f", self.docker_compose_file, "exec", "redis", "redis-cli", "FLUSHALL"],
-                check=True
-            )
-            
-            # Clear only Qdrant data since it's tied to the embedding model
-            print("\nℹ️  Preserving Neo4j graph data while clearing vector store for new embedding model...")
-            qdrant_path = Path("scripts/data/qdrant")
-            if qdrant_path.exists():
-                subprocess.run(["rm", "-rf", str(qdrant_path)], check=True)
-                
-            print("✅ All data stores cleaned")
-            
-            # Start Docker services first
-            print("\nStarting Docker services...")
-            self.start_docker_services()
-            
-            # Give Neo4j extra time to be fully ready
-            print("\nVerifying Neo4j is fully ready...")
-            # Check Neo4j a few more times to ensure stability
-            for _ in range(3):
-                if not self.check_service("neo4j", self.services["neo4j"]["health_url"]):
-                    logger.error("Neo4j failed readiness check")
-                    print("❌ Neo4j failed readiness check")
-                    sys.exit(1)
-                time.sleep(2)
-            
-            # Initialize Qdrant collections
-            print("\nInitializing Qdrant collections...")
-            collection_name = f"memories_{self.embedding_model.split('@')[0]}"
-            subprocess.run(
-                ["curl", "-X", "PUT", f"http://localhost:6333/collections/{collection_name}", 
-                 "-H", "Content-Type: application/json",
-                 "-d", '{"vectors": {"size": 768, "distance": "Cosine", "on_disk": true}}'],
-                check=True,
-                capture_output=True
-            )
-            
-            # Wait for collection to be ready
-            print("Waiting for Qdrant collection to be ready...")
-            time.sleep(10)  # Give collection time to initialize
-            
-            # Verify collection exists
-            result = subprocess.run(
-                ["curl", "-s", f"http://localhost:6333/collections/{collection_name}"],
-                check=True,
-                capture_output=True,
-                text=True
-            )
-            if '"status":"green"' not in result.stdout:
-                raise RuntimeError("Qdrant collection not ready")
-            
-            # Initialize memory system
-            print("\nInitializing memory system...")
-            env = os.environ.copy()
-            env["PYTHONPATH"] = str(Path.cwd())
-            env["LOG_LEVEL"] = "DEBUG"  # Increase logging for debugging
-            subprocess.run(
-                [str(Path.cwd().parent / ".venv" / "bin" / "python"), str(Path.cwd() / "initialize_graph.py")],
-                check=True,
-                env=env,
-                capture_output=False  # Show output for debugging
-            )
-            
-            # Start remaining services
-            print("\nStarting remaining services...")
-            self.check_lmstudio()
-            self.start_celery()
-            self.start_fastapi()
-            self.start_frontend()
-            self.show_status()
-            
-        except subprocess.CalledProcessError as e:
-            logger.error(f"Error during cleanup: {e}")
-            print(f"❌ Error during cleanup: {e}")
-            sys.exit(1)
-            
     def show_status(self):
         """Show status of all services."""
         print("\n📊 Service Status:")
@@ -871,6 +633,143 @@ finance_memory_threshold = 0.7
         status = "✅ Running" if self.check_service("celery", None) else "❌ Not running"
         print(f"Celery Worker: {status}")
 
+    def check_dependencies(self):
+        """Check if required Python packages are installed."""
+        try:
+            import uvicorn
+            import fastapi
+            import tinytroupe
+            return True
+        except ImportError as e:
+            logger.error(f"Missing dependencies: {e}")
+            print(f"❌ Missing dependencies: {e}")
+            print("Please run: pdm install")
+            return False
+
+    def check_tinytroupe_config(self):
+        """Check TinyTroupe configuration."""
+        site_packages_config = Path(Path.cwd().parent / ".venv/lib/python3.12/site-packages/tinytroupe/config.ini")
+        print(f"Looking for default config on: {site_packages_config}")
+        custom_config = Path(Path.cwd().parent / "config.ini")
+        
+        print("\n🔍 Checking TinyTroupe configuration...")
+        logger.info(f"Site packages config: {site_packages_config.absolute()}")
+        logger.info(f"Custom config: {custom_config.absolute()}")
+        print(f"Site packages config: {site_packages_config.absolute()}")
+        print(f"Custom config: {custom_config.absolute()}")
+        
+        # Try to read configs to verify they're valid
+        configs_valid = False
+        
+        if site_packages_config.exists() and site_packages_config.is_file():
+            try:
+                with open(site_packages_config) as f:
+                    content = f.read()
+                    if "[DEFAULT]" in content and "[MEMORY]" in content and "[WORKSPACES]" in content:
+                        print("✅ Site packages config is valid")
+                        configs_valid = True
+                    else:
+                        logger.warning("Site packages config is invalid")
+                        print("⚠️  Site packages config is invalid")
+            except Exception as e:
+                logger.error(f"Error reading site packages config: {e}")
+                print(f"⚠️  Error reading site packages config: {e}")
+        
+        if custom_config.exists() and custom_config.is_file():
+            print(f"Found custom config on: {custom_config}")
+            try:
+                with open(custom_config) as f:
+                    content = f.read()
+                    if "[DEFAULT]" in content and "[MEMORY]" in content and "[WORKSPACES]" in content:
+                        print("✅ Custom config is valid")
+                        configs_valid = True
+                    else:
+                        logger.warning("Custom config is invalid")
+                        print("⚠️  Custom config is invalid")
+            except Exception as e:
+                logger.error(f"Error reading custom config: {e}")
+                print(f"⚠️  Error reading custom config: {e}")
+        else:
+            print(f"Failed to find custom config on: {custom_config}")
+        
+        if not configs_valid:
+            logger.warning("No valid TinyTroupe configuration found")
+            print("\n⚠️  No valid TinyTroupe configuration found")
+            print("Creating default config.ini...")
+            
+            config_content = """[DEFAULT]
+model_api_type = lmstudio
+model_api_base = http://localhost:1234/v1
+model_name = local-model
+
+[MEMORY]
+consolidation_interval = 300
+importance_threshold = 0.5
+
+[WORKSPACES]
+# Access level configuration
+personal_enabled = true
+professional_enabled = true
+
+[DOMAINS]
+# Knowledge domains for Professional workspace
+domains = retail,bfsi,finance
+default_domain = retail
+
+# Domain-specific settings
+retail_memory_threshold = 0.6
+bfsi_memory_threshold = 0.7
+finance_memory_threshold = 0.7
+"""
+            try:
+                with open(custom_config, "w") as f:
+                    f.write(config_content)
+                logger.info(f"Created default config.ini at {custom_config.absolute()}")
+                print(f"✅ Created default config.ini at {custom_config.absolute()}")
+                print("Please customize if needed, especially:")
+                print("- model_api_type")
+                print("- model_api_base")
+                print("- model_name")
+            except Exception as e:
+                logger.error(f"Failed to create config.ini: {e}")
+                print(f"❌ Failed to create config.ini: {e}")
+                sys.exit(1)
+
+    def wait_for_redis(self, timeout=30):
+        """Wait for Redis to be fully ready."""
+        print("⏳ Waiting for Redis to be ready...")
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            if self.check_service("redis", None):
+                print("✅ Redis is ready")
+                return True
+            time.sleep(1)
+        logger.error("Redis failed to become ready")
+        print("❌ Redis failed to become ready")
+        return False
+
+    def check_frontend_deps(self):
+        """Check and install frontend dependencies."""
+        frontend_path = Path.cwd() / "frontend"
+        node_modules = frontend_path / "node_modules"
+        
+        if not node_modules.exists():
+            print("📦 Installing frontend dependencies...")
+            try:
+                subprocess.run(
+                    ["npm", "install"],
+                    check=True,
+                    cwd=str(frontend_path),
+                    capture_output=True,
+                    text=True
+                )
+                print("✅ Frontend dependencies installed")
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Failed to install frontend dependencies:\n{e.stderr}")
+                print(f"❌ Failed to install frontend dependencies:\n{e.stderr}")
+                return False
+        return True
+
 def main():
     """Main entry point."""
     parser = argparse.ArgumentParser(description="NIA service management")
@@ -879,9 +778,7 @@ def main():
     
     manager = ServiceManager()
     
-    if args.command == "clean":
-        manager.cleanup_data()
-    elif args.command == "start":
+    if args.command == "start":
         manager.start_docker_services()
         manager.check_lmstudio()
         manager.start_celery()

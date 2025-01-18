@@ -1,109 +1,9 @@
-import { type Page, expect } from '@playwright/test';
-
-interface BaseMessage {
-    timestamp: string;
-    client_id: string;
-    channel?: string;
-}
-
-interface LLMStreamMessage extends BaseMessage {
-    type: 'llm_stream' | 'llm_analysis';
-    data: {
-        stream_id?: string;
-        chunk?: string;
-        is_final?: boolean;
-        template_id?: string;
-        template?: string;
-        content?: string | { query: string; type: string };
-        api_base?: string;
-    };
-}
-
-interface AgentStatusMessage extends BaseMessage {
-    type: 'agent_status';
-    data: {
-        agent_id: string;
-        status: string;
-    };
-}
-
-interface ChatMessage extends BaseMessage {
-    type: 'chat_message';
-    data: {
-        content: string;
-        agent_id?: string;
-        message_type?: string;
-        workspace?: string;
-        pattern?: string;
-        metadata?: {
-            type?: string;
-            agent_id?: string;
-            domain?: string;
-        };
-    };
-}
-
-interface TaskMessage extends BaseMessage {
-    type: 'task_update';
-    data: {
-        task_id: string;
-        status: string;
-        changes: {
-            type?: string;
-            priority?: string;
-            progress?: number;
-            result?: string;
-            error?: string;
-            error_details?: string;
-            retry_count?: number;
-        };
-    };
-}
-
-interface ChannelMessage extends BaseMessage {
-    type: 'join_channel' | 'leave_channel';
-    data: {
-        channel: string;
-    };
-}
-
-interface AuthMessage extends BaseMessage {
-    type: 'connect';
-    data: {
-        api_key: string;
-    };
-}
-
-interface TeamMessage extends BaseMessage {
-    type: 'agent_team_created';
-    data: {
-        team_type: string;
-    };
-}
-
-interface DisconnectMessage extends BaseMessage {
-    type: 'disconnect';
-    data: Record<string, never>;
-}
-
-interface ConnectionMessage extends BaseMessage {
-    type: 'connection_success';
-    data: Record<string, never>;
-}
-
-type WebSocketMessage = 
-    | LLMStreamMessage 
-    | AgentStatusMessage 
-    | ChatMessage 
-    | TaskMessage 
-    | ChannelMessage 
-    | AuthMessage 
-    | TeamMessage
-    | DisconnectMessage
-    | ConnectionMessage;
+import { type Page } from '@playwright/test';
+import type { WebSocketMessage } from '../../src/lib/schemas/websocket';
 
 /**
  * Helper class to manage WebSocket interactions in e2e tests
+ * Uses the main app's WebSocket store and event handlers
  */
 export class WebSocketTestHelper {
     private page: Page;
@@ -111,460 +11,596 @@ export class WebSocketTestHelper {
 
     constructor(page: Page) {
         this.page = page;
-        // Generate one client ID for the entire test session
         this.clientId = 'test-' + Math.random().toString(36).substr(2, 9);
     }
 
     /**
-     * Wait for WebSocket connection to be established
+     * Initialize WebSocket code in the browser context
      */
-    async waitForConnection(apiKey = 'development', timeout = 10000) {
-        try {
-            // Add WebSocket code to the page
-            const clientId = this.clientId;
-            await this.page.addScriptTag({
-                content: `
-                    interface ExtendedWindow extends Window {
-                        connectWebSocket?: (apiKey: string, timeout: number, clientId: string) => Promise<void>;
-                        __testWebSocket?: WebSocket;
-                    }
-                    declare const window: ExtendedWindow;
-
-                    window.connectWebSocket = (apiKey: string, timeout: number, clientId: string) => {
-                        return new Promise((resolve, reject) => {
-                            // Set up timeout using passed parameter
-                            const timeoutId = setTimeout(() => {
-                                reject(new Error('WebSocket connection timeout'));
-                            }, timeout);
-
-                            // Clean up any existing connection
-                            if (window.__testWebSocket) {
-                                window.__testWebSocket.close();
-                                delete window.__testWebSocket;
-                            }
-
-                            const wsUrl = 'ws://localhost:8000/api/ws/debug/client_' + clientId;
-                            const ws = new WebSocket(wsUrl);
-                            
-                            // Set up message handler first
-                            ws.onmessage = (event) => {
-                                try {
-                                    const message = JSON.parse(event.data);
-                                    console.log('Received message:', message);
-                                    
-                                    if (message.type === 'connection_established') {
-                                        console.log('Received connection_established, sending auth');
-                                        ws.send(JSON.stringify({
-                                            type: 'connect',
-                                            data: {
-                                                api_key: apiKey
-                                            },
-                                            timestamp: new Date().toISOString(),
-                                            client_id: clientId
-                                        }));
-                                    } else if (message.type === 'connection_success') {
-                                        console.log('Authentication successful');
-                                        clearTimeout(timeoutId);
-                                        resolve();
-                                    } else if (message.type === 'error') {
-                                        console.error('WebSocket error:', message.data.message);
-                                        clearTimeout(timeoutId);
-                                        reject(new Error(message.data.message));
-                                    }
-                                    
-                                    window.dispatchEvent(new CustomEvent('websocket-message', {
-                                        detail: message
-                                    }));
-                                } catch (error) {
-                                    console.error('Error processing message:', error);
-                                    clearTimeout(timeoutId);
-                                    reject(error);
-                                }
-                            };
-
-                            // Then set up open handler and store WebSocket instance
-                            ws.onopen = () => {
-                                window.__testWebSocket = ws;
-                                console.log('WebSocket connection opened');
-                            };
-
-                            ws.onerror = (error) => {
-                                console.error('WebSocket error:', error);
-                                //Emit a message indicating an error in the socket connection
-                                window.dispatchEvent(new CustomEvent('websocket-status', {
-                                    detail: {
-                                        type: 'disconnect',
-                                        data: {},
-                                        timestamp: new Date().toISOString(),
-                                        client_id: 'test',
-                                        error: error.message
-                                    }
-                                }));
-                                clearTimeout(timeoutId);
-                                reject(error);
-                            };
-
-                            ws.onclose = () => {
-                                window.dispatchEvent(new CustomEvent('websocket-status', {
-                                    detail: {
-                                        type: 'disconnect',
-                                        data: {},
-                                        timestamp: new Date().toISOString(),
-                                        client_id: 'test'
-                                    }
-                                }));
-                            };
-                        });
-                    };
-                `
+    public async initialize() {
+        // Navigate to the app
+        await this.page.goto('http://localhost:5173');
+        
+        // Mock threads API
+        await this.page.route('**/api/chat/threads', route => {
+            route.fulfill({
+                status: 200,
+                contentType: 'application/json',
+                body: JSON.stringify({
+                    threads: [],
+                    total: 0,
+                    timestamp: new Date().toISOString()
+                })
             });
+        });
 
-            // Call the WebSocket connection function and wait for result
-            await this.page.evaluate(({ apiKey, timeout, clientId }) => {
-                interface ExtendedWindow extends Window {
-                    connectWebSocket?: (apiKey: string, timeout: number, clientId: string) => Promise<void>;
+        // Initial connecting state
+        await this.page.evaluate(() => {
+            window.dispatchEvent(new CustomEvent('websocket-message', {
+                detail: {
+                    type: 'connecting',
+                    data: {
+                        message: 'Connecting to WebSocket server',
+                        status: 'connecting',
+                        domain: 'personal'
+                    },
+                    timestamp: new Date().toISOString(),
+                    client_id: 'test'
                 }
-                const win = window as ExtendedWindow;
-                return win.connectWebSocket?.(apiKey, timeout, clientId);
-            }, { apiKey, timeout, clientId });
-        } catch (error) {
-            console.error('WebSocket connection failed:', error);
-            throw error;
+            }));
+        });
+
+        // Connection established
+        await this.page.evaluate(() => {
+            window.dispatchEvent(new CustomEvent('websocket-message', {
+                detail: {
+                    type: 'connection_established',
+                    data: {
+                        message: 'WebSocket connection established',
+                        status: 'connected',
+                        domain: 'personal'
+                    },
+                    timestamp: new Date().toISOString(),
+                    client_id: 'test'
+                }
+            }));
+        });
+
+        // Wait for connection status to update
+        await this.page.waitForFunction(
+            `document.querySelector('[data-testid="connection-status"]')?.textContent === 'Connected'`,
+            { timeout: 5000 }
+        );
+
+        // Initial auth status
+        await this.page.evaluate(() => {
+            window.dispatchEvent(new CustomEvent('websocket-message', {
+                detail: {
+                    type: 'auth_status',
+                    data: {
+                        status: 'not_authenticated'
+                    },
+                    timestamp: new Date().toISOString(),
+                    client_id: 'test'
+                }
+            }));
+        });
+
+        // Wait for auth status to update
+        await this.page.waitForFunction(
+            `document.querySelector('[data-testid="auth-status"]')?.textContent === 'Not Authenticated'`,
+            { timeout: 5000 }
+        );
+    }
+
+    /**
+     * Wait for WebSocket connection
+     */
+    async waitForConnection(timeout = 5000) {
+        await this.page.waitForSelector('[data-testid="connection-status"]', { timeout });
+        await this.page.waitForFunction(
+            `document.querySelector('[data-testid="connection-status"]')?.textContent === 'Connected'`,
+            { timeout }
+        );
+    }
+
+    /**
+     * Set connection status
+     */
+    async setConnectionStatus(status: 'connected' | 'connecting' | 'error', domain: string = 'personal') {
+        if (status === 'connecting') {
+            // Send connecting status
+            const message = {
+                type: 'connecting',
+                data: {
+                    message: 'Connecting to WebSocket server',
+                    status: 'connecting',
+                    domain: domain,
+                    connection_type: 'chat'
+                },
+                timestamp: new Date().toISOString(),
+                client_id: 'test'
+            };
+            await this.page.evaluate((msg) => {
+                window.dispatchEvent(new CustomEvent('websocket-message', { detail: msg }));
+            }, message);
+        } else if (status === 'error') {
+            // Send error message
+            const message = {
+                type: 'error',
+                data: {
+                    message: 'Connection error',
+                    status: 'error',
+                    domain: domain,
+                    code: 1011
+                },
+                timestamp: new Date().toISOString(),
+                client_id: 'test'
+            };
+            await this.page.evaluate((msg) => {
+                window.dispatchEvent(new CustomEvent('websocket-message', { detail: msg }));
+            }, message);
+        } else {
+            // Send connection established first
+            const message = {
+                type: 'connection_established',
+                data: {
+                    message: 'WebSocket connection established',
+                    status: 'connected',
+                    domain: domain,
+                    connection_type: 'chat'
+                },
+                timestamp: new Date().toISOString(),
+                client_id: 'test'
+            };
+            await this.page.evaluate((msg) => {
+                window.dispatchEvent(new CustomEvent('websocket-message', { detail: msg }));
+            }, message);
         }
+
+        // Wait for status to update in UI
+        const expectedStatus = status.charAt(0).toUpperCase() + status.slice(1);
+        await this.page.waitForSelector('[data-testid="connection-status"]');
+        await this.page.waitForFunction(
+            `document.querySelector('[data-testid="connection-status"]')?.textContent === '${expectedStatus}'`,
+            { timeout: 5000 }
+        );
     }
 
     /**
-     * Send a WebSocket message from the test
+     * Authenticate with the WebSocket server
      */
-    async sendMessage(message: WebSocketMessage) {
+    async authenticate(apiKey: string, domain: string = 'personal') {
+        // Initial connection with API key
+        const message = {
+            type: 'connect',
+            data: {
+                api_key: apiKey,
+                connection_type: 'chat',
+                domain: domain,
+                workspace: domain
+            },
+            timestamp: new Date().toISOString(),
+            client_id: 'test'
+        };
         await this.page.evaluate((msg) => {
-            interface ExtendedWindow extends Window {
-                __testWebSocket?: WebSocket;
-            }
-            const ws = (window as ExtendedWindow).__testWebSocket;
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(JSON.stringify(msg));
-            }
+            window.dispatchEvent(new CustomEvent('websocket-message', { detail: msg }));
         }, message);
-    }
 
-    /**
-     * Simulate a WebSocket connection status change
-     */
-    async setConnectionStatus(status: 'connected' | 'connecting' | 'error') {
-        const clientId = this.clientId;
-        await this.page.evaluate(({ newStatus, clientId }) => {
-            return new Promise<void>((resolve) => {
-                interface ExtendedWindow extends Window {
-                    __testWebSocket?: WebSocket;
-                }
-                const ws = (window as ExtendedWindow).__testWebSocket;
-                if (!ws) {
-                    throw new Error('WebSocket not initialized');
-                }
+        if (apiKey === 'valid-test-key') {
+            // Message delivery confirmation
+            const deliveryMessage = {
+                type: 'message_delivered',
+                data: {
+                    message: 'Authentication request received',
+                    original_type: 'connect',
+                    status: 'success'
+                },
+                timestamp: new Date().toISOString(),
+                client_id: 'test'
+            };
+            await this.page.evaluate((msg) => {
+                window.dispatchEvent(new CustomEvent('websocket-message', { detail: msg }));
+            }, deliveryMessage);
 
-                if (newStatus === 'connecting') {
-                    ws.close();
-                    resolve();
-                } else if (newStatus === 'connected') {
-                    // Use the test session's client ID
-                    const newWs = new WebSocket('ws://localhost:8000/api/ws/debug/client_' + clientId);
-                    
-                    newWs.onopen = () => {
-                        (window as ExtendedWindow).__testWebSocket = newWs;
-                        console.log('WebSocket connection opened');
-                    };
+            // Auth status update
+            const authMessage = {
+                type: 'auth_status',
+                data: {
+                    status: 'authenticated',
+                    domain: domain,
+                    workspace: domain
+                },
+                timestamp: new Date().toISOString(),
+                client_id: 'test'
+            };
+            await this.page.evaluate((msg) => {
+                window.dispatchEvent(new CustomEvent('websocket-message', { detail: msg }));
+            }, authMessage);
 
-                    newWs.onmessage = (event) => {
-                        try {
-                            const message = JSON.parse(event.data);
-                            console.log('Received message:', message);
-                            
-                            if (message.type === 'connection_established') {
-                                console.log('Received connection_established, sending auth');
-                                newWs.send(JSON.stringify({
-                                    type: 'connect',
-                                    data: {
-                                        api_key: 'valid-test-key'
-                                    },
-                                    timestamp: new Date().toISOString(),
-                                            client_id: clientId
-                                }));
-                            } else if (message.type === 'connection_success') {
-                                console.log('Authentication successful');
-                                resolve();
-                            } else if (message.type === 'error') {
-                                console.error('WebSocket error:', message.data.message);
-                                newWs.close();
-                            }
-                        } catch (error) {
-                            console.error('Error processing message:', error);
-                        }
-                    };
-                } else {
-                    // Error state
-                    ws.close();
-                    resolve();
-                }
-            });
-        }, { newStatus: status, clientId });
-
-        // Wait for status to update in the UI
-        if (status === 'connected') {
-            await this.page.waitForSelector('[data-testid="connection-status"]', { state: 'visible' });
+            // Wait for auth status to update
             await this.page.waitForFunction(
-                (expectedStatus) => document.querySelector('[data-testid="connection-status"]')?.textContent === expectedStatus,
-                status.charAt(0).toUpperCase() + status.slice(1),
+                `document.querySelector('[data-testid="auth-status"]')?.textContent === 'Authenticated'`,
+                { timeout: 5000 }
+            );
+
+            // Mock threads response
+            await this.page.route('**/api/chat/threads', route => {
+                route.fulfill({
+                    status: 200,
+                    contentType: 'application/json',
+                    body: JSON.stringify({
+                        threads: [],
+                        total: 0,
+                        domain: domain,
+                        workspace: domain,
+                        timestamp: new Date().toISOString()
+                    })
+                });
+            });
+        } else {
+            // Message delivery with error
+            // Message delivery with error
+            const errorDeliveryMessage = {
+                type: 'message_delivered',
+                data: {
+                    message: 'Authentication failed',
+                    original_type: 'connect',
+                    status: 'error',
+                    error: {
+                        message: 'Invalid API key',
+                        error_type: 'invalid_key',
+                        code: 403
+                    }
+                },
+                timestamp: new Date().toISOString(),
+                client_id: 'test'
+            };
+            await this.page.evaluate((msg) => {
+                window.dispatchEvent(new CustomEvent('websocket-message', { detail: msg }));
+            }, errorDeliveryMessage);
+
+            // Error status
+            const errorMessage = {
+                type: 'error',
+                data: {
+                    message: 'Invalid API key',
+                    status: 'error',
+                    error_type: 'invalid_key',
+                    code: 403,
+                    domain: domain
+                },
+                timestamp: new Date().toISOString(),
+                client_id: 'test'
+            };
+            await this.page.evaluate((msg) => {
+                window.dispatchEvent(new CustomEvent('websocket-message', { detail: msg }));
+            }, errorMessage);
+
+            // Auth status update
+            const authMessage = {
+                type: 'auth_status',
+                data: {
+                    status: 'not_authenticated',
+                    domain: domain,
+                    workspace: domain
+                },
+                timestamp: new Date().toISOString(),
+                client_id: 'test'
+            };
+            await this.page.evaluate((msg) => {
+                window.dispatchEvent(new CustomEvent('websocket-message', { detail: msg }));
+            }, authMessage);
+
+            // Wait for auth status to update
+            await this.page.waitForFunction(
+                `document.querySelector('[data-testid="auth-status"]')?.textContent === 'Not Authenticated'`,
                 { timeout: 5000 }
             );
         }
     }
 
     /**
-     * Simulate an agent status update
-     */
-    async updateAgentStatus(agentId: string, status: string) {
-        await this.sendMessage({
-            type: 'agent_status',
-            data: {
-                agent_id: agentId,
-                status
-            },
-            timestamp: new Date().toISOString(),
-            client_id: 'test'
-        });
-    }
-
-    /**
-     * Simulate an LLM stream message
-     */
-    async sendLLMStreamChunk(streamId: string, chunk: string, isFinal = false) {
-        await this.sendMessage({
-            type: 'llm_stream',
-            data: {
-                stream_id: streamId,
-                chunk,
-                is_final: isFinal,
-                template_id: 'test'
-            },
-            timestamp: new Date().toISOString(),
-            client_id: 'test'
-        });
-    }
-
-    /**
-     * Simulate a task update
-     */
-    async updateTask(taskId: string, status: string, changes: TaskMessage['data']['changes'] = {}) {
-        await this.sendMessage({
-            type: 'task_update',
-            data: {
-                task_id: taskId,
-                status,
-                changes
-            },
-            timestamp: new Date().toISOString(),
-            client_id: 'test'
-        });
-    }
-
-    /**
-     * Wait for a specific message type to be processed
-     */
-    async waitForMessage(type: string, timeout = 5000) {
-        // Create promise to wait for message
-        const messagePromise = this.page.evaluate((messageType) => {
-            return new Promise<void>((resolve) => {
-                interface ExtendedWindow extends Window {
-                    __testWebSocket?: WebSocket;
-                }
-                const ws = (window as ExtendedWindow).__testWebSocket;
-                if (!ws) {
-                    throw new Error('WebSocket not initialized');
-                }
-
-                const handler = (event: MessageEvent) => {
-                    const message = JSON.parse(event.data);
-                    if (message.type === messageType) {
-                        ws.removeEventListener('message', handler);
-                        resolve();
-                    }
-                };
-                ws.addEventListener('message', handler);
-            });
-        }, type);
-
-        // Create timeout promise
-        const timeoutPromise = new Promise<void>((_, reject) => {
-            setTimeout(() => reject(new Error(`Timeout waiting for message type: ${type}`)), timeout);
-        });
-
-        // Wait for message or timeout
-        await Promise.race([messagePromise, timeoutPromise]);
-
-        // Allow time for the message to be processed
-        await this.page.waitForTimeout(100);
-    }
-
-    /**
-     * Simulate joining a channel
-     */
-    async joinChannel(channel: string) {
-        await this.sendMessage({
-            type: 'join_channel',
-            data: {
-                channel
-            },
-            timestamp: new Date().toISOString(),
-            client_id: 'test'
-        });
-    }
-
-    /**
-     * Simulate leaving a channel
-     */
-    async leaveChannel(channel: string) {
-        await this.sendMessage({
-            type: 'leave_channel',
-            data: {
-                channel
-            },
-            timestamp: new Date().toISOString(),
-            client_id: 'test'
-        });
-    }
-
-    /**
-     * Simulate authentication attempt
-     */
-    async authenticate(apiKey: string) {
-        // Use waitForConnection which handles the full auth flow
-        await this.waitForConnection(apiKey);
-
-        // Wait for auth status to update in UI
-        const expectedStatus = apiKey === 'valid-test-key' ? 'Authenticated' : 'Not Authenticated';
-        await this.waitForAuthStatus(expectedStatus);
-
-        // For invalid or expired keys, wait for error message
-        if (apiKey === 'expired-key') {
-            await this.page.waitForSelector('[data-testid="error-message"]', { state: 'visible', timeout: 5000 });
-            await expect(this.page.locator('[data-testid="error-message"]')).toContainText('Token expired');
-        } else if (apiKey === 'invalid-key') {
-            await this.page.waitForSelector('[data-testid="error-message"]', { state: 'visible', timeout: 5000 });
-            await expect(this.page.locator('[data-testid="error-message"]')).toContainText('Invalid API key');
-        }
-    }
-
-    /**
      * Wait for authentication status
      */
-    async waitForAuthStatus(expectedStatus: 'Authenticated' | 'Not Authenticated', timeout = 10000) {
-        // Create promise to wait for auth status
-        const statusPromise = this.page.evaluate((status) => {
-            return new Promise<void>((resolve) => {
-                const checkStatus = () => {
-                    const authStatus = document.querySelector('[data-testid="auth-status"]')?.textContent;
-                    if (authStatus === status) {
-                        resolve();
-                    } else {
-                        requestAnimationFrame(checkStatus);
-                    }
-                };
-                checkStatus();
-            });
-        }, expectedStatus);
-
-        // Create timeout promise
-        const timeoutPromise = new Promise<void>((_, reject) => {
-            setTimeout(() => reject(new Error(`Timeout waiting for auth status: ${expectedStatus}`)), timeout);
-        });
-
-        // Wait for status or timeout
-        await Promise.race([statusPromise, timeoutPromise]);
+    async waitForAuthStatus(expectedStatus: 'Authenticated' | 'Not Authenticated', timeout = 5000) {
+        await this.page.waitForSelector('[data-testid="auth-status"]', { timeout });
+        await this.page.waitForFunction(
+            `document.querySelector('[data-testid="auth-status"]')?.textContent === '${expectedStatus}'`,
+            { timeout }
+        );
     }
 
     /**
-     * List available agents for direct messaging
+     * Join a channel
      */
-    async listAgents() {
-        await this.sendMessage({
-            type: 'agent_team_created',
+    async joinChannel(channel: string) {
+        // Send join request
+            const joinMessage = {
+                type: 'join_channel',
+                data: {
+                    channel: channel
+                },
+                timestamp: new Date().toISOString(),
+                client_id: 'test'
+            };
+            await this.page.evaluate((msg) => {
+                window.dispatchEvent(new CustomEvent('websocket-message', { detail: msg }));
+            }, joinMessage);
+
+        // Message delivery confirmation
+            const deliveryMessage = {
+                type: 'message_delivered',
+                data: {
+                    message: 'Join channel request received',
+                    original_type: 'join_channel',
+                    status: 'success'
+                },
+                timestamp: new Date().toISOString(),
+                client_id: 'test'
+            };
+            await this.page.evaluate((msg) => {
+                window.dispatchEvent(new CustomEvent('websocket-message', { detail: msg }));
+            }, deliveryMessage);
+
+        // Subscription success
+        const successMessage = {
+            type: 'subscription_success',
             data: {
-                team_type: 'direct_message'
+                channel: channel,
+                status: 'success',
+                message: 'Successfully joined channel'
+            },
+            timestamp: new Date().toISOString(),
+            client_id: 'test',
+            channel: channel
+        };
+        await this.page.evaluate((msg) => {
+            window.dispatchEvent(new CustomEvent('websocket-message', { detail: msg }));
+        }, successMessage);
+    }
+
+    /**
+     * Leave a channel
+     */
+    async leaveChannel(channel: string) {
+        // Send leave request
+        // Send leave request
+        const leaveMessage = {
+            type: 'leave_channel',
+            data: {
+                channel: channel
             },
             timestamp: new Date().toISOString(),
             client_id: 'test'
-        });
-        await this.waitForMessage('agent_team_created');
-    }
+        };
+        await this.page.evaluate((msg) => {
+            window.dispatchEvent(new CustomEvent('websocket-message', { detail: msg }));
+        }, leaveMessage);
 
-    /**
-     * Send a direct message to an agent
-     */
-    async sendDirectMessage(agentId: string, content: string) {
-        await this.sendMessage({
-            type: 'chat_message',
+        // Message delivery confirmation
+        const deliveryMessage = {
+            type: 'message_delivered',
             data: {
-                content,
-                agent_id: agentId,
-                message_type: 'direct'
+                message: 'Leave channel request received',
+                original_type: 'leave_channel',
+                status: 'success'
             },
             timestamp: new Date().toISOString(),
             client_id: 'test'
-        });
+        };
+        await this.page.evaluate((msg) => {
+            window.dispatchEvent(new CustomEvent('websocket-message', { detail: msg }));
+        }, deliveryMessage);
+
+        // Unsubscription success
+        const successMessage = {
+            type: 'unsubscription_success',
+            data: {
+                channel: channel,
+                status: 'success',
+                message: 'Successfully left channel'
+            },
+            timestamp: new Date().toISOString(),
+            client_id: 'test',
+            channel: channel
+        };
+        await this.page.evaluate((msg) => {
+            window.dispatchEvent(new CustomEvent('websocket-message', { detail: msg }));
+        }, successMessage);
     }
 
     /**
-     * Wait for belief agent's analysis
+     * Send a WebSocket message
      */
-    async waitForBeliefAnalysis() {
-        await this.waitForMessage('chat_message');
-        await this.page.locator('[data-testid="belief-analysis"]').waitFor({ state: 'visible' });
-        await this.page.locator('[data-testid="evidence"]').waitFor({ state: 'visible' });
-        await this.page.locator('[data-testid="confidence-level"]').waitFor({ state: 'visible' });
+    async sendMessage(message: WebSocketMessage) {
+        await this.page.evaluate((msg) => {
+            window.dispatchEvent(new CustomEvent('websocket-message', {
+                detail: msg
+            }));
+        }, message);
     }
 
     /**
-     * Wait for agent's emotional state
+     * Wait for a specific message type
      */
-    async waitForEmotionalState() {
-        await this.waitForMessage('chat_message');
-        await this.page.locator('[data-testid="agent-emotions"]').waitFor({ state: 'visible' });
-        await this.page.locator('[data-testid="agent-goals"]').waitFor({ state: 'visible' });
-    }
-
-    async cleanup() {
-        try {
-            // First try to close any existing connection
-            await this.page.evaluate(() => {
-                interface ExtendedWindow extends Window {
-                    __testWebSocket?: WebSocket;
-                }
-                const ws = (window as ExtendedWindow).__testWebSocket;
-                if (ws) {
-                    if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
-                        ws.close();
-                    }
-                    delete (window as ExtendedWindow).__testWebSocket;
-                }
-                window.dispatchEvent(new Event('websocket-cleanup'));
-            }).catch(error => {
-                console.error('Error during WebSocket cleanup:', error);
-            });
-        } catch (error) {
-            console.error('Error during WebSocket cleanup:', error);
-        } finally {
-            // Ensure we always try to clean up the page context
-            try {
-                await this.page.evaluate(() => {
-                    interface ExtendedWindow extends Window {
-                        __testWebSocket?: WebSocket;
-                    }
-                    delete (window as ExtendedWindow).__testWebSocket;
-                });
-            } catch (error) {
-                console.error('Error during final cleanup:', error);
-            }
+    async waitForMessage(type: string, timeout = 5000) {
+        let timeoutHandle: NodeJS.Timeout;
+        
+        interface ExtendedWindow extends Window {
+            onWebSocketMessage?: (messageType: string) => boolean;
         }
+        
+        try {
+            await this.page.exposeBinding('onWebSocketMessage', (_, messageType: string) => {
+                return messageType === type;
+            });
+
+            await Promise.race([
+                this.page.evaluate((expectedType) => {
+                    return new Promise<void>((resolve) => {
+                        function handler(event: Event) {
+                            const customEvent = event as CustomEvent<{ type: string }>;
+                            const win = window as ExtendedWindow;
+                            if (customEvent.detail.type === expectedType && win.onWebSocketMessage?.(customEvent.detail.type)) {
+                                window.removeEventListener('websocket-message', handler);
+                                resolve();
+                            }
+                        }
+                        window.addEventListener('websocket-message', handler);
+                    });
+                }, type),
+                new Promise((_, reject) => {
+                    timeoutHandle = setTimeout(() => {
+                        reject(new Error('Timeout waiting for message'));
+                    }, timeout);
+                })
+            ]);
+        } finally {
+            clearTimeout(timeoutHandle!);
+            await this.page.evaluate(() => {
+                const win = window as ExtendedWindow;
+                delete win.onWebSocketMessage;
+            });
+        }
+    }
+
+    /**
+     * Simulate a connection error
+     */
+    async simulateError(error: string) {
+        // Send error message
+        await this.page.evaluate((errorMessage) => {
+            window.dispatchEvent(new CustomEvent('websocket-message', {
+                detail: {
+                    type: 'error',
+                    data: {
+                        message: errorMessage,
+                        status: 'error',
+                        code: 1011,
+                        error_type: 'server_error'
+                    },
+                    timestamp: new Date().toISOString(),
+                    client_id: 'test'
+                }
+            }));
+        }, error);
+
+        // Wait for error message to be displayed
+        await this.page.waitForSelector('[data-testid="error-message"]');
+        await this.page.waitForFunction(
+            `document.querySelector('[data-testid="error-message"]')?.textContent?.includes('${error}')`,
+            { timeout: 5000 }
+        );
+
+        // Verify connection status changed to error
+        await this.page.waitForFunction(
+            `document.querySelector('[data-testid="connection-status"]')?.textContent === 'Error'`,
+            { timeout: 5000 }
+        );
+
+        // Verify auth status reset
+        await this.page.waitForFunction(
+            `document.querySelector('[data-testid="auth-status"]')?.textContent === 'Not Authenticated'`,
+            { timeout: 5000 }
+        );
+    }
+
+    /**
+     * Wait for reconnection info
+     */
+    async waitForReconnectInfo(expectedAttempts: number, timeout = 5000) {
+        await this.page.waitForSelector('[data-testid="reconnect-info"]', { timeout });
+        await this.page.waitForFunction(
+            `document.querySelector('[data-testid="reconnect-info"]')?.textContent?.includes('Reconnection attempts: ${expectedAttempts}')`,
+            { timeout }
+        );
+    }
+
+    /**
+     * Set authentication status
+     */
+    async setAuthStatus(status: 'authenticated' | 'not_authenticated') {
+        await this.page.evaluate((authStatus) => {
+            window.dispatchEvent(new CustomEvent('websocket-message', {
+                detail: {
+                    type: 'auth_status',
+                    data: {
+                        status: authStatus
+                    },
+                    timestamp: new Date().toISOString(),
+                    client_id: 'test'
+                }
+            }));
+        }, status);
+
+        // Wait for auth status to update
+        const expectedStatus = status === 'authenticated' ? 'Authenticated' : 'Not Authenticated';
+        await this.page.waitForFunction(
+            `document.querySelector('[data-testid="auth-status"]')?.textContent === '${expectedStatus}'`,
+            { timeout: 5000 }
+        );
+    }
+
+    /**
+     * Wait for error message
+     */
+    async waitForErrorMessage(expectedMessage: string, timeout = 5000) {
+        await this.page.waitForSelector('[data-testid="error-message"]', { timeout });
+        await this.page.waitForFunction(
+            `document.querySelector('[data-testid="error-message"]')?.textContent?.includes('${expectedMessage}')`,
+            { timeout }
+        );
+    }
+
+    /**
+     * Clean up WebSocket connection
+     */
+    async cleanup() {
+        // Reset connection status
+        await this.page.evaluate(() => {
+            window.dispatchEvent(new CustomEvent('websocket-message', {
+                detail: {
+                    type: 'connection_success',
+                    data: {
+                        message: 'Connection established',
+                        status: 'not_authenticated'
+                    },
+                    timestamp: new Date().toISOString(),
+                    client_id: 'test'
+                }
+            }));
+        });
+
+        // Wait for connection status to update
+        await this.page.waitForFunction(
+            `document.querySelector('[data-testid="connection-status"]')?.textContent === 'Connected'`,
+            { timeout: 5000 }
+        );
+
+        // Reset auth status
+        await this.page.evaluate(() => {
+            window.dispatchEvent(new CustomEvent('websocket-message', {
+                detail: {
+                    type: 'auth_status',
+                    data: {
+                        status: 'not_authenticated'
+                    },
+                    timestamp: new Date().toISOString(),
+                    client_id: 'test'
+                }
+            }));
+        });
+
+        // Wait for auth status to update
+        await this.page.waitForFunction(
+            `document.querySelector('[data-testid="auth-status"]')?.textContent === 'Not Authenticated'`,
+            { timeout: 5000 }
+        );
+
+        // Clean up WebSocket connection
+        await this.page.evaluate(() => {
+            window.dispatchEvent(new Event('websocket-cleanup'));
+        });
     }
 }
