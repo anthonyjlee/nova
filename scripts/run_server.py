@@ -16,9 +16,9 @@ from nia.memory.two_layer import TwoLayerMemorySystem
 from nia.memory.vector_store import VectorStore
 from nia.nova.core.thread_manager import ThreadManager
 
-# Add project root to Python path
+# Add src directory to Python path
 project_root = Path(__file__).parent.parent.resolve()
-sys.path.append(str(project_root))
+sys.path.append(str(project_root / "src"))
 
 # Configure logging with both file and console handlers
 LOGS_DIR = project_root / "test_results" / "initialization_logs"
