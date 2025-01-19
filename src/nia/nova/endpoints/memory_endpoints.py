@@ -29,7 +29,7 @@ from ..core.dependencies import (
 
 # Create router with dependencies
 memory_router = APIRouter(
-    prefix="/api/memory",
+    prefix="",
     tags=["memory"],
     dependencies=[Depends(check_rate_limit)]
 )

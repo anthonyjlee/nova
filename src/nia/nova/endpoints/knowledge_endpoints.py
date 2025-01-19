@@ -10,7 +10,7 @@ from ..core.error_handling import ServiceError
 from nia.core.types.memory_types import Memory, MemoryType
 
 kg_router = APIRouter(
-    prefix="/api/knowledge",
+    prefix="",
     tags=["Knowledge Graph"]
 )
 

@@ -10,7 +10,7 @@ import subprocess
 import json
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, Set
 
 from nia.memory.two_layer import TwoLayerMemorySystem
 from nia.memory.vector_store import VectorStore
@@ -21,7 +21,7 @@ project_root = Path(__file__).parent.parent.resolve()
 sys.path.append(str(project_root))
 
 # Configure logging with both file and console handlers
-LOGS_DIR = project_root / "logs" / "server"
+LOGS_DIR = project_root / "test_results" / "initialization_logs"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 log_file = LOGS_DIR / f"server_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
 
@@ -29,6 +29,7 @@ class JsonFormatter(logging.Formatter):
     """Custom JSON formatter for logging."""
     def format(self, record: logging.LogRecord) -> str:
         return json.dumps({
+            'phase': getattr(record, 'phase', 'unknown'),
             'timestamp': datetime.utcnow().isoformat(),
             'name': record.name,
             'level': record.levelname,
@@ -36,7 +37,7 @@ class JsonFormatter(logging.Formatter):
             'line': record.lineno,
             'message': record.getMessage(),
             'exc_info': record.exc_info and str(record.exc_info),
-        }) + '\n'
+        }, default=str) + '\n'
 
 # Configure JSON file handler
 json_handler = logging.FileHandler(log_file)
@@ -45,7 +46,7 @@ json_handler.setFormatter(JsonFormatter())
 
 # Configure console handler with minimal formatting
 console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
+console_handler.setLevel(logging.WARNING)
 console_handler.setFormatter(logging.Formatter('%(message)s'))
 
 # Configure main logger
@@ -67,9 +68,9 @@ RETRY_INTERVAL = 2
 REQUIRED_SYSTEM_THREADS = ["nova-team", "system-logs", "agent-communication"]
 
 class ServiceStatus:
-    """Track service health status."""
+    """Track service health status with proper cleanup."""
     def __init__(self):
-        self.services: Dict[str, bool] = {
+        self._services: Dict[str, bool] = {
             "neo4j": False,
             "qdrant": False,
             "redis": False,
@@ -77,24 +78,36 @@ class ServiceStatus:
             "memory_system": False,
             "thread_manager": False
         }
-    
+        self._initialized: Set[str] = set()
+        
     def set_status(self, service: str, status: bool) -> None:
-        """Update service status."""
-        self.services[service] = status
+        """Update service status with proper tracking."""
+        self._services[service] = status
+        if status:
+            self._initialized.add(service)
         status_symbol = "✓" if status else "❌"
-        logger.info(f"{status_symbol} {service.capitalize()}: {'ready' if status else 'failed'}")
+        logger.warning(f"{status_symbol} {service.capitalize()}: {'ready' if status else 'failed'}")
     
     def all_ready(self) -> bool:
         """Check if all services are ready."""
-        return all(self.services.values())
+        return all(self._services.values())
+        
+    def get_initialized(self) -> Set[str]:
+        """Get set of initialized services for cleanup."""
+        return self._initialized
 
 async def start_docker_services(status: ServiceStatus):
     """Start all required Docker services with proper cleanup."""
     try:
         compose_dir = Path(__file__).parent / "docker"
         os.chdir(str(compose_dir))
+        
+        # Stop any existing services first
+        subprocess.run(["docker", "compose", "down"], check=True)
+        
+        # Start services
         subprocess.run(["docker", "compose", "up", "-d"], check=True)
-        logger.info("Docker services started successfully")
+        logger.warning("Docker services started")
         return True
     except Exception as e:
         logger.error(f"Failed to start Docker services: {str(e)}")
@@ -111,7 +124,7 @@ async def wait_for_neo4j(status: ServiceStatus, max_retries: int = MAX_RETRIES, 
                 text=True
             )
             if result.returncode == 0:
-                logger.info("Neo4j is ready")
+                logger.warning("Neo4j is ready")
                 status.set_status("neo4j", True)
                 return True
         except Exception as e:
@@ -130,7 +143,7 @@ async def wait_for_qdrant(status: ServiceStatus, max_retries: int = MAX_RETRIES,
             try:
                 async with session.get('http://localhost:6333/healthz') as response:
                     if response.status == 200:
-                        logger.info("Qdrant is ready")
+                        logger.warning("Qdrant is ready")
                         status.set_status("qdrant", True)
                         return True
             except Exception as e:
@@ -152,7 +165,7 @@ async def wait_for_redis(status: ServiceStatus, max_retries: int = MAX_RETRIES, 
                 text=True
             )
             if result.returncode == 0 and "PONG" in result.stdout:
-                logger.info("Redis is ready")
+                logger.warning("Redis is ready")
                 status.set_status("redis", True)
                 return True
         except Exception as e:
@@ -164,18 +177,18 @@ async def wait_for_redis(status: ServiceStatus, max_retries: int = MAX_RETRIES, 
     return False
 
 async def verify_memory_system(status: ServiceStatus) -> Optional[TwoLayerMemorySystem]:
-    """Initialize and verify memory system."""
+    """Initialize and verify memory system with proper cleanup."""
     try:
-        # Initialize memory system
+        # Initialize memory system with memory pools
         memory_system = TwoLayerMemorySystem()
         await memory_system.initialize()
         
-        # Verify vector store
+        # Verify vector store with connection pooling
         if memory_system.vector_store:
             await memory_system.vector_store.connect()
             await memory_system.vector_store.inspect_collection()
         
-        # Verify episodic store
+        # Verify episodic store with minimal serialization
         from nia.core.types.memory_types import EpisodicMemory, MemoryType
         test_memory = EpisodicMemory(
             content="Memory system test",
@@ -188,6 +201,7 @@ async def verify_memory_system(status: ServiceStatus) -> Optional[TwoLayerMemory
             timestamp=datetime.now(timezone.utc)
         )
         if memory_system.episodic:
+            # Use direct layer access
             await memory_system.episodic.store_memory(test_memory)
         
         status.set_status("memory_system", True)
@@ -198,11 +212,11 @@ async def verify_memory_system(status: ServiceStatus) -> Optional[TwoLayerMemory
         return None
 
 async def verify_thread_manager(status: ServiceStatus, memory_system: TwoLayerMemorySystem) -> Optional[ThreadManager]:
-    """Initialize and verify thread manager."""
+    """Initialize and verify thread manager with proper cleanup."""
     try:
         thread_manager = ThreadManager(memory_system)
         
-        # Verify system threads exist
+        # Verify system threads exist with direct layer access
         for thread_name in REQUIRED_SYSTEM_THREADS:
             thread = await thread_manager.get_thread(thread_name)
             if not thread:
@@ -228,7 +242,7 @@ async def start_celery_worker(status: ServiceStatus):
     """Start Celery worker with proper monitoring."""
     try:
         worker_process = subprocess.Popen(
-            ["celery", "-A", "nia.core.celery_app", "worker", "--loglevel=info"],
+            ["celery", "-A", "nia.nova.core.celery_app", "worker", "--loglevel=info"],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE
         )
@@ -247,7 +261,7 @@ async def start_celery_worker(status: ServiceStatus):
         status.set_status("celery", False)
         return None
 
-async def cleanup_services(worker_process: Optional[subprocess.Popen] = None):
+async def cleanup_services(status: ServiceStatus, worker_process: Optional[subprocess.Popen] = None):
     """Clean up services on shutdown."""
     try:
         if worker_process:
@@ -262,7 +276,7 @@ async def cleanup_services(worker_process: Optional[subprocess.Popen] = None):
         os.chdir(str(compose_dir))
         subprocess.run(["docker", "compose", "down"], check=True)
         
-        logger.info("Services cleaned up successfully")
+        logger.warning("Services cleaned up successfully")
     except Exception as e:
         logger.error(f"Error during cleanup: {str(e)}")
 
@@ -285,17 +299,17 @@ async def main():
         if not await wait_for_redis(status):
             raise RuntimeError("Redis failed to start")
         
-        # Initialize memory system
+        # Initialize memory system with proper cleanup
         memory_system = await verify_memory_system(status)
         if not memory_system:
             raise RuntimeError("Memory system verification failed")
         
-        # Initialize thread manager
+        # Initialize thread manager with proper cleanup
         thread_manager = await verify_thread_manager(status, memory_system)
         if not thread_manager:
             raise RuntimeError("Thread manager verification failed")
         
-        # Start Celery worker
+        # Start Celery worker with proper cleanup
         worker_process = await start_celery_worker(status)
         if not worker_process:
             raise RuntimeError("Failed to start Celery worker")
@@ -303,7 +317,7 @@ async def main():
         if not status.all_ready():
             raise RuntimeError("Not all services are ready")
         
-        logger.info("All services initialized successfully")
+        logger.warning("All services initialized successfully")
         
         # Get configuration from environment
         host = os.getenv("NOVA_HOST", "127.0.0.1")
@@ -322,7 +336,7 @@ async def main():
             log_config=None
         )
         server = uvicorn.Server(config)
-        logger.info(f"Server starting on http://{host}:{port}")
+        logger.warning(f"Server starting on http://{host}:{port}")
         
         try:
             await server.serve()
@@ -333,7 +347,7 @@ async def main():
         logger.error(f"Startup failed: {str(e)}", exc_info=True)
         sys.exit(1)
     finally:
-        await cleanup_services(worker_process)
+        await cleanup_services(status, worker_process)
 
 if __name__ == "__main__":
     asyncio.run(main())

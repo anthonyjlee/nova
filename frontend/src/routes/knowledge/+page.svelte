@@ -54,14 +54,9 @@
   }
 </script>
 
-<div class="h-full bg-[#1A1D21] text-[#DCDDDE]">
-  <!-- Header -->
-  <div class="flex-none h-12 border-b border-[#2C2D31] flex items-center px-4">
-    <h1 class="text-lg font-semibold">Knowledge Graph</h1>
-  </div>
-
+<div class="flex flex-col h-screen bg-[#1A1D21] text-[#DCDDDE]">
   <!-- Content -->
-  <div class="flex-1 p-4">
+  <div class="flex-1 p-4 overflow-hidden">
     {#if $knowledgeStore.loading}
       <div class="flex items-center justify-center h-full">
         <div class="w-12 h-12 border-4 border-[#5865F2] border-t-transparent rounded-full animate-spin"></div>
@@ -75,13 +70,6 @@
         >
           Retry
         </button>
-      </div>
-    {:else if $knowledgeStore.nodes.length === 0}
-      <div class="flex flex-col items-center justify-center h-full">
-        <div class="text-[#949BA4] mb-4">No knowledge graph data available</div>
-        <div class="text-sm text-[#72767D]">
-          Knowledge will be populated as you interact with tasks and agents
-        </div>
       </div>
     {:else}
       <div class="grid grid-cols-3 gap-4 h-full">
@@ -101,10 +89,19 @@
               {/if}
             {/each}
           </div>
+
+          {#if $knowledgeStore.nodes.length === 0}
+            <div class="flex flex-col items-center justify-center h-full text-center">
+              <div class="text-[#949BA4] mb-2">No knowledge graph data yet</div>
+              <div class="text-sm text-[#72767D]">
+                Knowledge will be populated as you interact with tasks and agents
+              </div>
+            </div>
+          {/if}
         </div>
 
         <!-- Details Panel -->
-        <div class="bg-[#2B2D31] rounded-lg p-4">
+        <div class="bg-[#2B2D31] rounded-lg p-4 overflow-auto">
           {#if selectedNode && isKnowledgeNodeType(selectedNode.type)}
             <div class="space-y-4">
               <h2 class="text-lg font-semibold">{selectedNode.label}</h2>

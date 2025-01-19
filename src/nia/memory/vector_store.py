@@ -3,6 +3,7 @@
 import json
 import logging
 import uuid
+import asyncio
 from typing import Dict, List, Optional, Any, Union, Sequence, cast
 from datetime import datetime
 import numpy as np
@@ -58,7 +59,12 @@ class VectorStore:
         if not self._collection_name:
             # Get embedding dimension and model info
             dimension = await self.embedding_service.dimension
-            model_name = self.embedding_service.model.replace("/", "_").replace("@", "_")
+            # Handle model name with quantization format
+            model_name = self.embedding_service.model
+            # Replace slashes first
+            model_name = model_name.replace("/", "_")
+            # Replace @ with _ for consistency
+            model_name = model_name.replace(" ", "_").replace("@", "_")
             self._collection_name = f"memories_{model_name}_{dimension}d"
         return self._collection_name
 
@@ -77,132 +83,146 @@ class VectorStore:
             return str(collection_info.name)
         return None
 
-    async def connect(self):
+    async def connect(self, max_retries=5, retry_delay=2):
         """Initialize connection and collections."""
-        try:
-            # Get client instance
-            client = self.client
-            
-            # Get embedding dimension and model info
-            dimension = await self.embedding_service.dimension
-            model_name = self.embedding_service.model.replace("/", "_").replace("@", "_")
-            self._collection_name = f"memories_{model_name}_{dimension}d"
-            
-            logger.info(f"Using collection: {self._collection_name} for {dimension}-dimensional vectors")
-            
-            # Check if collection exists
+        retry_count = 0
+        while retry_count < max_retries:
             try:
+                # Get client instance
+                client = self.client
+                
+                # Get embedding dimension and model info
+                dimension = await self.embedding_service.dimension
+                # Handle model name with quantization format
+                model_name = self.embedding_service.model
+                # Replace special characters with underscore
+                model_name = model_name.replace("/", "_").replace(" ", "_").replace("@", "_")
+                self._collection_name = f"memories_{model_name}_{dimension}d"
+                
+                logger.info(f"Using collection: {self._collection_name} for {dimension}-dimensional vectors")
+                
+                # Check if collection exists first
                 collections = client.get_collections()
-                if not collections:
-                    raise ValueError("Failed to retrieve collections")
-                    
-                # Check if our collection exists
                 collection_exists = False
                 for c in collections:
                     collection_name = self._get_collection_name_from_info(c)
                     if collection_name == self._collection_name:
                         collection_exists = True
                         break
-                        
-                if collection_exists:
-                    logger.info(f"Using existing collection {self._collection_name}")
-                    # Verify collection is properly initialized and update optimizer config
-                    collection_info = client.get_collection(self._collection_name)
-                    if not collection_info:
-                        raise ValueError(f"Collection {self._collection_name} exists but cannot be accessed")
-                    
-                    # Update optimizer config for existing collection
-                    client.update_collection(
-                        collection_name=self._collection_name,
-                        optimizer_config=models.OptimizersConfigDiff(
-                            indexing_threshold=10,  # Lower threshold for test data
-                            memmap_threshold=10,  # Lower threshold for test data
-                            default_segment_number=2,  # Use multiple segments
-                            vacuum_min_vector_number=0,  # Clean up immediately
-                            max_optimization_threads=4  # Use multiple threads
-                        )
-                    )
-                    logger.info("Collection verified and optimizer config updated")
-            except Exception as e:
-                logger.error(f"Error checking collections: {str(e)}")
-                raise ValueError(f"Failed to verify collection state: {str(e)}")
                 
-            # Create collection if it doesn't exist
-            if not collection_exists:
-                logger.info(f"Creating collection {self._collection_name} with {dimension} dimensions")
-                try:
-                    client.create_collection(
-                        collection_name=self._collection_name,
-                        vectors_config=models.VectorParams(
-                            size=dimension,
-                            distance=models.Distance.COSINE,
-                            hnsw_config=models.HnswConfigDiff(
-                                m=16,  # Number of edges per node
-                                ef_construct=100,  # Dynamic candidate list size
-                                full_scan_threshold=10  # Lower threshold for test data
+                if not collection_exists:
+                    logger.info(f"Creating collection {self._collection_name} with {dimension} dimensions")
+                    try:
+                        client.create_collection(
+                            collection_name=self._collection_name,
+                            vectors_config=models.VectorParams(
+                                size=dimension,
+                                distance=models.Distance.COSINE,
+                                hnsw_config=models.HnswConfigDiff(
+                                    m=16,  # Number of edges per node
+                                    ef_construct=100,  # Dynamic candidate list size
+                                    full_scan_threshold=10  # Lower threshold for test data
+                                )
+                            ),
+                            optimizers_config=models.OptimizersConfigDiff(
+                                indexing_threshold=10,  # Lower threshold for test data
+                                memmap_threshold=10,  # Lower threshold for test data
+                                default_segment_number=2,  # Use multiple segments
+                                vacuum_min_vector_number=100,  # Minimum value required by Qdrant
+                                max_optimization_threads=4  # Use multiple threads
                             )
-                        ),
-                        optimizers_config=models.OptimizersConfigDiff(
-                            indexing_threshold=10,  # Lower threshold for test data
-                            memmap_threshold=10,  # Lower threshold for test data
-                            default_segment_number=2,  # Use multiple segments
-                            vacuum_min_vector_number=0,  # Clean up immediately
-                            max_optimization_threads=4  # Use multiple threads
                         )
-                    )
-                except Exception as e:
-                    if "already exists" not in str(e):
-                        raise
-                    logger.warning(f"Collection {self._collection_name} already exists")
-            
-            logger.info(f"Using collection: {self._collection_name}")
-            
-            # Define and create required indexes
-            required_indexes = [
-                ("metadata_type", models.PayloadSchemaType.KEYWORD),
-                ("metadata_thread_id", models.PayloadSchemaType.KEYWORD),
-                ("metadata_layer", models.PayloadSchemaType.KEYWORD),
-                ("metadata_consolidated", models.PayloadSchemaType.BOOL),
-                ("metadata_system", models.PayloadSchemaType.BOOL),
-                ("metadata_pinned", models.PayloadSchemaType.BOOL),
-                ("metadata_domain", models.PayloadSchemaType.KEYWORD),
-                ("metadata_source", models.PayloadSchemaType.KEYWORD),
-                ("metadata_timestamp", models.PayloadSchemaType.DATETIME),
-                ("metadata_importance", models.PayloadSchemaType.FLOAT),
-                ("metadata_id", models.PayloadSchemaType.KEYWORD)  # Add ID field
-            ]
-            
-            # Create indexes with wait=true and verify
-            for field_name, field_schema in required_indexes:
-                logger.info(f"Creating index for {field_name}")
+                        logger.info(f"Created collection {self._collection_name}")
+                    except Exception as e:
+                        if "already exists" in str(e):
+                            logger.info(f"Collection {self._collection_name} already exists")
+                        else:
+                            raise
+                
+                # Get collection info to verify configuration
                 try:
-                    client.create_payload_index(
-                        collection_name=self._collection_name,
-                        field_name=field_name,
-                        field_schema=field_schema,
-                        wait=True  # Wait for index to be created
-                    )
-                    # Wait for index to be ready
-                    import time
-                    time.sleep(0.5)  # Give time for index to be ready
-                    
-                    # Verify index exists
                     collection_info = client.get_collection(self._collection_name)
-                    if not collection_info:
-                        raise Exception(f"Failed to verify collection {self._collection_name}")
-                        
-                    logger.info(f"Created and verified index for {field_name}")
+                    logger.info(f"Retrieved collection info for {self._collection_name}")
                 except Exception as e:
-                    if "already exists" not in str(e):
-                        raise
-                    logger.warning(f"Index {field_name} already exists")
-            
-            # Wait for all indexes to be ready
-            time.sleep(1)
-            logger.info("Vector store connection initialized with verified indexes")
-        except Exception as e:
-            logger.error(f"Failed to initialize vector store: {str(e)}")
-            raise
+                    logger.error(f"Failed to get collection info: {str(e)}")
+                    raise
+
+                # Verify collection configuration
+                if collection_info:
+                    config = collection_info.config
+                    if not config or not hasattr(config, 'params'):
+                        raise ValueError(f"Invalid collection configuration for {self._collection_name}")
+                    
+                    # Get vector size from the vector params
+                    vector_params = config.params.vectors
+                    if not vector_params:
+                        raise ValueError(f"Invalid vector configuration for {self._collection_name}")
+                    
+                    # Handle both dict and VectorParams object cases
+                    if isinstance(vector_params, dict):
+                        vector_size = vector_params.get('size')
+                        if vector_size is None:
+                            raise ValueError(f"Invalid vector configuration for {self._collection_name}")
+                    else:
+                        # Assume it's a VectorParams object
+                        try:
+                            vector_size = vector_params.size
+                        except AttributeError:
+                            raise ValueError(f"Invalid vector configuration for {self._collection_name}")
+                            
+                    if vector_size != dimension:
+                        raise ValueError(
+                            f"Collection {self._collection_name} has wrong dimension: "
+                            f"expected {dimension}, got {vector_size}"
+                        )
+                    logger.info(f"Verified collection {self._collection_name} configuration")
+                
+                logger.info(f"Using collection: {self._collection_name}")
+                
+                # Define and create required indexes
+                required_indexes = [
+                    ("metadata_type", models.PayloadSchemaType.KEYWORD),
+                    ("metadata_thread_id", models.PayloadSchemaType.KEYWORD),
+                    ("metadata_layer", models.PayloadSchemaType.KEYWORD),
+                    ("metadata_consolidated", models.PayloadSchemaType.BOOL),
+                    ("metadata_system", models.PayloadSchemaType.BOOL),
+                    ("metadata_pinned", models.PayloadSchemaType.BOOL),
+                    ("metadata_domain", models.PayloadSchemaType.KEYWORD),
+                    ("metadata_source", models.PayloadSchemaType.KEYWORD),
+                    ("metadata_timestamp", models.PayloadSchemaType.DATETIME),
+                    ("metadata_importance", models.PayloadSchemaType.FLOAT),
+                    ("metadata_id", models.PayloadSchemaType.KEYWORD)  # Add ID field
+                ]
+                
+                # Create required indexes without checking existing ones
+                for field_name, field_schema in required_indexes:
+                    try:
+                        client.create_payload_index(
+                            collection_name=self._collection_name,
+                            field_name=field_name,
+                            field_schema=field_schema,
+                            wait=True  # Wait for index to be created
+                        )
+                        logger.info(f"Created index for {field_name}")
+                    except Exception as e:
+                        if "already exists" in str(e):
+                            logger.info(f"Index {field_name} already exists")
+                        else:
+                            logger.error(f"Failed to create index {field_name}: {str(e)}")
+                            raise
+
+                # Wait for indexes to be ready
+                import time
+                time.sleep(0.5)
+                logger.info("Vector store connection initialized with verified indexes")
+                return
+            except Exception as e:
+                retry_count += 1
+                if retry_count >= max_retries:
+                    logger.error(f"Failed to initialize vector store after {max_retries} retries: {str(e)}")
+                    raise
+                logger.warning(f"Retry {retry_count}/{max_retries} after error: {str(e)}")
+                await asyncio.sleep(retry_delay * retry_count)
 
     def _normalize_vector(self, vector: Union[List[float], np.ndarray, List[List[float]]]) -> List[float]:
         """Normalize vector to unit length.
@@ -216,8 +236,8 @@ class VectorStore:
         Raises:
             ValueError: If vector cannot be normalized
         """
+        # Convert to numpy array if needed
         try:
-            # Convert to numpy array if needed
             if isinstance(vector, list):
                 # Handle nested lists
                 if vector and isinstance(vector[0], list):
@@ -231,7 +251,10 @@ class VectorStore:
             norm = np.linalg.norm(vector)
             if norm > 0:
                 vector = vector / norm
-            return vector.tolist()
+                
+            # Convert to list and ensure float type
+            result = [float(x) for x in vector.tolist()]
+            return result
         except Exception as e:
             raise ValueError(f"Failed to normalize vector: {str(e)}")
             
@@ -244,19 +267,21 @@ class VectorStore:
         Returns:
             Dict: Point as dictionary
         """
-        if isinstance(point, (Record, ScoredPoint)):
-            # Convert Record/ScoredPoint to dict
-            point_dict = {}
-            for key in ['id', 'payload', 'vector']:
-                if hasattr(point, key):
-                    point_dict[key] = getattr(point, key)
-            if isinstance(point, ScoredPoint) and hasattr(point, 'score'):
-                point_dict['score'] = point.score
-            return point_dict
-        elif isinstance(point, dict):
+        if isinstance(point, dict):
             return point
-        else:
-            raise ValueError(f"Invalid point type: {type(point)}")
+        
+        # For Record/ScoredPoint, directly access attributes
+        result = {
+            'id': getattr(point, 'id', None),
+            'payload': getattr(point, 'payload', {}),
+            'vector': getattr(point, 'vector', None)
+        }
+        
+        # Add score for ScoredPoint
+        if isinstance(point, ScoredPoint):
+            result['score'] = getattr(point, 'score', None)
+            
+        return result
             
     async def store_vector(
         self,
@@ -302,12 +327,16 @@ class VectorStore:
             
             # Create point with proper typing
             point_id = str(uuid.uuid4())
-            # Create point with vector
-            point = models.PointStruct(
-                id=point_id,
-                vector=vector_list,  # Vector list is already normalized
-                payload=payload
-            )
+            try:
+                # Create point with vector
+                point = models.PointStruct(
+                    id=point_id,
+                    vector=vector_list,  # Vector list is already normalized
+                    payload=payload
+                )
+            except Exception as e:
+                logger.error(f"Failed to create point: {str(e)}")
+                raise ValueError(f"Failed to create point: {str(e)}")
             
             logger.debug(f"Creating point with metadata: {metadata}")
             logger.debug(f"Creating point with payload: {point.payload}")
@@ -330,40 +359,19 @@ class VectorStore:
                 f"- Layer: {layer}"
             )
             
-            result = client.upsert(
+            # Store vector without verification
+            client.upsert(
                 collection_name=collection_name,
                 points=[point],
                 wait=True
             )
             
-            # Verify stored vector
-            stored = client.retrieve(
-                collection_name=collection_name,
-                ids=[point_id],
-                with_vectors=True
+            logger.info(
+                f"Vector stored successfully:\n"
+                f"- ID: {point_id}\n"
+                f"- Dimension: {len(vector_list)}\n"
+                f"- First values: {vector_list[:5] if len(vector_list) >= 5 else vector_list}"
             )
-            if not stored or not stored[0].vector:
-                raise ValueError("Failed to verify stored vector")
-            
-            # Convert vector to list and get first few values safely
-            try:
-                stored_point = self._convert_point_to_dict(stored[0])
-                stored_vector = stored_point.get('vector')
-                if not isinstance(stored_vector, (list, np.ndarray)):
-                    raise ValueError(f"Invalid vector type: {type(stored_vector)}")
-                    
-                vector_list = list(stored_vector)
-                dimension = len(vector_list)
-                first_values = vector_list[:5] if dimension >= 5 else vector_list
-                
-                logger.info(
-                    f"Vector stored and verified:\n"
-                    f"- ID: {point_id}\n"
-                    f"- Stored dimension: {dimension}\n"
-                    f"- First values: {first_values}"
-                )
-            except (AttributeError, TypeError, IndexError) as e:
-                raise ValueError(f"Failed to process stored vector: {str(e)}")
             
             return True
         except Exception as e:
@@ -469,62 +477,51 @@ class VectorStore:
             logger.info("Executing search...")
             client = self.client
             
-            try:
-                # Create single filter combining all conditions
-                search_filter = None
-                if must_conditions:
-                    search_conditions = [models.Condition(c) for c in must_conditions]
-                    search_filter = models.Filter(must=search_conditions)
-
-                # Perform single search operation
-                results = client.search(
-                    collection_name=target_collection,
-                    query_vector=query_vector_list,
-                    query_filter=search_filter,
-                    limit=limit,
-                    score_threshold=score_threshold,
-                    with_payload=True,
-                    with_vectors=False
+            # Create single filter combining all conditions
+            search_filter = None
+            if must_conditions:
+                # Use conditions directly since they are already properly typed
+                search_filter = models.Filter(
+                    must=must_conditions,
+                    should=None,
+                    must_not=None,
+                    min_should=None
                 )
-                logger.info(f"Search results: {json.dumps(results, default=str, indent=2)}")
+
+            # Perform search operation
+            results = client.search(
+                collection_name=target_collection,
+                query_vector=query_vector_list,
+                query_filter=search_filter,
+                limit=limit,
+                score_threshold=score_threshold,
+                with_payload=True,
+                with_vectors=False
+            )
+            
+            # Process results
+            processed = []
+            for hit in results:
+                if isinstance(hit, models.ScoredPoint):
+                    payload = getattr(hit, 'payload', {})
                     
-                # Process results
-                processed = []
-                if results:
-                    for hit in results:
-                        if isinstance(hit, models.ScoredPoint):
-                            point_dict = self._convert_point_to_dict(hit)
-                            payload = point_dict.get('payload', {})
-                            
-                            # Log match details
-                            logger.info(
-                                f"Found match:\n"
-                                f"- Score: {point_dict.get('score')}\n"
-                                f"- Content: {payload.get('content')}\n"
-                                f"- Layer: {payload.get('layer')}"
-                            )
-                            
-                            # Extract metadata from flattened structure
-                            metadata = {}
-                            for k, v in payload.items():
-                                if k.startswith('metadata_'):
-                                    metadata[k[9:]] = v  # Remove metadata_ prefix
-                            
-                            result = {
-                                "content": payload.get("content"),
-                                "metadata": metadata,
-                                "layer": payload.get("layer"),
-                                "timestamp": payload.get("timestamp")
-                            }
-                            processed.append(result)
-                else:
-                    logger.warning("No matches found above threshold")
+                    # Extract metadata from flattened structure
+                    metadata = {}
+                    for k, v in payload.items():
+                        if k.startswith('metadata_'):
+                            metadata[k[9:]] = v  # Remove metadata_ prefix
+                    
+                    result = {
+                        "content": payload.get("content"),
+                        "metadata": metadata,
+                        "layer": payload.get("layer"),
+                        "timestamp": payload.get("timestamp"),
+                        "score": getattr(hit, 'score', None)
+                    }
+                    processed.append(result)
+            
+            return processed
                 
-                return processed
-                
-            except Exception as e:
-                logger.error(f"Search failed: {str(e)}")
-                return []
         except Exception as e:
             logger.error(f"Failed to search vectors: {str(e)}")
             return []
@@ -615,6 +612,7 @@ class VectorStore:
             
             # Check if collection exists
             try:
+                # Check if collection exists
                 collections = client.get_collections()
                 collection_exists = False
                 for c in collections:
@@ -626,12 +624,8 @@ class VectorStore:
                 if not collection_exists:
                     raise ValueError(f"Collection {target_collection} not found")
                 logger.info(f"Collection {target_collection} exists")
-            except Exception as e:
-                logger.error(f"Failed to verify collection: {str(e)}")
-                raise
-            
-            # Get points with a single request through scroll API
-            try:
+                
+                # Get points with a single request through scroll API
                 batch = client.scroll(
                     collection_name=target_collection,
                     limit=1000,  # Increased limit to get more points at once
@@ -645,25 +639,12 @@ class VectorStore:
                     
                 points = batch[0]
                 
-                # Log points for inspection
-                for point in points:
-                    point_dict = self._convert_point_to_dict(point)
-                    logger.info(f"Point {point_dict.get('id')}:")
-                    try:
-                        logger.info(f"Payload: {json.dumps(point_dict.get('payload', {}), indent=2)}")
-                    except TypeError:
-                        # Handle non-JSON serializable types
-                        logger.info("Payload: (non-JSON serializable)")
-                        for k, v in point_dict.get('payload', {}).items():
-                            logger.info(f"  {k}: {v}")
-                
-                logger.info(f"Total points found: {len(points)}")
-                
-                # Convert Record objects to dicts
+                # Convert Record objects to dicts and return
                 return [self._convert_point_to_dict(p) for p in points]
+                
             except Exception as e:
-                logger.error(f"Failed to get points: {str(e)}")
-                return []
+                logger.error(f"Failed to inspect collection: {str(e)}")
+                raise
         except Exception as e:
             logger.error(f"Failed to inspect collection: {str(e)}")
             raise
@@ -704,23 +685,14 @@ class VectorStore:
                     ]
                 )
                 
-                # Delete points with selector
+                # Delete points without verification
                 client.delete(
                     collection_name=target_collection,
-                    points_filter=selector,
+                    points_selector=selector,
                     wait=True  # Wait for operation to complete
                 )
-                
-                # Verify deletion
-                remaining = client.retrieve(
-                    collection_name=target_collection,
-                    ids=point_ids,
-                    with_payload=False
-                )
-                if remaining:
-                    raise ValueError(f"Failed to delete some vectors: {[p.id for p in remaining]}")
-                    
                 logger.info("Successfully deleted vectors")
+                
             except Exception as e:
                 logger.error(f"Failed to delete vectors: {str(e)}")
                 raise

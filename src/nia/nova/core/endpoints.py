@@ -111,7 +111,7 @@ async def get_status() -> Dict[str, str]:
     return {
         "status": "running",
         "version": "0.1.0",
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.utcnow().isoformat()
     }
 
 # Create routers with dependencies
@@ -297,7 +297,7 @@ async def get_agent_graph(
         return {
             "nodes": formatted_nodes,
             "edges": formatted_edges,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.utcnow().isoformat()
         }
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -377,7 +377,7 @@ async def list_threads(
         return ThreadListResponse(
             threads=threads,
             total=len(threads),
-            timestamp=datetime.now().isoformat()
+            timestamp=datetime.utcnow().isoformat()
         )
     except ServiceError as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -403,7 +403,7 @@ async def list_thread_agents(
                 "status": "active",
                 "metadata_type": "agent",
                 "metadata_capabilities": ["orchestration"],
-                "metadata_created_at": datetime.now().isoformat()
+                "metadata_created_at": datetime.utcnow().isoformat()
             },
             {
                 "id": "belief-agent",
@@ -414,7 +414,7 @@ async def list_thread_agents(
                 "status": "active",
                 "metadata_type": "agent",
                 "metadata_capabilities": ["belief_management"],
-                "metadata_created_at": datetime.now().isoformat()
+                "metadata_created_at": datetime.utcnow().isoformat()
             },
             {
                 "id": "desire-agent",
@@ -425,7 +425,7 @@ async def list_thread_agents(
                 "status": "active",
                 "metadata_type": "agent",
                 "metadata_capabilities": ["desire_management"],
-                "metadata_created_at": datetime.now().isoformat()
+                "metadata_created_at": datetime.utcnow().isoformat()
             }
         ]
         
@@ -609,7 +609,7 @@ async def add_message(
             content=request.content,
             sender_type=request.sender_type,
             sender_id=request.sender_id,
-            timestamp=datetime.now().isoformat(),
+            timestamp=datetime.utcnow().isoformat(),
             metadata={
                 "type": "message",
                 "domain": request.metadata.get("domain", "general") if request.metadata else "general",
@@ -624,7 +624,9 @@ async def add_message(
         return MessageResponse(
             id=message.id,
             content=message.content,
-            timestamp=datetime.now().isoformat()
+            message=message,
+            thread_id=thread_id,
+            timestamp=datetime.utcnow().isoformat()
         )
     except ResourceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -710,7 +712,7 @@ async def analytics_websocket(
                     if data.get("type") == "ping":
                         await websocket_manager.broadcast_to_client(client_id, {
                             "type": "pong",
-                            "timestamp": datetime.now().isoformat()
+                            "timestamp": datetime.utcnow().isoformat()
                         })
                     elif data.get("type") == "graph_subscribe":
                         await handle_graph_subscribe(client_id, graph_store)
@@ -723,14 +725,14 @@ async def analytics_websocket(
                     await websocket_manager.broadcast_to_client(client_id, {
                         "type": "error",
                         "error": str(e),
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": datetime.utcnow().isoformat()
                     })
         except WebSocketDisconnect:
             logger.info(f"Client {client_id} disconnected")
         except Exception as e:
             logger.error(f"WebSocket error: {e}")
         finally:
-            await websocket_manager.disconnect(websocket, client_id)
+            await websocket_manager.disconnect(client_id)
     except Exception as e:
         logger.error(f"WebSocket connection error: {e}")
         try:
@@ -792,7 +794,7 @@ async def handle_graph_subscribe(client_id: str, graph_store: Any):
                 "edges": edges
             }
         },
-        "timestamp": datetime.now().isoformat()
+        "timestamp": datetime.utcnow().isoformat()
     })
 
 async def handle_swarm_monitor(client_id: str, data: Dict, analytics_agent: Any, websocket: WebSocket):
@@ -805,7 +807,7 @@ async def handle_swarm_monitor(client_id: str, data: Dict, analytics_agent: Any,
         content={
             "type": "swarm_analytics",
             "task_id": task_id,
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.utcnow().isoformat()
         },
         analytics_type="behavioral",
         metadata={"domain": data.get("domain")}
@@ -816,7 +818,7 @@ async def handle_swarm_monitor(client_id: str, data: Dict, analytics_agent: Any,
             "type": "swarm_update",
             "event_type": event["type"],
             **event["data"],
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.utcnow().isoformat()
         })
 
 async def handle_agent_coordination(client_id: str, data: Dict, analytics_agent: Any, websocket: WebSocket):
@@ -827,7 +829,7 @@ async def handle_agent_coordination(client_id: str, data: Dict, analytics_agent:
             "query": data.get("content"),
             "domain": data.get("domain", "general"),
             "llm_config": data.get("llm_config", {}),
-            "timestamp": datetime.now().isoformat()
+            "timestamp": datetime.utcnow().isoformat()
         },
         analytics_type="behavioral",
         metadata={"domain": data.get("domain")}
@@ -839,5 +841,5 @@ async def handle_agent_coordination(client_id: str, data: Dict, analytics_agent:
                 "type": "agent_update",
                 "agent": agent,
                 "update": update,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.utcnow().isoformat()
             })

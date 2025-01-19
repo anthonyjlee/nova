@@ -2,6 +2,7 @@
   import { page } from '$app/stores';
   import { taskStore } from '$lib/stores/task';
   import { appStore } from '$lib/stores/app';
+  import { userStore } from '$lib/stores/user';
   import ErrorDisplay from '$lib/components/ErrorDisplay.svelte';
   import type { TaskNode } from '$lib/schemas/task';
   import { onMount, onDestroy } from 'svelte';
@@ -40,8 +41,12 @@
   // Load initial task and connect WebSocket
   onMount(async () => {
     try {
-      await appStore.connect('task');
-      await appStore.subscribeToChannel(NovaChannel.TEAM);
+      // Get API key from user store
+      const apiKey = $userStore.user?.apiKey || 'default-test-key';
+      
+      // Connect with task connection type
+      await appStore.connect('task', apiKey);
+      await appStore.joinChannel('NovaTeam');
       await loadTask();
     } catch (error) {
       handleError('connection', error instanceof Error ? error.message : 'Connection failed');

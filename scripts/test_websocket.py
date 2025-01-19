@@ -38,18 +38,16 @@ async def websocket_endpoint(websocket: WebSocket):
             return
             
         # Connect using WebSocket manager (skip accept since we already accepted)
-        if await websocket_manager.connect(websocket, client_id, api_key, accept=False):
-            # Send auth success
-            await websocket.send_json({
-                'type': 'auth_success',
-                'timestamp': datetime.now().isoformat(),
-                'client_id': client_id,
-                'channel': None,
-                'data': {}
-            })
-        else:
-            logger.error("Failed to connect client")
-            return
+        await websocket_manager.connect(websocket, client_id)
+        
+        # Send auth success
+        await websocket.send_json({
+            'type': 'auth_success',
+            'timestamp': datetime.now().isoformat(),
+            'client_id': client_id,
+            'channel': None,
+            'data': {}
+        })
             
         # Handle messages
         while True:
@@ -60,42 +58,39 @@ async def websocket_endpoint(websocket: WebSocket):
             
             if msg_type == 'chat_message':
                 await websocket_manager.broadcast_chat_message(
-                    client_id,
                     message['data'],
-                    message.get('channel')
+                    channel=message.get('channel')
                 )
             elif msg_type == 'task_update':
                 await websocket_manager.broadcast_task_update(
-                    client_id,
                     message['data'],
-                    message.get('channel')
+                    channel=message.get('channel')
                 )
             elif msg_type == 'agent_status':
                 await websocket_manager.broadcast_agent_status(
-                    client_id,
                     message['data'],
-                    message.get('channel')
+                    channel=message.get('channel')
                 )
             elif msg_type == 'channel_subscribe':
                 channel = message['data']['channel']
-                if await websocket_manager.join_channel(client_id, channel):
-                    await websocket.send_json({
-                        'type': 'channel_subscribed',
-                        'timestamp': datetime.now().isoformat(),
-                        'client_id': client_id,
-                        'channel': channel,
-                        'data': {}
-                    })
+                await websocket_manager.join_channel(client_id, channel)
+                await websocket.send_json({
+                    'type': 'channel_subscribed',
+                    'timestamp': datetime.now().isoformat(),
+                    'client_id': client_id,
+                    'channel': channel,
+                    'data': {}
+                })
             elif msg_type == 'channel_unsubscribe':
                 channel = message['data']['channel']
-                if await websocket_manager.leave_channel(client_id, channel):
-                    await websocket.send_json({
-                        'type': 'channel_unsubscribed',
-                        'timestamp': datetime.now().isoformat(),
-                        'client_id': client_id,
-                        'channel': channel,
-                        'data': {}
-                    })
+                await websocket_manager.leave_channel(client_id, channel)
+                await websocket.send_json({
+                    'type': 'channel_unsubscribed',
+                    'timestamp': datetime.now().isoformat(),
+                    'client_id': client_id,
+                    'channel': channel,
+                    'data': {}
+                })
             else:
                 logger.warning(f"Unknown message type: {msg_type}")
                 
@@ -105,7 +100,7 @@ async def websocket_endpoint(websocket: WebSocket):
         logger.error(f"WebSocket error: {e}")
     finally:
         if client_id:
-            await websocket_manager.disconnect(websocket, client_id)
+            await websocket_manager.disconnect(client_id)
 
 async def test_websocket():
     """Test WebSocket functionality with auth."""

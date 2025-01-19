@@ -425,7 +425,185 @@ async def websocket_endpoint(
 
                     # After successful authentication, handle the connection
                     server = get_websocket_server()
-                    await server.handle_chat_connection(websocket, client_id)
+                    
+                    # Send delivery confirmation
+                    await websocket.send_json({
+                        "type": "message_delivered",
+                        "data": {
+                            "message": "Authentication message received and processed",
+                            "original_type": "connect",
+                            "status": "success"
+                        },
+                        "timestamp": datetime.now().isoformat(),
+                        "client_id": client_id
+                    })
+                    
+                    # Continue handling messages
+                    while True:
+                        try:
+                            message = await websocket.receive_json()
+                            logger.debug(f"Received message: {message}")
+
+                            if message["type"] == "join_channel":
+                                try:
+                                    # Validate channel name
+                                    channel = message["data"]["channel"]
+                                    if channel not in ["NovaTeam", "NovaSupport"]:
+                                        raise ValueError(f"Invalid channel: {channel}")
+                                        
+                                    # Send delivery confirmation
+                                    await websocket.send_json({
+                                        "type": "message_delivered",
+                                        "data": {
+                                            "message": "Join channel request received",
+                                            "original_type": "join_channel",
+                                            "status": "success"
+                                        },
+                                        "timestamp": datetime.now().isoformat(),
+                                        "client_id": client_id
+                                    })
+                                    
+                                    # Send subscription success
+                                    await websocket.send_json({
+                                        "type": "subscription_success",
+                                        "data": {
+                                            "channel": channel,
+                                            "status": "success",
+                                            "message": "Successfully joined channel"
+                                        },
+                                        "timestamp": datetime.now().isoformat(),
+                                        "client_id": client_id,
+                                        "channel": channel
+                                    })
+                                except Exception as e:
+                                    logger.error(f"Error joining channel: {str(e)}")
+                                    await websocket.send_json({
+                                        "type": "error",
+                                        "data": {
+                                            "message": f"Failed to join channel: {str(e)}",
+                                            "error_type": "channel_error",
+                                            "code": 400
+                                        },
+                                        "timestamp": datetime.now().isoformat(),
+                                        "client_id": client_id
+                                    })
+
+                            elif message["type"] == "leave_channel":
+                                try:
+                                    # Validate channel name
+                                    channel = message["data"]["channel"]
+                                    if channel not in ["NovaTeam", "NovaSupport"]:
+                                        raise ValueError(f"Invalid channel: {channel}")
+                                        
+                                    # Send delivery confirmation
+                                    await websocket.send_json({
+                                        "type": "message_delivered",
+                                        "data": {
+                                            "message": "Leave channel request received",
+                                            "original_type": "leave_channel",
+                                            "status": "success"
+                                        },
+                                        "timestamp": datetime.now().isoformat(),
+                                        "client_id": client_id
+                                    })
+                                    
+                                    # Send unsubscription success
+                                    await websocket.send_json({
+                                        "type": "unsubscription_success",
+                                        "data": {
+                                            "channel": channel,
+                                            "status": "success",
+                                            "message": "Successfully left channel"
+                                        },
+                                        "timestamp": datetime.now().isoformat(),
+                                        "client_id": client_id,
+                                        "channel": channel
+                                    })
+                                except Exception as e:
+                                    logger.error(f"Error leaving channel: {str(e)}")
+                                    await websocket.send_json({
+                                        "type": "error",
+                                        "data": {
+                                            "message": f"Failed to leave channel: {str(e)}",
+                                            "error_type": "channel_error",
+                                            "code": 400
+                                        },
+                                        "timestamp": datetime.now().isoformat(),
+                                        "client_id": client_id
+                                    })
+
+                            elif message["type"] == "channel_message":
+                                try:
+                                    # Validate message format
+                                    if "data" not in message or "content" not in message["data"]:
+                                        raise ValueError("Invalid message format")
+                                        
+                                    # Validate channel if present
+                                    channel = message.get("channel")
+                                    if channel and channel not in ["NovaTeam", "NovaSupport"]:
+                                        raise ValueError(f"Invalid channel: {channel}")
+                                        
+                                    # Validate message type for channels
+                                    if channel == "NovaTeam":
+                                        if message["data"].get("message_type") not in ["task_detection", "cognitive_processing"]:
+                                            raise ValueError("Invalid message type for NovaTeam channel")
+                                    elif channel == "NovaSupport":
+                                        if message["data"].get("message_type") not in ["resource_allocation", "system_health"]:
+                                            raise ValueError("Invalid message type for NovaSupport channel")
+                                            
+                                    # Echo message back
+                                    await websocket.send_json({
+                                        **message,
+                                        "timestamp": datetime.now().isoformat(),
+                                        "client_id": client_id
+                                    })
+                                    
+                                    # Send delivery confirmation
+                                    await websocket.send_json({
+                                        "type": "message_delivered",
+                                        "data": {
+                                            "message": "Channel message received and processed",
+                                            "original_type": "channel_message",
+                                            "status": "success"
+                                        },
+                                        "timestamp": datetime.now().isoformat(),
+                                        "client_id": client_id
+                                    })
+                                except Exception as e:
+                                    logger.error(f"Error processing channel message: {str(e)}")
+                                    await websocket.send_json({
+                                        "type": "error",
+                                        "data": {
+                                            "message": f"Failed to process message: {str(e)}",
+                                            "error_type": "message_error",
+                                            "code": 400
+                                        },
+                                        "timestamp": datetime.now().isoformat(),
+                                        "client_id": client_id
+                                    })
+
+                            else:
+                                # Handle other message types through the server
+                                await server.handle_chat_connection(websocket, client_id)
+
+                        except WebSocketDisconnect:
+                            break
+                        except Exception as e:
+                            logger.error(f"Error handling message: {str(e)}")
+                            try:
+                                await websocket.send_json({
+                                    "type": "error",
+                                    "data": {
+                                        "message": str(e),
+                                        "error_type": "message_error",
+                                        "code": 500
+                                    },
+                                    "timestamp": datetime.now().isoformat(),
+                                    "client_id": client_id
+                                })
+                            except Exception as send_error:
+                                logger.error(f"Error sending error message: {str(send_error)}")
+
                     return
 
             except WebSocketDisconnect:

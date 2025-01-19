@@ -97,8 +97,11 @@ class ChatInitializer(Neo4jBaseStore):
             
             return True
             
-        except Exception as e:
+        except ValueError as e:
             self.logger.error(f"Prerequisite check failed: {str(e)}")
+            return False
+        except Exception as e:
+            self.logger.error(f"Unexpected error during prerequisite check: {str(e)}")
             return False
         
     async def initialize(self):
@@ -120,8 +123,11 @@ class ChatInitializer(Neo4jBaseStore):
             
             self.logger.info("Chat system initialization complete")
             
+        except ValueError as e:
+            self.logger.error(f"Validation error during initialization: {str(e)}")
+            raise
         except Exception as e:
-            self.logger.error(f"Failed to initialize chat system: {str(e)}")
+            self.logger.error(f"Unexpected error during initialization: {str(e)}")
             raise
             
     async def _initialize_agent_management(self):
@@ -135,12 +141,12 @@ class ChatInitializer(Neo4jBaseStore):
                 CREATE (r:AgentManagementRule {
                     name: 'agent_management',
                     description: 'Rules for agent management and coordination',
-                    config: $config,
+                    config_json: $config_json,
                     created_at: datetime()
                 })
                 """,
                 {
-                    "config": {
+                    "config_json": json.dumps({
                         "metrics": {
                             "collection": {
                                 "interval": 300,  # 5 minutes
@@ -194,7 +200,7 @@ class ChatInitializer(Neo4jBaseStore):
                                 "levels": ["warning", "error", "critical"]
                             }
                         }
-                    }
+                    })
                 }
             )
             
@@ -204,12 +210,12 @@ class ChatInitializer(Neo4jBaseStore):
                 CREATE (r:AgentRole {
                     name: 'agent_roles',
                     description: 'Agent roles and permissions',
-                    config: $config,
+                    config_json: $config_json,
                     created_at: datetime()
                 })
                 """,
                 {
-                    "config": {
+                    "config_json": json.dumps({
                         "system": {
                             "permissions": ["all"],
                             "capabilities": ["all"]
@@ -253,206 +259,142 @@ class ChatInitializer(Neo4jBaseStore):
         try:
             self.logger.info("Initializing system agents...")
             
-            # Create Nova Team agent
-            nova_team = await BaseAgent.create(
-                name="NovaTeam",
-                agent_type="system",
-                attributes={
-                    "type": "system",
+            # Create system agents
+            system_agents = [
+                {
+                    "name": "system",
+                    "agentType": "system",
                     "workspace": "system",
-                    "domain": BaseDomain.GENERAL,
                     "status": "active",
+                    "emotions": json.dumps({
+                        "task_focus": "neutral",
+                        "collaboration_readiness": "active",
+                        "domain_confidence": "high"
+                    }),
                     "capabilities": [
-                        "task_detection",
-                        "cognitive_processing",
-                        "direct_messaging",
-                        "thread_management",
-                        "agent_spawning",
-                        "memory_coordination",
-                        "swarm_orchestration",
-                        "emergent_task_detection"
+                        "system_messaging",
+                        "status_updates",
+                        "error_handling"
                     ],
-                    "visualization": {
-                        "position": "center",
-                        "category": "orchestrator"
-                    }
-                }
-            )
-            
-            # Create Nova Support agent
-            nova_support = await BaseAgent.create(
-                name="NovaSupport",
-                agent_type="system",
-                attributes={
-                    "type": "system",
+                    "metadata_json": json.dumps({
+                        "type": "system",
+                        "description": "System agent for automated messages",
+                        "capabilities": [
+                            "system_messaging",
+                            "status_updates",
+                            "error_handling"
+                        ],
+                        "created_at": datetime.utcnow().isoformat(),
+                        "visualization": {
+                            "position": "center",
+                            "category": "system"
+                        }
+                    })
+                },
+                {
+                    "name": "assistant",
+                    "agentType": "system",
                     "workspace": "system",
-                    "domain": "system",
                     "status": "active",
+                    "emotions": json.dumps({
+                        "task_focus": "neutral",
+                        "collaboration_readiness": "active",
+                        "domain_confidence": "high"
+                    }),
                     "capabilities": [
-                        "resource_allocation",
-                        "system_health",
-                        "direct_messaging",
-                        "memory_management",
-                        "system_operations",
-                        "memory_consolidation"
+                        "chat_interaction",
+                        "task_handling",
+                        "user_assistance"
                     ],
-                    "visualization": {
-                        "position": "inner",
-                        "category": "system"
-                    }
-                }
-            )
-            
-            # Create specialized agents
-            specialized_agents = [
-                {
-                    "name": "TaskAgent",
-                    "agent_type": "agent",
-                    "attributes": {
-                        "type": "task",
-                        "workspace": "personal",
-                        "domain": "tasks",
-                        "status": "active",
+                    "metadata_json": json.dumps({
+                        "type": "system",
+                        "description": "Primary assistant agent for chat interactions",
                         "capabilities": [
-                            "task_coordination",
-                            "thread_management",
-                            "resource_management",
-                            "dependency_tracking"
+                            "chat_interaction",
+                            "task_handling",
+                            "user_assistance"
                         ],
+                        "created_at": datetime.utcnow().isoformat(),
                         "visualization": {
                             "position": "inner",
-                            "category": "task"
+                            "category": "assistant"
                         }
-                    }
-                },
-                {
-                    "name": "AnalyticsAgent",
-                    "agent_type": "agent",
-                    "attributes": {
-                        "type": "analytics",
-                        "workspace": "personal",
-                        "domain": "analysis",
-                        "status": "active",
-                        "capabilities": [
-                            "metrics_tracking",
-                            "data_analysis",
-                            "memory_store",
-                            "memory_recall"
-                        ],
-                        "visualization": {
-                            "position": "outer",
-                            "category": "analysis"
-                        }
-                    }
-                },
-                {
-                    "name": "ParsingAgent",
-                    "agent_type": "agent",
-                    "attributes": {
-                        "type": "parsing",
-                        "workspace": "personal",
-                        "domain": "analysis",
-                        "status": "active",
-                        "capabilities": [
-                            "content_parsing",
-                            "data_extraction",
-                            "memory_store",
-                            "memory_recall"
-                        ],
-                        "visualization": {
-                            "position": "outer",
-                            "category": "analysis"
-                        }
-                    }
-                },
-                {
-                    "name": "CoordinationAgent",
-                    "agent_type": "agent",
-                    "attributes": {
-                        "type": "coordination",
-                        "workspace": "personal",
-                        "domain": "general",
-                        "status": "active",
-                        "capabilities": [
-                            "agent_coordination",
-                            "message_handling",
-                            "memory_store",
-                            "memory_recall"
-                        ],
-                        "visualization": {
-                            "position": "inner",
-                            "category": "coordination"
-                        }
-                    }
-                },
-                {
-                    "name": "OrchestrationAgent",
-                    "agent_type": "agent",
-                    "attributes": {
-                        "type": "orchestration",
-                        "workspace": "personal",
-                        "domain": "general",
-                        "status": "active",
-                        "capabilities": [
-                            "task_orchestration",
-                            "agent_coordination",
-                            "memory_store",
-                            "memory_recall"
-                        ],
-                        "visualization": {
-                            "position": "inner",
-                            "category": "orchestration"
-                        }
-                    }
-                },
-                {
-                    "name": "ThreadAgent",
-                    "agent_type": "agent",
-                    "attributes": {
-                        "type": "thread",
-                        "workspace": "personal",
-                        "domain": "chat",
-                        "status": "active",
-                        "capabilities": [
-                            "thread_coordination",
-                            "message_management",
-                            "summarization",
-                            "layer_sync"
-                        ],
-                        "visualization": {
-                            "position": "inner",
-                            "category": "communication"
-                        }
-                    }
-                },
-                {
-                    "name": "DialogueAgent",
-                    "agent_type": "agent",
-                    "attributes": {
-                        "type": "dialogue",
-                        "workspace": "personal",
-                        "domain": "chat",
-                        "status": "active",
-                        "capabilities": [
-                            "thread_context",
-                            "message_routing",
-                            "conversation_tracking",
-                            "llm_integration"
-                        ],
-                        "visualization": {
-                            "position": "outer",
-                            "category": "communication"
-                        }
-                    }
+                    })
                 }
             ]
             
-            # Create each specialized agent
-            for agent_spec in specialized_agents:
-                await BaseAgent.create(**agent_spec)
+            # Create each system agent
+            for agent in system_agents:
+                await self.run_query(
+                    """
+                    MERGE (a:Agent {name: $name})
+                    SET a.type = 'system',
+                        a.id = randomUUID(),
+                        a.emotions = $emotions,
+                        a.capabilities = $capabilities,
+                        a.metadata = $metadata_json,
+                        a.workspace = $workspace,
+                        a.status = $status,
+                        a.agentType = $agentType,
+                        a.confidence = 0.8,
+                        a.specialization = $agentType
+                    """,
+                    agent
+                )
             
-            # Create visualization structure
-            await self._create_visualization_structure()
+            # Create message types
+            message_types = [
+                {
+                    "name": "text",
+                    "description": "Plain text message"
+                },
+                {
+                    "name": "system",
+                    "description": "System notification or status update"
+                },
+                {
+                    "name": "error",
+                    "description": "Error message or warning"
+                },
+                {
+                    "name": "action",
+                    "description": "Action or command message"
+                }
+            ]
+            
+            for msg_type in message_types:
+                await self.run_query(
+                    """
+                    MERGE (t:MessageType {name: $name})
+                    SET t.description = $description
+                    """,
+                    msg_type
+                )
+            
+            # Create thread types
+            thread_types = [
+                {
+                    "name": "chat",
+                    "description": "General chat thread"
+                },
+                {
+                    "name": "task",
+                    "description": "Task-specific discussion thread"
+                },
+                {
+                    "name": "system",
+                    "description": "System-level communication thread"
+                }
+            ]
+            
+            for thread_type in thread_types:
+                await self.run_query(
+                    """
+                    MERGE (t:ThreadType {name: $name})
+                    SET t.description = $description
+                    """,
+                    thread_type
+                )
             
             self.logger.info("System agents initialized successfully")
             
@@ -508,7 +450,7 @@ class ChatInitializer(Neo4jBaseStore):
                     is_system: $is_system,
                     created_at: datetime(),
                     status: 'active',
-                    metadata: $metadata
+                    metadata_json: $metadata_json
                 })
                 """,
                 {
@@ -516,11 +458,11 @@ class ChatInitializer(Neo4jBaseStore):
                     "description": description,
                     "domain": domain,
                     "is_system": is_system,
-                    "metadata": {
+                    "metadata_json": json.dumps({
                         "status": "active",
                         "notifications": True,
                         "privacy": "public"
-                    }
+                    })
                 }
             )
             
@@ -535,19 +477,19 @@ class ChatInitializer(Neo4jBaseStore):
         try:
             self.logger.info("Setting up channel relationships...")
             
-            # Connect Nova Team agent to nova-team channel
+            # Connect system agent to nova-team channel
             await self.run_query(
                 """
-                MATCH (a:Agent {name: 'NovaTeam'})
+                MATCH (a:Agent {name: 'system', type: 'system'})
                 MATCH (c:Channel {name: 'nova-team'})
                 MERGE (a)-[:MEMBER_OF {role: 'admin', joined_at: datetime()}]->(c)
                 """
             )
             
-            # Connect Nova Support agent to nova-support channel
+            # Connect assistant agent to nova-support channel
             await self.run_query(
                 """
-                MATCH (a:Agent {name: 'NovaSupport'})
+                MATCH (a:Agent {name: 'assistant', type: 'system'})
                 MATCH (c:Channel {name: 'nova-support'})
                 MERGE (a)-[:MEMBER_OF {role: 'admin', joined_at: datetime()}]->(c)
                 """
@@ -567,91 +509,6 @@ class ChatInitializer(Neo4jBaseStore):
             
         except Exception as e:
             self.logger.error(f"Failed to set up channel relationships: {str(e)}")
-            raise
-            
-
-    async def _create_visualization_structure(self):
-        """Create visualization structure for agents."""
-        try:
-            self.logger.info("Creating agent visualization structure...")
-            
-            # Create constraint for visualization nodes
-            await self.run_query(
-                """
-                CREATE CONSTRAINT agent_viz_id IF NOT EXISTS
-                FOR (v:AgentVisualization) REQUIRE v.id IS UNIQUE
-                """
-            )
-            
-            # Create visualization nodes
-            await self.run_query(
-                """
-                MATCH (a:Agent)
-                WHERE a.attributes.visualization IS NOT NULL
-                MERGE (v:AgentVisualization {
-                    id: a.name,
-                    position: a.attributes.visualization.position,
-                    category: a.attributes.visualization.category
-                })
-                MERGE (a)-[:HAS_VISUALIZATION]->(v)
-                """
-            )
-            
-            # Create position-based relationships
-            await self.run_query(
-                """
-                MATCH (center:AgentVisualization {position: 'center'})
-                MATCH (inner:AgentVisualization {position: 'inner'})
-                MERGE (center)-[:COORDINATES]->(inner)
-                """
-            )
-            
-            await self.run_query(
-                """
-                MATCH (center:AgentVisualization {position: 'center'})
-                MATCH (outer:AgentVisualization {position: 'outer'})
-                MERGE (center)-[:COORDINATES]->(outer)
-                """
-            )
-            
-            # Create category-based relationships
-            await self.run_query(
-                """
-                MATCH (a:AgentVisualization)
-                MATCH (b:AgentVisualization)
-                WHERE a.category = b.category AND a <> b
-                MERGE (a)-[:COLLABORATES]->(b)
-                """
-            )
-            
-            # Create memory sync relationships
-            await self.run_query(
-                """
-                MATCH (a:Agent)
-                MATCH (b:Agent)
-                WHERE 'memory_store' IN a.attributes.capabilities
-                AND 'memory_store' IN b.attributes.capabilities
-                AND a <> b
-                MERGE (a)-[:SYNCS_MEMORY {type: 'functional'}]->(b)
-                """
-            )
-            
-            # Create memory operations relationships
-            await self.run_query(
-                """
-                MATCH (a:Agent)
-                MATCH (b:Agent)
-                WHERE 'memory_recall' IN a.attributes.capabilities
-                AND 'memory_recall' IN b.attributes.capabilities
-                AND a <> b
-                MERGE (a)-[:SHARES_MEMORY {type: 'functional'}]->(b)
-                """
-            )
-            
-            self.logger.info("Agent visualization structure created successfully")
-            
-        except Exception as e:
-            self.logger.error(f"Failed to create visualization structure: {str(e)}")
             raise
 
 async def main():

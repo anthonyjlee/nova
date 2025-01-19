@@ -237,7 +237,7 @@ async def validate_task(
         raise
 
 tasks_router = APIRouter(
-    prefix="/api/tasks",
+    prefix="",
     tags=["Tasks"],
     dependencies=[Depends(get_permission("write"))]
 )

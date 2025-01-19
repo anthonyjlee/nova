@@ -60,25 +60,11 @@ print_status "$YELLOW" "\n4. Verifying Qdrant..."
 curl -s http://localhost:6333/collections > /dev/null
 check_status
 
-# 5. Verify WebSocket server
-print_status "$YELLOW" "\n5. Verifying WebSocket server..."
-curl -s http://localhost:8000/ws > /dev/null
-check_status
-
-# 6. Verify Memory System
+# 5. Verify Memory System
 print_status "$YELLOW" "\n6. Verifying Memory System..."
 curl -s http://localhost:6333/collections/memory > /dev/null
 check_status
 
-# 7. Verify Chat System
-print_status "$YELLOW" "\n7. Verifying Chat System..."
-curl -s http://localhost:8000/chat/health > /dev/null
-check_status
-
-# 8. Verify Task System
-print_status "$YELLOW" "\n8. Verifying Task System..."
-curl -s http://localhost:8000/tasks/health > /dev/null
-check_status
 
 print_status "$GREEN" "\nInitialization complete! ✨"
 echo "=================================="

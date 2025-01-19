@@ -71,49 +71,49 @@ async def get_status() -> StatusResponse:
     )
 
 graph_router = APIRouter(
-    prefix="/api/graph",
+    prefix="",
     tags=["Knowledge Graph"],
     dependencies=[Depends(check_rate_limit)],
     responses={404: {"description": "not found"}}
 )
 
 agent_router = APIRouter(
-    prefix="/api/agents",
+    prefix="",
     tags=["Agent Management"],
     dependencies=[Depends(check_rate_limit)],
     responses={404: {"description": "not found"}}
 )
 
 user_router = APIRouter(
-    prefix="/api/users",
+    prefix="",
     tags=["User Management"],
     dependencies=[Depends(check_rate_limit)],
     responses={404: {"description": "not found"}}
 )
 
 analytics_router = APIRouter(
-    prefix="/api/analytics",
+    prefix="",
     tags=["Analytics & Insights"],
     dependencies=[Depends(check_rate_limit)],
     responses={404: {"description": "not found"}}
 )
 
 orchestration_router = APIRouter(
-    prefix="/api/orchestration",
+    prefix="",
     tags=["Task Orchestration"],
     dependencies=[Depends(check_rate_limit)],
     responses={404: {"description": "not found"}}
 )
 
 chat_router = APIRouter(
-    prefix="/api/chat",
+    prefix="",
     tags=["Chat & Threads"],
     dependencies=[Depends(check_rate_limit)],
     responses={404: {"description": "not found"}}
 )
 
 ws_router = APIRouter(
-    prefix="/api/ws",
+    prefix="",
     tags=["Real-time Updates"]
 )
 
@@ -124,7 +124,7 @@ nova_router.include_router(agent_router)
 nova_router.include_router(user_router)
 nova_router.include_router(analytics_router)
 nova_router.include_router(orchestration_router)
-nova_router.include_router(chat_router)
+nova_router.include_router(chat_router, prefix="/api")
 nova_router.include_router(ws_router)
 
 logger = logging.getLogger(__name__)
@@ -684,7 +684,7 @@ async def analytics_websocket(
                 try:
                     # Handle different message types
                     if data.get("type") == "ping":
-                        await websocket_manager.send_json(client_id, {
+                        await websocket_manager.broadcast_to_client(client_id, {
                             "type": "pong",
                             "timestamp": datetime.now().isoformat()
                         })
@@ -696,7 +696,7 @@ async def analytics_websocket(
                         await handle_agent_coordination(client_id, data, analytics_agent, websocket)
                 except Exception as e:
                     logger.error(f"Error handling message: {e}")
-                    await websocket_manager.send_json(client_id, {
+                    await websocket_manager.broadcast_to_client(client_id, {
                         "type": "error",
                         "error": str(e),
                         "timestamp": datetime.now().isoformat()
@@ -760,7 +760,7 @@ async def handle_graph_subscribe(client_id: str, graph_store: Any):
         
         edges.append({"data": edge_data})
     
-    await websocket_manager.send_json(client_id, {
+    await websocket_manager.broadcast_to_client(client_id, {
         "type": "graph_update",
         "data": {
             "added": {
@@ -811,7 +811,7 @@ async def handle_agent_coordination(client_id: str, data: Dict, analytics_agent:
     
     if isinstance(result.analytics, dict):
         for agent, update in result.analytics.items():
-            await websocket_manager.send_json(client_id, {
+            await websocket_manager.broadcast_to_client(client_id, {
                 "type": "agent_update",
                 "agent": agent,
                 "update": update,

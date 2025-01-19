@@ -5,7 +5,7 @@
 groups = ["default", "lint", "test"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.0"
-content_hash = "sha256:72bc147f83e69493f4365b0932546d397900a2fdf178e3acda5bccb7e82a074c"
+content_hash = "sha256:d916b949fc358c7ce600f1fc65da4c291bc86ecbbd2659a0ab8772d14296249a"
 
 [[metadata.targets]]
 requires_python = ">=3.10"
@@ -2578,6 +2578,18 @@ marker = "python_version >= \"3.10\""
 files = [
     {file = "threadpoolctl-3.5.0-py3-none-any.whl", hash = "sha256:56c1e26c150397e58c4926da8eeee87533b1e32bef131bd4bf6a2f45f3185467"},
     {file = "threadpoolctl-3.5.0.tar.gz", hash = "sha256:082433502dd922bf738de0d8bcc4fdcbf0979ff44c42bd40f5af8a282f6fa107"},
+]
+
+[[package]]
+name = "tinytroupe"
+version = "0.0.1"
+requires_python = ">=3.10"
+summary = "This is a placeholder for the TinyTroupe library."
+groups = ["default"]
+marker = "python_version >= \"3.10\""
+files = [
+    {file = "tinytroupe-0.0.1-py3-none-any.whl", hash = "sha256:cb07dab561bfa0be50569c304aedf7d8518103d9577c0a0401bc6b4350c94c58"},
+    {file = "tinytroupe-0.0.1.tar.gz", hash = "sha256:241edb8778c5cd5fa0af9fbbc34340c00b38211319775ed6efabdd9fabe5bc29"},
 ]
 
 [[package]]

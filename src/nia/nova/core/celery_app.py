@@ -108,7 +108,6 @@ def store_chat_message(self, data: Dict[str, Any]) -> Dict[str, Any]:
         channel = data.get("channel")
         if client_id:
             run_async(websocket_manager.broadcast_chat_message(
-                client_id,
                 message,
                 channel=channel
             ))
@@ -160,7 +159,6 @@ def store_task_update(self, data: Dict[str, Any]) -> Dict[str, Any]:
         channel = data.get("channel")
         if client_id:
             run_async(websocket_manager.broadcast_task_update(
-                client_id,
                 update,
                 channel=channel
             ))
@@ -212,7 +210,6 @@ def store_agent_status(self, data: Dict[str, Any]) -> Dict[str, Any]:
         channel = data.get("channel")
         if client_id:
             run_async(websocket_manager.broadcast_agent_status(
-                client_id,
                 status,
                 channel=channel
             ))
@@ -264,7 +261,6 @@ def store_graph_update(self, data: Dict[str, Any]) -> Dict[str, Any]:
         channel = data.get("channel")
         if client_id:
             run_async(websocket_manager.broadcast_graph_update(
-                client_id,
                 update,
                 channel=channel
             ))

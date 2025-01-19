@@ -11,6 +11,7 @@ import socket
 import redis
 import logging
 from pathlib import Path
+from typing import Optional
 from celery.app.control import Control
 
 # Configure logging
@@ -87,7 +88,7 @@ class ServiceManager:
             }
         }
 
-    def check_service(self, name: str, url: str | None = None) -> bool:
+    def check_service(self, name: str, url: Optional[str] = None) -> bool:
         """Check if a service is responding."""
         try:
             if name == "neo4j":

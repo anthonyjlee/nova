@@ -6,7 +6,7 @@ from datetime import datetime
 from ..core.auth import validate_api_key, get_api_key
 from ..core.dependencies import get_memory_system
 
-graph_router = APIRouter(prefix="/api/graph", tags=["Graph"])
+graph_router = APIRouter(prefix="", tags=["Graph"])
 
 @graph_router.get("/agents")
 async def get_agent_graph(api_key: str = Depends(get_api_key)):

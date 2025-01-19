@@ -35,4 +35,4 @@ class NovaWebSocket(FastAPIWebSocket):
         
     async def send_message(self, message: Dict[str, Any], client_id: str) -> None:
         """Send a message through the WebSocket manager."""
-        await websocket_manager.send_json(client_id, message)
+        await websocket_manager.broadcast_to_client(client_id, message)

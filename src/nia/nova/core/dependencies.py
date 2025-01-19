@@ -43,8 +43,9 @@ from nia.agents.specialized.monitoring_agent import MonitoringAgent
 from nia.agents.specialized.schema_agent import SchemaAgent
 from nia.agents.specialized.response_agent import ResponseAgent
 from nia.agents.tiny_factory import TinyFactory
-from nia.world.world import World, NIAWorld
-from .thread_manager import ThreadManager
+from nia.world.world import World
+from nia.world.environment import NIAWorld
+from nia.nova.core.thread_manager import ThreadManager
 
 # Global instances
 _memory_system: Optional[TwoLayerMemorySystem] = None
@@ -90,8 +91,9 @@ async def get_concept_manager() -> ConceptManager:
     """Get or create concept manager instance."""
     global _concept_manager
     if _concept_manager is None:
-        _concept_manager = ConceptManager()
-        await initialize_with_retry(_concept_manager, "ConceptManager", store={})
+        store = await get_graph_store()
+        _concept_manager = ConceptManager(store=store)
+        await initialize_with_retry(_concept_manager, "ConceptManager")
     return _concept_manager
 
 # Model configurations
@@ -195,10 +197,13 @@ async def get_parsing_agent() -> ParsingAgent:
     if _parsing_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _parsing_agent = ParsingAgent(
+            name="parsing_agent",
             memory_system=memory_system,
-            world=world,
-            attributes=None
+            world=world_env,
+            attributes=None,
+            domain="professional"
         )
         await initialize_with_retry(_parsing_agent, "ParsingAgent", store={})
     return _parsing_agent
@@ -209,10 +214,13 @@ async def get_coordination_agent() -> CoordinationAgent:
     if _coordination_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _coordination_agent = CoordinationAgent(
+            name="coordination_agent",
             memory_system=memory_system,
-            world=world,
-            attributes=None
+            world=world_env,
+            attributes=None,
+            domain="professional"
         )
         await initialize_with_retry(_coordination_agent, "CoordinationAgent", store={})
     return _coordination_agent
@@ -223,9 +231,10 @@ async def get_tiny_factory() -> TinyFactory:
     if _tiny_factory is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _tiny_factory = TinyFactory(
             memory_system=memory_system,
-            world=world
+            world=world_env
         )
         await initialize_with_retry(_tiny_factory, "TinyFactory", store={})
     return _tiny_factory
@@ -236,10 +245,13 @@ async def get_analytics_agent() -> AnalyticsAgent:
     if _analytics_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _analytics_agent = AnalyticsAgent(
+            name="analytics_agent",
             memory_system=memory_system,
-            world=world,
-            attributes=None
+            world=world_env,
+            attributes=None,
+            domain="professional"
         )
         await initialize_with_retry(_analytics_agent, "AnalyticsAgent", store={})
     return _analytics_agent
@@ -250,10 +262,13 @@ async def get_orchestration_agent() -> OrchestrationAgent:
     if _orchestration_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _orchestration_agent = OrchestrationAgent(
+            name="orchestration_agent",
             memory_system=memory_system,
-            world=world,
-            attributes=None
+            world=world_env,
+            attributes=None,
+            domain="professional"
         )
         await initialize_with_retry(_orchestration_agent, "OrchestrationAgent", store={})
     return _orchestration_agent
@@ -288,41 +303,21 @@ async def get_thread_manager(max_retries: int = 5, retry_delay: float = 1.0) -> 
     if _thread_manager is None:
         logger.debug("Creating new thread manager instance")
         try:
-            # Get memory system with retries
-            retry_count = 0
-            memory_system = None
-            while retry_count < max_retries:
-                try:
-                    memory_system = await get_memory_system()
-                    break
-                except Exception as e:
-                    retry_count += 1
-                    if retry_count == max_retries:
-                        logger.warning(f"Failed to get memory system after {max_retries} retries: {str(e)}")
-                        break
-                    await asyncio.sleep(retry_delay)
-            
+            # Get memory system and ensure it's initialized
             memory_system = await get_memory_system()
-            # Ensure memory system is initialized
             if not memory_system._initialized:
-                await initialize_with_retry(memory_system, "TwoLayerMemorySystem", max_retries=max_retries, retry_delay=retry_delay)
+                logger.debug("Initializing memory system")
+                await memory_system.initialize()
                 if not memory_system._initialized:
-                    logger.error("Failed to initialize memory system")
                     raise RuntimeError("Failed to initialize memory system")
             
             # Create thread manager with initialized memory system
             _thread_manager = ThreadManager(memory_system)
-            if not await initialize_with_retry(_thread_manager, "Thread Manager"):
-                raise RuntimeError("Failed to initialize thread manager")
+            await _thread_manager.initialize()
             logger.debug("Thread manager created successfully")
         except Exception as e:
             logger.error(f"Error creating thread manager: {str(e)}")
-            # Create a new memory system and thread manager as fallback
-            memory_system = TwoLayerMemorySystem()
-            await initialize_with_retry(memory_system, "TwoLayerMemorySystem", max_retries=max_retries, retry_delay=retry_delay)
-            _thread_manager = ThreadManager(memory_system)
-            await initialize_with_retry(_thread_manager, "Thread Manager")
-            logger.warning("Created fallback thread manager")
+            raise
     return _thread_manager
 
 # Core cognitive agent getters
@@ -332,9 +327,11 @@ async def get_belief_agent() -> BeliefAgent:
     if _belief_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _belief_agent = BeliefAgent(
+            name="belief_agent",
             memory_system=memory_system,
-            world=world,
+            world=world_env,
             attributes=None
         )
         await initialize_with_retry(_belief_agent, "BeliefAgent", store={})
@@ -346,9 +343,11 @@ async def get_desire_agent() -> DesireAgent:
     if _desire_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _desire_agent = DesireAgent(
+            name="desire_agent",
             memory_system=memory_system,
-            world=world,
+            world=world_env,
             attributes=None
         )
         await initialize_with_retry(_desire_agent, "DesireAgent", store={})
@@ -360,9 +359,11 @@ async def get_emotion_agent() -> EmotionAgent:
     if _emotion_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _emotion_agent = EmotionAgent(
+            name="emotion_agent",
             memory_system=memory_system,
-            world=world,
+            world=world_env,
             attributes=None
         )
         await initialize_with_retry(_emotion_agent, "EmotionAgent", store={})
@@ -374,10 +375,13 @@ async def get_reflection_agent() -> ReflectionAgent:
     if _reflection_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _reflection_agent = ReflectionAgent(
+            name="reflection_agent",
             memory_system=memory_system,
-            world=world,
-            attributes=None
+            world=world_env,
+            attributes=None,
+            domain="professional"
         )
         await initialize_with_retry(_reflection_agent, "ReflectionAgent", store={})
     return _reflection_agent
@@ -395,10 +399,13 @@ async def get_self_model_agent() -> SelfModelAgent:
     if _self_model_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _self_model_agent = SelfModelAgent(
+            name="self_model_agent",
             memory_system=memory_system,
-            world=world,
-            attributes=None
+            world=world_env,
+            attributes=None,
+            domain="professional"
         )
         await initialize_with_retry(_self_model_agent, "SelfModelAgent", store={})
     return _self_model_agent
@@ -409,10 +416,13 @@ async def get_analysis_agent() -> AnalysisAgent:
     if _analysis_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _analysis_agent = AnalysisAgent(
+            name="analysis_agent",
             memory_system=memory_system,
-            world=world,
-            attributes=None
+            world=world_env,
+            attributes=None,
+            domain="professional"
         )
         await initialize_with_retry(_analysis_agent, "AnalysisAgent", store={})
     return _analysis_agent
@@ -423,10 +433,13 @@ async def get_research_agent() -> ResearchAgent:
     if _research_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _research_agent = ResearchAgent(
+            name="research_agent",
             memory_system=memory_system,
-            world=world,
-            attributes=None
+            world=world_env,
+            attributes=None,
+            domain="professional"
         )
         await initialize_with_retry(_research_agent, "ResearchAgent", store={})
     return _research_agent
@@ -437,10 +450,13 @@ async def get_integration_agent() -> IntegrationAgent:
     if _integration_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _integration_agent = IntegrationAgent(
+            name="integration_agent",
             memory_system=memory_system,
-            world=world,
-            attributes=None
+            world=world_env,
+            attributes=None,
+            domain="professional"
         )
         await initialize_with_retry(_integration_agent, "IntegrationAgent", store={})
     return _integration_agent
@@ -451,10 +467,13 @@ async def get_task_agent() -> TaskAgent:
     if _task_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _task_agent = TaskAgent(
+            name="task_agent",
             memory_system=memory_system,
-            world=world,
-            attributes=None
+            world=world_env,
+            attributes=None,
+            domain="professional"
         )
         await initialize_with_retry(_task_agent, "TaskAgent", store={})
     return _task_agent
@@ -474,10 +493,13 @@ async def get_dialogue_agent() -> DialogueAgent:
     if _dialogue_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _dialogue_agent = DialogueAgent(
+            name="dialogue_agent",
             memory_system=memory_system,
-            world=world,
-            attributes=None
+            world=world_env,
+            attributes=None,
+            domain="professional"
         )
         await initialize_with_retry(_dialogue_agent, "DialogueAgent", store={})
     return _dialogue_agent
@@ -488,10 +510,13 @@ async def get_context_agent() -> ContextAgent:
     if _context_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _context_agent = ContextAgent(
+            name="context_agent",
             memory_system=memory_system,
-            world=world,
-            attributes=None
+            world=world_env,
+            attributes=None,
+            domain="professional"
         )
         await initialize_with_retry(_context_agent, "ContextAgent", store={})
     return _context_agent
@@ -502,10 +527,13 @@ async def get_validation_agent() -> ValidationAgent:
     if _validation_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _validation_agent = ValidationAgent(
+            name="validation_agent",
             memory_system=memory_system,
-            world=world,
-            attributes=None
+            world=world_env,
+            attributes=None,
+            domain="professional"
         )
         await initialize_with_retry(_validation_agent, "ValidationAgent", store={})
     return _validation_agent
@@ -516,10 +544,13 @@ async def get_synthesis_agent() -> SynthesisAgent:
     if _synthesis_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _synthesis_agent = SynthesisAgent(
+            name="synthesis_agent",
             memory_system=memory_system,
-            world=world,
-            attributes=None
+            world=world_env,
+            attributes=None,
+            domain="professional"
         )
         await initialize_with_retry(_synthesis_agent, "SynthesisAgent", store={})
     return _synthesis_agent
@@ -530,10 +561,13 @@ async def get_alerting_agent() -> AlertingAgent:
     if _alerting_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _alerting_agent = AlertingAgent(
+            name="alerting_agent",
             memory_system=memory_system,
-            world=world,
-            attributes=None
+            world=world_env,
+            attributes=None,
+            domain="professional"
         )
         await initialize_with_retry(_alerting_agent, "AlertingAgent", store={})
     return _alerting_agent
@@ -544,10 +578,13 @@ async def get_monitoring_agent() -> MonitoringAgent:
     if _monitoring_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _monitoring_agent = MonitoringAgent(
+            name="monitoring_agent",
             memory_system=memory_system,
-            world=world,
-            attributes=None
+            world=world_env,
+            attributes=None,
+            domain="professional"
         )
         await initialize_with_retry(_monitoring_agent, "MonitoringAgent", store={})
     return _monitoring_agent
@@ -558,10 +595,13 @@ async def get_schema_agent() -> SchemaAgent:
     if _schema_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _schema_agent = SchemaAgent(
+            name="schema_agent",
             memory_system=memory_system,
-            world=world,
-            attributes=None
+            world=world_env,
+            attributes=None,
+            domain="professional"
         )
         await initialize_with_retry(_schema_agent, "SchemaAgent", store={})
     return _schema_agent
@@ -576,10 +616,13 @@ async def get_response_agent() -> ResponseAgent:
     if _response_agent is None:
         memory_system = await get_memory_system()
         world = await get_world()
+        world_env = NIAWorld() if not isinstance(world, NIAWorld) else world
         _response_agent = ResponseAgent(
+            name="response_agent",
             memory_system=memory_system,
-            world=world,
-            attributes=None
+            world=world_env,
+            attributes=None,
+            domain="professional"
         )
         await initialize_with_retry(_response_agent, "ResponseAgent", store={})
     return _response_agent

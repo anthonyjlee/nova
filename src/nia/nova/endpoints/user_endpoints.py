@@ -73,10 +73,39 @@ class UserProfile(BaseModel):
 
 # Router
 user_router = APIRouter(
-    prefix="/api/users",
+    prefix="",
     tags=["User Management"],
     responses={404: {"description": "Not found"}}
 )
+
+@user_router.get("/user", response_model=Dict[str, Any])
+async def get_current_user(
+    _: None = Depends(get_permission("read")),
+    memory_system: Any = Depends(get_memory_system)
+):
+    """Get current user."""
+    try:
+        # For now return a mock user
+        return {
+            "id": "default",
+            "name": "Default User",
+            "email": "user@example.com",
+            "accessLevel": "user",
+            "domain": "personal",
+            "workspace": "personal",
+            "status": "online",
+            "apiKey": "valid-test-key",
+            "preferences": {
+                "theme": "dark",
+                "taskFormat": "default",
+                "communicationStyle": "balanced",
+                "interfaceMode": "standard",
+                "notifications": true,
+                "autoApprove": false
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @user_router.post("/questionnaire", response_model=Dict[str, Any])
 async def submit_questionnaire(

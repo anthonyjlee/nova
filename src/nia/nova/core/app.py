@@ -36,7 +36,7 @@ class WebSocketUpgradeMiddleware(BaseHTTPMiddleware):
         ):
             logger.debug("WebSocket upgrade request detected")
             # Check if this is a WebSocket route
-            if request.url.path.startswith("/api/ws/"):
+            if request.url.path.startswith("/debug/"):
                 logger.debug("WebSocket route detected")
                 # Get the WebSocket key from headers
                 ws_key = request.headers.get("sec-websocket-key")
@@ -67,7 +67,7 @@ class WebSocketUpgradeMiddleware(BaseHTTPMiddleware):
             else:
                 logger.debug("Not a WebSocket route")
         # Handle preflight requests
-        elif request.method == "OPTIONS" and request.url.path.startswith("/api/ws/"):
+        elif request.method == "OPTIONS" and request.url.path.startswith("/debug/"):
             logger.debug("Handling WebSocket preflight request")
             return Response(
                 status_code=200,
@@ -132,7 +132,7 @@ app.include_router(nova_router)
 app.include_router(thread_router, prefix="/api/threads", tags=["Chat & Threads"])
 app.include_router(task_router, prefix="/api/tasks", tags=["Task Orchestration"])
 app.include_router(graph_router, prefix="/api/graph", tags=["Knowledge Graph"])
-app.include_router(user_router, prefix="/api/users", tags=["User Management"])
+app.include_router(user_router, prefix="/api", tags=["User Management"])
 app.include_router(memory_router, prefix="/api/memory", tags=["System"])
 app.include_router(kg_router, prefix="/api/knowledge", tags=["Knowledge Graph"])
 app.include_router(tasks_router, prefix="/api/tasks", tags=["Task Orchestration"])
@@ -174,6 +174,13 @@ app.openapi_tags = [
         "description": "WebSocket endpoints for real-time updates"
     }
 ]
+
+# Initialize WebSocket server on startup
+@app.on_event("startup")
+async def startup_event():
+    """Initialize WebSocket server on startup."""
+    from ..endpoints.websocket_endpoints import initialize_websocket_server
+    await initialize_websocket_server()
 
 # Health check endpoint
 @app.get("/api/status", tags=["System"])

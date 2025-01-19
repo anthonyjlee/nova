@@ -18,7 +18,7 @@ class Neo4jBaseStore:
     _driver_instance: Optional[AsyncDriver] = None
     _driver_lock = None
     
-    def __init__(self, uri: str = "bolt://localhost:7687", user: str = "neo4j", password: str = "password", max_retry_time: int = 30, retry_interval: int = 1):
+    def __init__(self, uri: str = "bolt://docker-neo4j-1:7687", user: str = "neo4j", password: str = "password", max_retry_time: int = 30, retry_interval: int = 1):
         """Initialize Neo4j store."""
         self.uri = uri
         self.user = user

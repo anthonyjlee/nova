@@ -59,11 +59,11 @@ services:
     networks:
       - nova_network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:6333/healthz"]
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:6333/healthz || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
-      start_period: 15s
+      start_period: 30s
 
 volumes:
   redis_data:
@@ -72,6 +72,11 @@ volumes:
   neo4j_import:
   neo4j_plugins:
   qdrant_data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${PWD}/data/qdrant
 
 networks:
   nova_network:

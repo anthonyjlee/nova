@@ -7,6 +7,7 @@ import os
 import logging
 import subprocess
 import time
+import uuid
 from pathlib import Path
 from datetime import datetime
 from typing import List, Any, Dict, Optional
@@ -126,14 +127,23 @@ class SystemInitializer(Neo4jBaseStore):
         
         await self.run_query(
                 """
-                MERGE (a:Agent {name: $name})
-                SET a.type = $type,
+                MERGE (a:Concept {name: $name})
+                SET a.type = 'agent',
+                    a.id = randomUUID(),
                     a.emotions = $emotions,
-                    a.capabilities = $capabilities
+                    a.capabilities = $capabilities,
+                    a.metadata = $metadata_json,
+                    a.workspace = $workspace,
+                    a.status = $status,
+                    a.agentType = $agentType,
+                    a.confidence = 0.8,
+                    a.specialization = $agentType
                 """,
                 {
                     "name": base_agent.name,
-                    "type": base_agent.agent_type,
+                    "agentType": base_agent.agent_type,
+                    "status": "active",
+                    "workspace": "system",
                     "emotions": json.dumps({
                         "task_focus": "neutral",
                         "collaboration_readiness": "active",
@@ -143,7 +153,16 @@ class SystemInitializer(Neo4jBaseStore):
                         "emotional_processing",
                         "goal_management",
                         "world_interaction"
-                    ]
+                    ],
+                    "metadata_json": json.dumps({
+                        "type": base_agent.agent_type,
+                        "capabilities": [
+                            "emotional_processing",
+                            "goal_management",
+                            "world_interaction"
+                        ],
+                        "created_at": datetime.utcnow().isoformat()
+                    })
                 }
             )
         
@@ -157,7 +176,7 @@ class SystemInitializer(Neo4jBaseStore):
         for agent in agents:
             await self.run_query(
                 """
-                MATCH (a:Agent {name: $name})
+                MATCH (a:Concept {name: $name})
                 SET a.emotions = $emotions
                 """,
                 {
@@ -179,7 +198,7 @@ class SystemInitializer(Neo4jBaseStore):
             # Add TinyTroupe capabilities
             await self.run_query(
                 """
-                MATCH (a:Agent {name: $name})
+                MATCH (a:Concept {name: $name})
                 SET a.capabilities = $capabilities
                 """,
                 {
@@ -223,14 +242,23 @@ class SystemInitializer(Neo4jBaseStore):
         
         await self.run_query(
                 """
-                MERGE (a:Agent {name: $name})
-                SET a.type = $type,
+                MERGE (a:Concept {name: $name})
+                SET a.type = 'agent',
+                    a.id = randomUUID(),
                     a.emotions = $emotions,
-                    a.capabilities = $capabilities
+                    a.capabilities = $capabilities,
+                    a.metadata = $metadata_json,
+                    a.workspace = $workspace,
+                    a.status = $status,
+                    a.agentType = $agentType,
+                    a.confidence = 0.8,
+                    a.specialization = $agentType
                 """,
                 {
                     "name": meta_agent.name,
-                    "type": meta_agent.agent_type,
+                    "agentType": meta_agent.agent_type,
+                    "status": "active",
+                    "workspace": "system",
                     "emotions": json.dumps({
                         "task_focus": "neutral",
                         "collaboration_readiness": "active",
@@ -240,7 +268,16 @@ class SystemInitializer(Neo4jBaseStore):
                         "team_coordination",
                         "task_distribution",
                         "cognitive_oversight"
-                    ]
+                    ],
+                    "metadata_json": json.dumps({
+                        "type": meta_agent.agent_type,
+                        "capabilities": [
+                            "team_coordination",
+                            "task_distribution",
+                            "cognitive_oversight"
+                        ],
+                        "created_at": datetime.utcnow().isoformat()
+                    })
                 }
             )
         
@@ -255,47 +292,28 @@ class SystemInitializer(Neo4jBaseStore):
         """Initialize core cognitive agents."""
         core_agents = []
         
-        # Create belief agent
-        belief_agent = await BaseAgent.create(
-            name="BeliefAgent",
-            agent_type="belief",
-            memory_system=memory_system,
-            world=world,
-            attributes={
-                "type": "belief",
-                "workspace": "system",
-                "domain": BaseDomain.GENERAL
-            }
-        )
-        core_agents.append(belief_agent)
+        # Core cognitive agents
+        agent_types = [
+            "belief", "desire", "emotion", "reflection",
+            "context", "memory", "planning", "research",
+            "reasoning", "integration", "validation",
+            "orchestration", "dialogue", "synthesis",
+            "schema", "parsing", "structure"
+        ]
         
-        # Create desire agent
-        desire_agent = await BaseAgent.create(
-            name="DesireAgent",
-            agent_type="desire",
-            memory_system=memory_system,
-            world=world,
-            attributes={
-                "type": "desire",
-                "workspace": "system",
-                "domain": BaseDomain.GENERAL
-            }
-        )
-        core_agents.append(desire_agent)
-        
-        # Create emotion agent
-        emotion_agent = await BaseAgent.create(
-            name="EmotionAgent",
-            agent_type="emotion",
-            memory_system=memory_system,
-            world=world,
-            attributes={
-                "type": "emotion",
-                "workspace": "system",
-                "domain": BaseDomain.GENERAL
-            }
-        )
-        core_agents.append(emotion_agent)
+        for agent_type in agent_types:
+            agent = await BaseAgent.create(
+                name=f"{agent_type.capitalize()}Agent",
+                agent_type=agent_type,
+                memory_system=memory_system,
+                world=world,
+                attributes={
+                    "type": agent_type,
+                    "workspace": "system",
+                    "domain": BaseDomain.GENERAL
+                }
+            )
+            core_agents.append(agent)
         
         # Set up relationships with meta agent
         for agent in core_agents:
@@ -304,14 +322,23 @@ class SystemInitializer(Neo4jBaseStore):
             
             await self.run_query(
                 """
-                MERGE (a:Agent {name: $name})
-                SET a.type = $type,
+                MERGE (a:Concept {name: $name})
+                SET a.type = 'agent',
+                    a.id = randomUUID(),
                     a.emotions = $emotions,
-                    a.capabilities = $capabilities
+                    a.capabilities = $capabilities,
+                    a.metadata = $metadata_json,
+                    a.workspace = $workspace,
+                    a.status = $status,
+                    a.agentType = $agentType,
+                    a.confidence = 0.8,
+                    a.specialization = $agentType
                 """,
                 {
                     "name": agent.name,
-                    "type": agent.agent_type,
+                    "agentType": agent.agent_type,
+                    "status": "active",
+                    "workspace": "system",
                     "emotions": json.dumps({
                         "task_focus": "neutral",
                         "collaboration_readiness": "active",
@@ -321,15 +348,24 @@ class SystemInitializer(Neo4jBaseStore):
                         "emotional_processing",
                         "goal_management",
                         "world_interaction"
-                    ]
+                    ],
+                    "metadata_json": json.dumps({
+                        "type": agent.agent_type,
+                        "capabilities": [
+                            "emotional_processing",
+                            "goal_management",
+                            "world_interaction"
+                        ],
+                        "created_at": datetime.utcnow().isoformat()
+                    })
                 }
             )
             
             # Create relationship with meta agent
             await self.run_query(
                 """
-                MATCH (m:Agent {name: $meta_name})
-                MATCH (a:Agent {name: $agent_name})
+                MATCH (m:Concept {name: $meta_name})
+                MATCH (a:Concept {name: $agent_name})
                 MERGE (m)-[:COORDINATES]->(a)
                 """,
                 {
@@ -428,8 +464,8 @@ class SystemInitializer(Neo4jBaseStore):
             self.logger.info("Verifying Base Agents...")
             result = await self.run_query(
                 """
-                MATCH (a:Agent)
-                WHERE a.type = 'base'
+                MATCH (a:Concept)
+                WHERE a.type = 'agent' AND a.agentType = 'base'
                 RETURN count(a) as count
                 """
             )
@@ -441,12 +477,18 @@ class SystemInitializer(Neo4jBaseStore):
             self.logger.info("Verifying Core Cognitive Agents...")
             result = await self.run_query(
                 """
-                MATCH (a:Agent)
-                WHERE a.type IN ['meta', 'belief', 'desire', 'emotion']
+                MATCH (a:Concept)
+                WHERE a.type = 'agent' AND a.agentType IN [
+                    'meta', 'belief', 'desire', 'emotion', 'reflection',
+                    'context', 'memory', 'planning', 'research',
+                    'reasoning', 'integration', 'validation',
+                    'orchestration', 'dialogue', 'synthesis',
+                    'schema', 'parsing', 'structure'
+                ]
                 RETURN count(a) as count
                 """
             )
-            if result[0]["count"] < 4:  # Meta + 3 core cognitive agents
+            if result[0]["count"] < 18:  # Meta + 17 core cognitive agents
                 raise Exception("Core cognitive agents not properly initialized")
             self.logger.info("Core Cognitive Agents verification successful")
             
@@ -486,14 +528,14 @@ class SystemInitializer(Neo4jBaseStore):
             await chat_init.connect()
             result = await chat_init.run_query(
                 """
-                MATCH (a:Agent)
-                WHERE a.type = 'system'
+                MATCH (a:Concept)
+                WHERE a.type = 'agent' AND a.agentType = 'system'
                 RETURN count(a) as count
                 """
             )
             if result[0]["count"] < 2:
-                raise Exception("System agents not properly initialized")
-            self.logger.info("Chat System verification successful")
+                raise Exception("Expected at least 2 system agents (system and assistant) but found {result[0]['count']}")
+            self.logger.info(f"Chat System verification successful - found {result[0]['count']} system agents")
             
             # WebSocket System
             self.logger.info("Verifying WebSocket System...")

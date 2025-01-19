@@ -25,18 +25,18 @@ from ..core.error_handling import (
 from ..core.dependencies import (
     get_memory_system,
     get_orchestration_agent,
-    get_coordination_agent
+    get_coordination_agent,
+    get_thread_manager
 )
 
 # Create router with dependencies
 thread_router = APIRouter(
-    prefix="/api/threads",
     tags=["threads"],
     dependencies=[Depends(check_rate_limit)]
 )
 
 task_router = APIRouter(
-    prefix="/api/tasks",
+    prefix="",
     tags=["tasks"],
     dependencies=[Depends(check_rate_limit)]
 )
@@ -98,7 +98,7 @@ async def approve_task(
     domain: Optional[str] = None,
     _: None = Depends(get_permission("write")),
     orchestration_agent: OrchestrationAgent = Depends(get_orchestration_agent),
-    coordination_agent: CoordinationAgent = Depends(get_coordination_agent)
+    thread_manager: Any = Depends(get_thread_manager)
 ) -> Dict:
     """Approve a pending task and trigger execution."""
     try:
@@ -129,15 +129,18 @@ async def approve_task(
         
         # Create thread for task
         thread_id = f"thread_{uuid.uuid4().hex[:8]}"
-        thread_result = await coordination_agent.create_thread(
-            thread_id=thread_id,
-            task_id=task_id,
-            domain=domain,
+        thread_result = await thread_manager.create_thread(
+            title=f"Task {task_id}",
+            domain=domain or "general",
             metadata={
-                "domain": domain,
+                "type": "task",
+                "task_id": task_id,
                 "task_type": updated_task.get("type"),
-                "parent_thread_id": None
-            } if domain else None
+                "system": False,
+                "pinned": False,
+                "description": ""
+            },
+            workspace="personal"
         )
         
         return {
@@ -151,33 +154,53 @@ async def approve_task(
             raise
         raise ServiceError(str(e))
 
+@thread_router.post("")
+@retry_on_error(max_retries=3)
+async def create_thread(
+    request: Dict[str, Any],
+    domain: Optional[str] = None,
+    _: None = Depends(get_permission("write")),
+    thread_manager: Any = Depends(get_thread_manager)
+) -> Dict:
+    """Create a new thread."""
+    try:
+        # Validate request
+        if not isinstance(request, dict):
+            raise ValidationError("Request must be a JSON object")
+        
+        # Generate thread ID
+        thread_id = f"thread_{uuid.uuid4().hex[:8]}"
+        
+        # Create thread
+        thread_result = await thread_manager.create_thread(
+            title=request.get("title", "Untitled"),
+            domain=domain or "general",
+            metadata=request.get("metadata", {}),
+            workspace=request.get("workspace", "personal")
+        )
+        
+        return {
+            "thread_id": thread_result["id"],
+            "task_id": request.get("task_id"),
+            "type": request.get("type", "chat"),
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        if isinstance(e, HTTPException):
+            raise
+        raise ServiceError(str(e))
+
 @thread_router.get("")
 @retry_on_error(max_retries=3)
 async def list_threads(
     domain: Optional[str] = None,
     _: None = Depends(get_permission("read")),
-    coordination_agent: CoordinationAgent = Depends(get_coordination_agent)
+    thread_manager: Any = Depends(get_thread_manager)
 ) -> Dict:
     """List all threads."""
     try:
-        # Query all threads from memory system
-        if coordination_agent.memory_system and coordination_agent.memory_system.semantic:
-            result = await coordination_agent.memory_system.semantic.run_query(
-                """
-                MATCH (t:Thread)
-                WHERE t.domain = $domain OR $domain IS NULL
-                RETURN t
-                """,
-                {"domain": domain}
-            )
-            threads = [record["t"] for record in result] if result else []
-        else:
-            threads = []
-        return {
-            "threads": threads,
-            "total": len(threads),
-            "timestamp": datetime.now().isoformat()
-        }
+        threads = await thread_manager.list_threads(domain)
+        return threads
     except Exception as e:
         if isinstance(e, HTTPException):
             raise
@@ -191,54 +214,12 @@ async def get_thread_messages(
     limit: Optional[int] = 100,
     domain: Optional[str] = None,
     _: None = Depends(get_permission("read")),
-    coordination_agent: CoordinationAgent = Depends(get_coordination_agent)
+    thread_manager: Any = Depends(get_thread_manager)
 ) -> Dict:
     """Get messages from a thread with pagination."""
     try:
-        # Get thread details and messages
-        thread_result = await coordination_agent.get_thread(
-            thread_id=thread_id,
-            domain=domain,
-            metadata={"domain": domain} if domain else None
-        )
-        
-        if not thread_result or not isinstance(thread_result, dict):
-            raise ResourceNotFoundError(f"Thread {thread_id} not found")
-            
-        task_id = thread_result.get("task_id")
-        message_count = thread_result.get("message_count", 0)
-        
-        messages = await coordination_agent.get_messages(
-            thread_id=thread_id,
-            start=start or 0,  # Handle None case
-            limit=limit or 100,  # Handle None case
-            domain=domain,
-            metadata={"domain": domain} if domain else None
-        )
-        
-        # Get sub-threads if any
-        sub_threads = await coordination_agent.get_sub_threads(
-            thread_id=thread_id,
-            domain=domain,
-            metadata={"domain": domain} if domain else None
-        )
-        
-        # Get aggregator summary if available
-        summary = await coordination_agent.get_thread_summary(
-            thread_id=thread_id,
-            domain=domain,
-            metadata={"domain": domain} if domain else None
-        )
-        
-        return {
-            "thread_id": thread_id,
-            "task_id": task_id,
-            "messages": messages,
-            "sub_threads": sub_threads,
-            "summary": summary,
-            "total_messages": message_count,
-            "timestamp": datetime.now().isoformat()
-        }
+        thread = await thread_manager.get_thread(thread_id)
+        return thread
     except Exception as e:
         if isinstance(e, HTTPException):
             raise
@@ -251,7 +232,7 @@ async def post_thread_message(
     request: Dict[str, Any],
     domain: Optional[str] = None,
     _: None = Depends(get_permission("write")),
-    coordination_agent: CoordinationAgent = Depends(get_coordination_agent)
+    thread_manager: Any = Depends(get_thread_manager)
 ) -> Dict:
     """Post a message to a thread."""
     try:
@@ -265,17 +246,15 @@ async def post_thread_message(
         # Generate message ID
         message_id = f"msg_{uuid.uuid4().hex[:8]}"
         
-        # Post message
-        message_result = await coordination_agent.post_message(
-            thread_id=thread_id,
-            message_id=message_id,
-            content=request["content"],
-            domain=domain,
-            metadata={
-                "domain": domain,
-                "agent_id": request.get("agent_id"),
-                "message_type": request.get("type", "text")
-            } if domain else None
+        # Add message
+        message_result = await thread_manager.add_message(
+            thread_id,
+            {
+                "content": request["content"],
+                "sender": request.get("sender", "user"),
+                "message_type": request.get("type", "text"),
+                "metadata": request.get("metadata", {})
+            }
         )
         
         return {
