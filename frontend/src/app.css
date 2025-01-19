@@ -5,21 +5,33 @@
 
 /* Slack-like theme variables */
 :root {
+  /* Background colors */
   --slack-bg-primary: #1A1D21;
-  --slack-bg-secondary: #222529;
-  --slack-bg-tertiary: #2C2D30;
-  --slack-bg-hover: #27242C;
-  --slack-text-primary: #D1D5DB;
-  --slack-text-secondary: #9B9B9B;
-  --slack-text-muted: #616061;
-  --slack-text-error: #E01E5A;
-  --slack-accent-primary: #1264A3;
-  --slack-accent-secondary: #007A5A;
-  --slack-border-dim: #424242;
-  --slack-focus-ring: #1D9BD1;
-  --slack-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.12);
-  --slack-shadow-md: 0 4px 6px rgba(0, 0, 0, 0.15);
-  --slack-shadow-lg: 0 10px 20px rgba(0, 0, 0, 0.2);
+  --slack-bg-secondary: #2B2D31;
+  --slack-bg-tertiary: #35373C;
+  --slack-bg-hover: #35373C;
+  
+  /* Text colors */
+  --slack-text-primary: #DCDDDE;
+  --slack-text-secondary: #949BA4;
+  --slack-text-muted: #72767D;
+  
+  /* Accent colors */
+  --slack-accent-primary: #5865F2;
+  --slack-accent-hover: #4752C4;
+  --slack-accent-success: #23A559;
+  --slack-accent-error: #F23F43;
+  --slack-accent-warning: #F0B232;
+  --slack-accent-info: #1264A3;
+  
+  /* Border colors */
+  --slack-border-primary: #2C2D31;
+  --slack-border-hover: #35373C;
+  
+  /* Shadow colors */
+  --slack-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.15);
+  --slack-shadow-md: 0 4px 6px rgba(0, 0, 0, 0.2);
+  --slack-shadow-lg: 0 10px 20px rgba(0, 0, 0, 0.25);
 }
 
 /* Custom scrollbar */
@@ -29,20 +41,20 @@
 }
 
 *::-webkit-scrollbar {
-  width: 12px;
-  height: 12px;
+  width: 8px;
+  height: 8px;
 }
 
 *::-webkit-scrollbar-track {
   background: transparent;
-  border-radius: 6px;
+  border-radius: 4px;
 }
 
 *::-webkit-scrollbar-thumb {
   background-color: var(--slack-text-muted);
-  border: 3px solid transparent;
+  border: 2px solid var(--slack-bg-primary);
   background-clip: padding-box;
-  border-radius: 6px;
+  border-radius: 4px;
 }
 
 *::-webkit-scrollbar-thumb:hover {
@@ -83,15 +95,9 @@
 
 /* Agent status animations */
 @keyframes pulse {
-  0% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.6;
-  }
-  100% {
-    opacity: 1;
-  }
+  0% { opacity: 1; }
+  50% { opacity: 0.6; }
+  100% { opacity: 1; }
 }
 
 .agent-thinking {
@@ -101,18 +107,17 @@
 /* Thread styles */
 .thread-header {
   background-color: var(--slack-bg-secondary);
-  border-bottom: 1px solid var(--slack-border-dim);
+  border-bottom: 1px solid var(--slack-border-primary);
 }
 
 /* Input styles */
 [contenteditable] {
-  transition: border-color 100ms ease-out, box-shadow 100ms ease-out;
+  transition: all 100ms ease-out;
 }
 
 [contenteditable]:focus {
   outline: none;
-  border-color: var(--slack-accent-primary);
-  box-shadow: 0 0 0 2px var(--slack-focus-ring);
+  box-shadow: 0 0 0 2px var(--slack-accent-primary);
 }
 
 [contenteditable]:empty:before {
@@ -120,50 +125,77 @@
   color: var(--slack-text-muted);
 }
 
-/* Agent menu styles */
-.agent-menu {
-  background-color: var(--slack-bg-primary);
-  border: 1px solid var(--slack-border-dim);
-  box-shadow: var(--slack-shadow-lg);
-  border-radius: 6px;
-  transition: transform 100ms ease-out;
-}
-
-.agent-menu:hover {
-  transform: translateY(-1px);
-}
-
-.agent-menu-item {
-  padding: 0.5rem 1rem;
-  transition: background-color 100ms ease-out;
-}
-
-.agent-menu-item:hover {
-  background-color: var(--slack-bg-hover);
-}
-
 /* Form control styles */
-select, button, input {
-  transition: all 100ms ease-out;
-}
-
-select {
+.form-select {
   appearance: none;
-  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
+  background-color: var(--slack-bg-secondary);
+  color: var(--slack-text-primary);
+  border: 1px solid var(--slack-border-primary);
+  border-radius: 0.375rem;
+  padding: 0.375rem 0.75rem;
+  padding-right: 2rem;
+  transition: all 100ms ease-out;
+  background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23949BA4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e");
   background-repeat: no-repeat;
   background-position: right 0.75rem center;
   background-size: 1em;
-  padding-right: 2.5rem;
 }
 
-select:focus, button:focus, input:focus {
+.form-select:focus {
   outline: none;
   border-color: var(--slack-accent-primary);
-  box-shadow: 0 0 0 2px var(--slack-focus-ring);
+  box-shadow: 0 0 0 2px var(--slack-accent-primary);
 }
 
-button:active {
-  transform: scale(0.98);
+.form-select:hover {
+  border-color: var(--slack-border-hover);
+}
+
+.form-checkbox {
+  height: 1rem;
+  width: 1rem;
+  color: var(--slack-accent-primary);
+  border: 1px solid var(--slack-border-primary);
+  border-radius: 0.25rem;
+  background-color: var(--slack-bg-secondary);
+}
+
+.form-checkbox:focus {
+  outline: none;
+  border-color: var(--slack-accent-primary);
+  box-shadow: 0 0 0 2px var(--slack-accent-primary);
+}
+
+.form-button {
+  padding: 0.5rem 1rem;
+  border-radius: 0.375rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: all 100ms ease-out;
+}
+
+.form-button:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--slack-accent-primary), 0 0 0 4px rgba(88, 101, 242, 0.4);
+}
+
+.form-button-primary {
+  background-color: var(--slack-accent-primary);
+  color: white;
+}
+
+.form-button-primary:hover {
+  background-color: var(--slack-accent-hover);
+}
+
+.form-button-danger {
+  background-color: var(--slack-accent-error);
+  color: white;
+}
+
+.form-button-danger:hover {
+  background-color: var(--slack-accent-error);
+  filter: brightness(0.9);
 }
 
 /* Status indicator animations */
@@ -185,4 +217,12 @@ button:active {
 
 .status-responding {
   animation: responding 2s ease-in-out infinite;
+}
+
+/* Line clamp */
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
