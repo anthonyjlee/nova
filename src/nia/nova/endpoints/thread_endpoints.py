@@ -9,12 +9,12 @@ from nia.memory.two_layer import TwoLayerMemorySystem
 from nia.agents.specialized.orchestration_agent import OrchestrationAgent
 from nia.agents.specialized.coordination_agent import CoordinationAgent
 
-from ..core.auth import (
+from nia.core.auth import (
     check_rate_limit,
     check_domain_access,
     get_permission
 )
-from ..core.error_handling import (
+from nia.core.error_handling import (
     NovaError,
     ValidationError,
     ResourceNotFoundError,
@@ -22,7 +22,7 @@ from ..core.error_handling import (
     retry_on_error,
     validate_request
 )
-from ..core.dependencies import (
+from nia.core.dependencies import (
     get_memory_system,
     get_orchestration_agent,
     get_coordination_agent,

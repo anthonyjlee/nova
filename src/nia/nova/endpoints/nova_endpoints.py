@@ -12,10 +12,10 @@ import traceback
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from ...core.types.memory_types import EpisodicMemory
-from ..core.auth import validate_api_key, check_rate_limit, get_permission
-from ..core.websocket import NovaWebSocket
-from ..core.dependencies import (
+from nia.core.types.memory_types import EpisodicMemory
+from nia.core.auth import validate_api_key, check_rate_limit, get_permission
+from nia.core.websocket import NovaWebSocket
+from nia.core.dependencies import (
     get_memory_system,
     get_meta_agent,
     get_tiny_factory,
@@ -24,13 +24,13 @@ from ..core.dependencies import (
     get_agent_store,
     get_thread_manager
 )
-from ..core.error_handling import (
+from nia.core.error_handling import (
     NovaError,
     ValidationError,
     ResourceNotFoundError,
     ServiceError
 )
-from ..core.models import (
+from nia.core.models import (
     ThreadRequest,
     ThreadResponse,
     MessageRequest,

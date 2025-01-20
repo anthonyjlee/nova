@@ -10,17 +10,15 @@ import subprocess
 import json
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional, Set
+from typing import Dict, Any, Optional, Set, TYPE_CHECKING
 
-from nia.memory.two_layer import TwoLayerMemorySystem
-from nia.memory.vector_store import VectorStore
-from nia.nova.core.thread_manager import ThreadManager
-
-# Add src directory to Python path
-project_root = Path(__file__).parent.parent.resolve()
-sys.path.append(str(project_root / "src"))
+if TYPE_CHECKING:
+    from nia.memory.two_layer import TwoLayerMemorySystem
+    from nia.memory.vector_store import VectorStore
+    from nia.nova.core.thread_manager import ThreadManager
 
 # Configure logging with both file and console handlers
+project_root = Path(__file__).parent.parent.resolve()
 LOGS_DIR = project_root / "test_results" / "initialization_logs"
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 log_file = LOGS_DIR / f"server_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
@@ -350,4 +348,12 @@ async def main():
         await cleanup_services(status, worker_process)
 
 if __name__ == "__main__":
+    # Add src directory to Python path when running directly
+    sys.path.append(str(project_root / "src"))
+    
+    # Import nia modules after modifying Python path
+    from nia.memory.two_layer import TwoLayerMemorySystem
+    from nia.memory.vector_store import VectorStore
+    from nia.nova.core.thread_manager import ThreadManager
+    
     asyncio.run(main())

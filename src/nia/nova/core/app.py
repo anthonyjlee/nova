@@ -7,6 +7,8 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 import base64
 import hashlib
+import sys
+from pathlib import Path
 
 from ..endpoints.nova_endpoints import nova_router
 from ..endpoints.thread_endpoints import thread_router, task_router
@@ -187,3 +189,11 @@ async def startup_event():
 async def health_check(key: str = Depends(validate_api_key)):
     """Health check endpoint."""
     return {"status": "ok"}
+
+if __name__ == "__main__":
+    # Add src directory to Python path when running directly
+    project_root = Path(__file__).parent.parent.parent.parent.resolve()
+    sys.path.append(str(project_root / "src"))
+    
+    import uvicorn
+    uvicorn.run(app, host="127.0.0.1", port=8000)
