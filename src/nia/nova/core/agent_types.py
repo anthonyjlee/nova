@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from typing import Dict, List, Optional, Any, Union
 from datetime import datetime
 from enum import Enum
+from nia.core.types.agent_types import AgentResponse as CoreAgentResponse
 
 class AgentState(str, Enum):
     """Agent state enum."""
@@ -73,14 +74,12 @@ class AgentConfig(BaseModel):
     retry_limit: int = 3
     metadata: Optional[Dict[str, Any]] = None
 
-class AgentResponse(BaseModel):
-    """Agent response model."""
-    agent_id: str
-    status: str
-    message: str
+class AgentResponse(CoreAgentResponse):
+    """Agent response model extending core AgentResponse."""
+    agent_id: Optional[str] = None
+    status: Optional[str] = None
+    message: Optional[str] = None
     data: Optional[Dict[str, Any]] = None
-    timestamp: str = Field(default_factory=lambda: datetime.now().isoformat())
-    metadata: Optional[Dict[str, Any]] = None
 
 class AgentError(BaseModel):
     """Agent error model."""

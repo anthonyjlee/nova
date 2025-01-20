@@ -20,7 +20,7 @@ from ..endpoints.websocket_endpoints import ws_router
 from ..endpoints.tasks_endpoints import tasks_router
 from ..endpoints.channel_endpoints import channel_router
 from ..endpoints.agent_endpoints import agent_router
-from ..endpoints.auth import validate_api_key
+from ...core.auth import validate_api_key
 
 import logging
 

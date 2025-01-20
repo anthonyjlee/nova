@@ -4,7 +4,7 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 
 from .base import NovaAgent
-from ...core.types.memory_types import AgentResponse
+from .agent_types import AgentResponse
 
 class SelfModelAgent(NovaAgent):
     """Base class for self model agents in Nova framework."""
@@ -52,8 +52,15 @@ class SelfModelAgent(NovaAgent):
             
         except Exception as e:
             return AgentResponse(
-                content=f"Error in self model processing: {str(e)}",
-                metadata={"error": str(e)}
+                response=f"Error in self model processing: {str(e)}",
+                agent_id=self.agent_type,
+                status="error",
+                message=str(e),
+                metadata={
+                    "error": str(e),
+                    "timestamp": datetime.now().isoformat(),
+                    "domain": self.domain
+                }
             )
             
     async def analyze_self_model(

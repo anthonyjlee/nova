@@ -8,7 +8,7 @@ from ...nova.core.self_model import SelfModelAgent as NovaSelfModelAgent
 from ..tinytroupe_agent import TinyTroupeAgent
 from ...world.environment import NIAWorld
 from ...memory.two_layer import TwoLayerMemorySystem
-from ...core.types.memory_types import AgentResponse
+from ...nova.core.agent_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +31,8 @@ class SelfModelAgent(NovaSelfModelAgent, TinyTroupeAgent):
         NovaSelfModelAgent.__init__(
             self,
             llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
+            store=memory_system.semantic if memory_system else None,
+            vector_store=memory_system.episodic if memory_system else None,
             domain=self.domain
         )
         
@@ -155,7 +155,10 @@ class SelfModelAgent(NovaSelfModelAgent, TinyTroupeAgent):
                                 
                 # Create response with analysis
                 return AgentResponse(
-                    content=str(analysis),
+                    response=str(analysis),
+                    agent_id=self.name,
+                    status="success",
+                    message="Analysis complete",
                     metadata={"analysis": analysis}
                 )
                 
@@ -165,7 +168,10 @@ class SelfModelAgent(NovaSelfModelAgent, TinyTroupeAgent):
         except Exception as e:
             logger.error(f"Error in self model processing: {str(e)}")
             return AgentResponse(
-                content="Error processing self model",
+                response="Error processing self model",
+                agent_id=self.name,
+                status="error",
+                message=str(e),
                 metadata={"error": str(e)}
             )
             

@@ -10,10 +10,12 @@ import uuid
 import aiohttp
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 from nia.core.neo4j.agent_store import AgentStore
-from nia.memory.two_layer import TwoLayerMemorySystem, Memory, MemoryType
+from nia.memory.two_layer import TwoLayerMemorySystem
+from nia.core.types.memory_types import Memory, MemoryType, ValidationSchema, CrossDomainSchema
+from nia.core.types.domain_types import DomainContext, DomainTransfer
 
 # Configure JSON logging
 LOGS_DIR = Path("test_results/agent_storage_logs")
@@ -42,28 +44,50 @@ class JsonLogHandler(logging.Handler):
         self.logs = []
         
     def emit(self, record):
-        log_entry = {
-            "timestamp": datetime.fromtimestamp(record.created).isoformat(),
-            "level": record.levelname,
-            "message": record.getMessage(),
-            "function": record.funcName,
-            "line": record.lineno,
-            "thread_id": record.thread,
-            "process_id": record.process,
-            "test_phase": getattr(record, 'test_phase', None),
-            "test_result": getattr(record, 'test_result', None)
-        }
-        
-        # Add exception info if present
-        if record.exc_info:
-            log_entry["exception"] = {
-                "type": record.exc_info[0].__name__,
-                "message": str(record.exc_info[1]),
-                "traceback": traceback.format_exception(*record.exc_info)
+        """Emit a log record."""
+        try:
+            # Create log entry with safe attribute access
+            log_entry = {
+                "timestamp": datetime.fromtimestamp(getattr(record, 'created', datetime.now().timestamp())).isoformat(),
+                "level": record.levelname if hasattr(record, 'levelname') else "NOTSET",
+                "message": record.getMessage() if hasattr(record, 'getMessage') else str(record),
+                "module": record.name if hasattr(record, 'name') else "test_agent_storage",
+                "function": record.funcName if hasattr(record, 'funcName') else "",
+                "line": record.lineno if hasattr(record, 'lineno') else 0,
+                "thread_id": record.thread if hasattr(record, 'thread') else None,
+                "process_id": record.process if hasattr(record, 'process') else None
             }
+
+            # Add extra fields from record
+            extra = getattr(record, 'extra', {})
+            if extra:
+                for key, value in extra.items():
+                    log_entry[key] = value
             
-        self.logs.append(log_entry)
-        self._save_logs()
+            # Add exception info if present
+            exc_info = getattr(record, 'exc_info', None)
+            if exc_info and isinstance(exc_info, tuple) and len(exc_info) == 3:
+                exc_type, exc_value, exc_tb = exc_info
+                if exc_type and exc_value and exc_tb:
+                    try:
+                        log_entry["exception"] = {
+                            "type": exc_type.__name__ if hasattr(exc_type, '__name__') else str(exc_type),
+                            "message": str(exc_value),
+                            "traceback": traceback.format_exception(exc_type, exc_value, exc_tb)
+                        }
+                    except Exception as e:
+                        # Fallback for exception handling errors
+                        log_entry["exception"] = {
+                            "type": "Error",
+                            "message": "Failed to format exception",
+                            "error": str(e)
+                        }
+                
+            self.logs.append(log_entry)
+            self._save_logs()
+        except Exception as e:
+            # Fallback logging in case of errors
+            print(f"Error in JsonLogHandler.emit: {str(e)}\n{traceback.format_exc()}")
         
     def _save_logs(self):
         with open(self.log_file, 'w') as f:
@@ -84,7 +108,7 @@ logging.basicConfig(
 )
 
 # Configure test logger
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("test_agent_storage")
 logger.setLevel(logging.DEBUG)
 
 # Enable debug logging for key modules
@@ -148,22 +172,22 @@ def restore_neo4j_data():
         shutil.copytree(NEO4J_BACKUP_DIR, NEO4J_DATA_DIR)
         logger.info("Neo4j data restored", extra={"test_phase": "cleanup"})
 
-def create_test_result(test_name: str, success: bool, details: dict = None):
+def create_test_result(test_name: str, success: bool, details: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Create a test result entry."""
     return {
         "test_name": test_name,
         "success": success,
         "timestamp": datetime.now().isoformat(),
-        "details": details or {}
+        "details": details if details is not None else {}
     }
 
 class TestResults:
     """Manage test results and output."""
     
     def __init__(self):
-        self.results = []
+        self.results: List[Dict[str, Any]] = []
         
-    def add_result(self, test_name: str, success: bool, details: dict = None):
+    def add_result(self, test_name: str, success: bool, details: Optional[Dict[str, Any]] = None) -> None:
         """Add a test result."""
         self.results.append(create_test_result(test_name, success, details))
         
@@ -289,7 +313,7 @@ async def test_agent_storage(results: TestResults):
         
         # Create Memory object with proper structure
         # First verify thread doesn't exist
-        existing = await memory_system.get_memory(thread_id)
+        existing = await memory_system.get_experience(thread_id)
         if existing:
             logger.warning(f"Thread {thread_id} already exists")
             
@@ -307,26 +331,58 @@ async def test_agent_storage(results: TestResults):
         memory_id = str(uuid.uuid4())  # Generate unique memory ID
         memory_type = "thread"  # Use custom type for thread
         
-        thread_memory = Memory(
-            id=memory_id,  # Use generated memory ID
-            content=json.dumps(memory_content),  # Serialize content to string
-            type=memory_type,  # Use custom type
-            importance=0.8,
+        # Create validation schema
+        validation = ValidationSchema(
+            domain="test",
+            confidence=0.9,
+            source="test_agent_storage",
+            timestamp=datetime.now().isoformat()
+        )
+
+        # Create domain context
+        domain_context = DomainContext(
+            domain="test",
+            confidence=0.9,
+            source="test_agent_storage",
             timestamp=datetime.now().isoformat(),
+            metadata={
+                "thread_id": thread_id,
+                "operation": "create",
+                "transfer": DomainTransfer(
+                    from_domain="test",
+                    to_domain="test",
+                    operation="create",
+                    data={"thread_id": thread_id},
+                    approved=True,
+                    requested=False
+                ).dict()
+            }
+        )
+
+        # Create thread memory with proper validation
+        thread_memory = Memory(
+            id=memory_id,
+            content=memory_content,
+            type=MemoryType.THREAD.value,
+            importance=0.8,
+            timestamp=datetime.now(),
             context={
-                "domain": "test",  # Required domain
-                "source": "test",
-                "type": memory_type,  # Match memory type
-                "workspace": "test"  # Required workspace
+                "domain": "test",
+                "source": "test_agent_storage",
+                "type": MemoryType.THREAD.value,
+                "workspace": "test"
             },
             metadata={
-                "thread_id": thread_id,  # Store thread ID in metadata
-                "type": memory_type,     # Match memory type
-                "system": False,         # Required system flag
-                "pinned": False,         # Required pinned flag
-                "description": "Test thread for agent storage",  # Required description
+                "thread_id": thread_id,
+                "type": MemoryType.THREAD.value,
+                "system": False,
+                "pinned": False,
+                "description": "Test thread for agent storage",
                 "consolidated": False
-            }
+            },
+            domain_context=domain_context,
+            validation=validation,
+            source="test_agent_storage"
         )
         
         logger.debug(f"Created thread memory with type: {memory_type}")
@@ -356,30 +412,24 @@ async def test_agent_storage(results: TestResults):
         logger.info(f"Retrieved memory metadata: {json.dumps(retrieved_memory.metadata, indent=2)}", 
                    extra={"test_phase": "create_thread"})
         
-        # Parse content to compare
-        try:
-            original_content = json.loads(thread_memory.content)
-            retrieved_content = json.loads(retrieved_memory.content)
+        # Compare content directly since it's already a dict
+        if retrieved_memory.content != thread_memory.content:
+            raise Exception(
+                f"Content mismatch - "
+                f"Original: {json.dumps(thread_memory.content)}, "
+                f"Retrieved: {json.dumps(retrieved_memory.content)}"
+            )
             
-            if original_content != retrieved_content:
-                raise Exception(
-                    f"Content mismatch - "
-                    f"Original: {json.dumps(original_content)}, "
-                    f"Retrieved: {json.dumps(retrieved_content)}"
-                )
-                
-            # Verify metadata matches
-            if retrieved_memory.metadata != thread_memory.metadata:
-                raise Exception(
-                    f"Metadata mismatch - "
-                    f"Original: {json.dumps(thread_memory.metadata)}, "
-                    f"Retrieved: {json.dumps(retrieved_memory.metadata)}"
-                )
-                
-            logger.info("Memory verification successful", 
-                       extra={"test_phase": "create_thread"})
-        except json.JSONDecodeError as e:
-            raise Exception(f"Failed to parse memory content: {str(e)}")
+        # Verify metadata matches
+        if retrieved_memory.metadata != thread_memory.metadata:
+            raise Exception(
+                f"Metadata mismatch - "
+                f"Original: {json.dumps(thread_memory.metadata)}, "
+                f"Retrieved: {json.dumps(retrieved_memory.metadata)}"
+            )
+            
+        logger.info("Memory verification successful", 
+                   extra={"test_phase": "create_thread"})
         logger.info("Test thread created", extra={"test_phase": "create_thread", "test_result": True})
         results.add_result("create_thread", True)
         
@@ -406,9 +456,12 @@ async def test_agent_storage(results: TestResults):
         # Test 3: Verify agent in Neo4j
         logger.info("Verifying agent in Neo4j...", extra={"test_phase": "verify_neo4j"})
         stored_agent = await agent_store.get_agent(agent_id)
-        assert stored_agent is not None, "Agent not found in Neo4j"
-        assert stored_agent["id"] == agent_id, "Agent ID mismatch"
-        assert stored_agent["name"] == agent_data["name"], "Agent name mismatch"
+        if stored_agent is None:
+            raise Exception("Agent not found in Neo4j")
+        if stored_agent.get("id") != agent_id:
+            raise Exception("Agent ID mismatch")
+        if stored_agent.get("name") != agent_data["name"]:
+            raise Exception("Agent name mismatch")
         logger.info("Agent verified in Neo4j", 
                    extra={"test_phase": "verify_neo4j", "test_result": True})
         results.add_result("verify_neo4j", True, {
@@ -462,8 +515,13 @@ async def test_agent_storage(results: TestResults):
         # Test 6: Verify relationship
         logger.info("Verifying agent relationship...", extra={"test_phase": "verify_relationship"})
         updated_agent = await agent_store.get_agent(agent_id)
-        assert len(updated_agent["relationships"]) == 1, "Wrong number of relationships"
-        assert updated_agent["relationships"][0]["target_id"] == other_agent_id, "Wrong relationship target"
+        if not updated_agent or not updated_agent.get("relationships"):
+            raise Exception("No relationships found")
+        relationships = updated_agent.get("relationships", [])
+        if len(relationships) != 1:
+            raise Exception("Wrong number of relationships")
+        if relationships[0].get("target_id") != other_agent_id:
+            raise Exception("Wrong relationship target")
         logger.info("Agent relationship verified", 
                    extra={"test_phase": "verify_relationship", "test_result": True})
         results.add_result("verify_relationship", True, {
@@ -475,7 +533,8 @@ async def test_agent_storage(results: TestResults):
         logger.info("Updating agent status...", extra={"test_phase": "update_status"})
         await agent_store.update_agent_status(agent_id, "inactive")
         updated_agent = await agent_store.get_agent(agent_id)
-        assert updated_agent["status"] == "inactive", "Status not updated"
+        if not updated_agent or updated_agent.get("status") != "inactive":
+            raise Exception("Status not updated")
         logger.info("Agent status updated", 
                    extra={"test_phase": "update_status", "test_result": True})
         results.add_result("update_status", True, {
@@ -723,3 +782,6 @@ async def run_tests():
         results_file = results.save_results()
         logger.info(f"Test results saved to: {results_file}", 
                    extra={"test_phase": "session_end"})
+
+if __name__ == "__main__":
+    asyncio.run(run_tests())

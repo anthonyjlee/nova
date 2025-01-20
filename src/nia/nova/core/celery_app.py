@@ -12,7 +12,7 @@ from pathlib import Path
 from logging.handlers import RotatingFileHandler
 from nia.core.types.memory_types import EpisodicMemory
 
-from nia.nova.core.websocket import websocket_manager
+from nia.nova.core.websocket_state import websocket_manager
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -71,14 +71,13 @@ def store_chat_message(self, data: Dict[str, Any]) -> Dict[str, Any]:
     """Store and broadcast a chat message."""
     try:
         # Get memory system
-        from .dependencies import get_memory_system
-        memory_system = cast(Optional[TwoLayerMemorySystem], run_async(get_memory_system()))
-        
-        # Check memory system
-        if not memory_system:
+        from nia.nova.core.dependencies import get_memory_system
+        memory_system = run_async(get_memory_system())
+        if not isinstance(memory_system, TwoLayerMemorySystem):
             logger.error("Memory system not initialized")
             return {"error": "Memory system not initialized"}
-            
+        memory_system = cast(TwoLayerMemorySystem, memory_system)
+        
         # Create message
         message = {
             "type": "chat_message",
@@ -87,7 +86,7 @@ def store_chat_message(self, data: Dict[str, Any]) -> Dict[str, Any]:
             "timestamp": datetime.now().isoformat()
         }
         
-        # Store in memory if system is initialized
+        # Check if episodic layer is properly initialized
         if not memory_system.episodic or not memory_system.episodic.store:
             logger.error("Memory system episodic layer not initialized")
             return {"error": "Memory system episodic layer not initialized"}
@@ -121,13 +120,12 @@ def store_task_update(self, data: Dict[str, Any]) -> Dict[str, Any]:
     """Store and broadcast a task update."""
     try:
         # Get memory system
-        from .dependencies import get_memory_system
-        memory_system = cast(Optional[TwoLayerMemorySystem], run_async(get_memory_system()))
-        
-        # Check memory system
-        if not memory_system:
+        from nia.nova.core.dependencies import get_memory_system
+        memory_system = run_async(get_memory_system())
+        if not isinstance(memory_system, TwoLayerMemorySystem):
             logger.error("Memory system not initialized")
             return {"error": "Memory system not initialized"}
+        memory_system = cast(TwoLayerMemorySystem, memory_system)
             
         # Create update
         update = {
@@ -138,7 +136,7 @@ def store_task_update(self, data: Dict[str, Any]) -> Dict[str, Any]:
             "metadata": data.get("metadata", {})
         }
         
-        # Store in memory if system is initialized
+        # Check if episodic layer is properly initialized
         if not memory_system.episodic or not memory_system.episodic.store:
             logger.error("Memory system episodic layer not initialized")
             return {"error": "Memory system episodic layer not initialized"}
@@ -172,13 +170,12 @@ def store_agent_status(self, data: Dict[str, Any]) -> Dict[str, Any]:
     """Store and broadcast an agent status update."""
     try:
         # Get memory system
-        from .dependencies import get_memory_system
-        memory_system = cast(Optional[TwoLayerMemorySystem], run_async(get_memory_system()))
-        
-        # Check memory system
-        if not memory_system:
+        from nia.nova.core.dependencies import get_memory_system
+        memory_system = run_async(get_memory_system())
+        if not isinstance(memory_system, TwoLayerMemorySystem):
             logger.error("Memory system not initialized")
             return {"error": "Memory system not initialized"}
+        memory_system = cast(TwoLayerMemorySystem, memory_system)
             
         # Create status
         status = {
@@ -189,7 +186,7 @@ def store_agent_status(self, data: Dict[str, Any]) -> Dict[str, Any]:
             "metadata": data.get("metadata", {})
         }
         
-        # Store in memory if system is initialized
+        # Check if episodic layer is properly initialized
         if not memory_system.episodic or not memory_system.episodic.store:
             logger.error("Memory system episodic layer not initialized")
             return {"error": "Memory system episodic layer not initialized"}
@@ -223,13 +220,12 @@ def store_graph_update(self, data: Dict[str, Any]) -> Dict[str, Any]:
     """Store and broadcast a graph update."""
     try:
         # Get memory system
-        from .dependencies import get_memory_system
-        memory_system = cast(Optional[TwoLayerMemorySystem], run_async(get_memory_system()))
-        
-        # Check memory system
-        if not memory_system:
+        from nia.nova.core.dependencies import get_memory_system
+        memory_system = run_async(get_memory_system())
+        if not isinstance(memory_system, TwoLayerMemorySystem):
             logger.error("Memory system not initialized")
             return {"error": "Memory system not initialized"}
+        memory_system = cast(TwoLayerMemorySystem, memory_system)
             
         # Create update
         update = {
@@ -240,7 +236,7 @@ def store_graph_update(self, data: Dict[str, Any]) -> Dict[str, Any]:
             "metadata": data.get("metadata", {})
         }
         
-        # Store in memory if system is initialized
+        # Check if episodic layer is properly initialized
         if not memory_system.episodic or not memory_system.episodic.store:
             logger.error("Memory system episodic layer not initialized")
             return {"error": "Memory system episodic layer not initialized"}
@@ -270,7 +266,9 @@ def store_graph_update(self, data: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": str(e)}
 
 # Register startup handler
-@celery_app.on_after_configure.connect
-def setup_periodic_tasks(sender, **kwargs):
+from celery.signals import celeryd_after_setup
+
+@celeryd_after_setup.connect
+def setup_periodic_tasks(**kwargs):
     # Check service status every 30 seconds
-    sender.add_periodic_task(30.0, check_status.s(), name='check_service_status')
+    celery_app.add_periodic_task(30.0, check_status.s(), name='check_service_status')

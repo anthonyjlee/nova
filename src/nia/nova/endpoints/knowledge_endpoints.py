@@ -4,10 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from typing import Dict, Any, List
 from datetime import datetime
 
-from nia.core.dependencies import get_memory_system
-from nia.core.auth import get_permission
-from nia.core.error_handling import ServiceError
-from nia.core.types.memory_types import Memory, MemoryType
+from ..core.dependencies import get_memory_system
+from ...core.auth import get_permission
+from ..core.error_handling import ServiceError
+from ...core.types.memory_types import Memory, MemoryType
 
 kg_router = APIRouter(
     prefix="",

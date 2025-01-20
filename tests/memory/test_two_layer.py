@@ -4,7 +4,7 @@ import pytest
 import logging
 import asyncio
 from datetime import datetime, timezone
-from typing import Dict, List
+from typing import Dict, List, Any, Optional, Union
 import uuid
 import json
 
@@ -28,9 +28,10 @@ def mock_vector_store():
     """Mock vector store for testing."""
     class MockVectorStore:
         def __init__(self):
-            self.vectors = {}
+            self.vectors: Dict[str, Dict[str, Any]] = {}
             
-        async def store_vector(self, content: Dict, metadata: Dict = None, layer: str = None) -> str:
+        async def store_vector(self, content: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None, layer: Optional[str] = None) -> str:
+            metadata = metadata or {}  # Default empty dict
             try:
                 vector_id = str(uuid.uuid4())
                 # Store memory fields
@@ -45,7 +46,7 @@ def mock_vector_store():
                         "relationships": metadata.get("relationships", []),
                         "participants": metadata.get("participants", []),
                         "importance": metadata.get("importance", 0.0),
-                        "metadata": metadata or {}
+                        "metadata": metadata
                     }
                     # Add metadata fields at top level for querying
                     if metadata:
@@ -55,18 +56,18 @@ def mock_vector_store():
                 elif isinstance(content, EpisodicMemory):
                     memory_dict = content.dict()
                     memory_dict["id"] = vector_id
-                    memory_dict["metadata"] = metadata or {}
+                    memory_dict["metadata"] = metadata
                     memory_dict["metadata_consolidated"] = False
                 elif hasattr(content, "dict"):
                     memory_dict = content.dict()
                     memory_dict["id"] = vector_id
-                    memory_dict["metadata"] = metadata or {}
+                    memory_dict["metadata"] = metadata
                     memory_dict["metadata_consolidated"] = False
                 else:
                     memory_dict = {
                         "id": vector_id,
                         "content": content,
-                        "metadata": metadata or {},
+                        "metadata": metadata,
                         "metadata_consolidated": False
                     }
 
@@ -171,21 +172,27 @@ def mock_vector_store():
 
                 self.vectors[vector_id] = {
                     "content": memory_dict,
-                    "metadata": metadata or {}
+                    "metadata": metadata
                 }
                 return vector_id
             except Exception as e:
                 raise ValueError(str(e))
             
-        async def get_vector(self, vector_id: str) -> Dict:
-            vector = self.vectors.get(vector_id, {})
-            if not vector:
-                return None
-            return vector["content"]
+        async def get_vector(self, vector_id: str) -> Dict[str, Any]:
+            vector = self.vectors.get(vector_id, {})  # Default empty dict
+            return vector.get("content", {})  # Return empty dict if no content
             
-        async def search_vectors(self, content: str = None, filter: Dict = None, limit: int = None, score_threshold: float = None, layer: str = None) -> List[Dict]:
+        async def search_vectors(
+            self, 
+            content: Optional[str] = None, 
+            filter: Optional[Dict[str, Any]] = None, 
+            limit: Optional[int] = None, 
+            score_threshold: Optional[float] = None, 
+            layer: Optional[str] = None
+        ) -> List[Dict[str, Any]]:
+            filter = filter or {}  # Default empty dict
             # Return all vectors for consolidation candidates
-            if content is None and filter is None:
+            if content is None and not filter:
                 return [v["content"] for v in self.vectors.values()]
             
             # Handle filtered search
@@ -248,7 +255,8 @@ def mock_vector_store():
                     results.append(memory_data)
             return results
             
-        async def update_metadata(self, vector_id: str, metadata: Dict):
+        async def update_metadata(self, vector_id: str, metadata: Dict[str, Any]) -> None:
+            metadata = metadata or {}  # Default empty dict
             if vector_id in self.vectors:
                 # Update both the metadata dict and add top-level metadata fields
                 self.vectors[vector_id]["metadata"].update(metadata)
@@ -261,19 +269,19 @@ def mock_vector_store():
 def mock_neo4j_store():
     """Mock Neo4j store for testing. autouse=True ensures a fresh store for each test."""
     class MockAsyncResult:
-        def __init__(self, data):
+        def __init__(self, data: List[Dict[str, Any]]):
             self._data = data
             
-        async def data(self):
+        async def data(self) -> List[Dict[str, Any]]:
             return self._data
             
-        async def single(self):
+        async def single(self) -> Optional[Dict[str, Any]]:
             """Get the first record."""
             if self._data:
                 return self._data[0]
             return None
 
-        async def consume(self):
+        async def consume(self) -> List[Dict[str, Any]]:
             """Consume the result."""
             return self._data
             
@@ -281,7 +289,7 @@ def mock_neo4j_store():
             """Make the result iterable."""
             return self
             
-        async def __anext__(self):
+        async def __anext__(self) -> Dict[str, Any]:
             """Get next item for async iteration."""
             if not hasattr(self, '_iter_index'):
                 self._iter_index = 0
@@ -301,7 +309,7 @@ def mock_neo4j_store():
         async def __aexit__(self, exc_type, exc_val, exc_tb):
             pass
             
-        async def run(self, query: str, parameters=None, **kwargs):
+        async def run(self, query: str, parameters: Optional[Dict[str, Any]] = None, **kwargs) -> MockAsyncResult:
             # Debug print
             print(f"\nExecuting query: {query}")
             print(f"With parameters: {parameters}")
@@ -389,10 +397,10 @@ def mock_neo4j_store():
                 else:
                     # Regular MERGE without ON CREATE SET
                     node = {
-                        "name": params.get("name"),
-                        "type": params.get("type", "concept"),
-                        "description": params.get("description", ""),
-                        "is_consolidation": params.get("is_consolidation", False)
+                        "name": params.get("name", ""),  # Default empty string
+                        "type": params.get("type", "concept"),  # Default type
+                        "description": params.get("description", ""),  # Default empty string
+                        "is_consolidation": params.get("is_consolidation", False)  # Default false
                     }
 
                     # Validate required fields
@@ -422,7 +430,7 @@ def mock_neo4j_store():
                 matching_nodes = []
                 # Find all direct relationships
                 for rel in self.store.relationships:
-                    if rel["from"] == params["name"]:
+                    if rel["from"] == params.get("name"):
                         # Find the target node
                         for node in self.store.nodes.values():
                             if node["properties"]["name"] == rel["to"]:
@@ -445,8 +453,8 @@ def mock_neo4j_store():
                     print(f"Store relationships before: {self.store.relationships}")
                     
                     # Get parameters from parameters first, then kwargs
-                    source_name = parameters.get("name") if parameters else kwargs.get("name")
-                    related_names = parameters.get("related", []) if parameters else kwargs.get("related", [])
+                    source_name = (parameters or {}).get("name") or kwargs.get("name", "")
+                    related_names = (parameters or {}).get("related", []) or kwargs.get("related", [])
                     if isinstance(related_names, str):
                         related_names = [related_names]
                     elif not isinstance(related_names, list):
@@ -511,37 +519,11 @@ def mock_neo4j_store():
                         if node["properties"]["name"] == params.get("related_name"):
                             target_node = node
                     
-                    if not source_node:
-                        node_id = str(uuid.uuid4())
-                        source_node = {
-                            "label": "Concept",
-                            "properties": {
-                                "name": params.get("name"),
-                                "type": params.get("type", "concept"),
-                                "description": "",
-                                "is_consolidation": False
-                            }
-                        }
-                        self.store.nodes[node_id] = source_node
-                    
-                    if not target_node:
-                        node_id = str(uuid.uuid4())
-                        target_node = {
-                            "label": "Concept",
-                            "properties": {
-                                "name": params.get("related_name"),
-                                "type": params.get("type", "concept"),
-                                "description": "",
-                                "is_consolidation": False
-                            }
-                        }
-                        self.store.nodes[node_id] = target_node
-                    
                     # Create relationship with enhanced properties
                     relationship = {
-                        "from": params.get("name"),
-                        "to": params.get("related_name"),
-                        "type": params.get("type", "RELATED_TO"),
+                        "from": params.get("name", ""),  # Default empty string
+                        "to": params.get("related_name", ""),  # Default empty string
+                        "type": params.get("type", "RELATED_TO"),  # Default type
                         "properties": {
                             "domains": params.get("domains", ["professional"]),
                             "confidence": params.get("confidence", 1.0),
@@ -555,9 +537,9 @@ def mock_neo4j_store():
                     # Create reverse relationship if bidirectional
                     if params.get("bidirectional", False):
                         reverse_relationship = {
-                            "from": params.get("related_name"),
-                            "to": params.get("name"),
-                            "type": params.get("type", "RELATED_TO"),
+                            "from": params.get("related_name", ""),  # Default empty string
+                            "to": params.get("name", ""),  # Default empty string
+                            "type": params.get("type", "RELATED_TO"),  # Default type
                             "properties": {
                                 "domains": params.get("domains", ["professional"]),
                                 "confidence": params.get("confidence", 1.0),
@@ -569,8 +551,8 @@ def mock_neo4j_store():
                         self.store.relationships.append(reverse_relationship)
                     
                     return MockAsyncResult([{
-                        "c": source_node["properties"], 
-                        "r": target_node["properties"],
+                        "c": source_node["properties"] if source_node else {},
+                        "r": target_node["properties"] if target_node else {},
                         "relationship": relationship["properties"]
                     }])
             elif "MATCH ()-[r:RELATED_TO]->() RETURN count" in query:
@@ -581,9 +563,9 @@ def mock_neo4j_store():
     class MockNeo4jStore(Neo4jBaseStore):
         def __init__(self):
             super().__init__("bolt://127.0.0.1:7687", user="neo4j", password="password")
-            self.nodes = {}
-            self.relationships = []  # List to store relationships
-            self.beliefs = []
+            self.nodes: Dict[str, Dict[str, Any]] = {}
+            self.relationships: List[Dict[str, Any]] = []  # List to store relationships
+            self.beliefs: List[Dict[str, Any]] = []
             self._driver = self  # Store as protected attribute instead of using property
             print(f"\nInitialized MockNeo4jStore with empty relationships list (id: {id(self.relationships)})")
 
@@ -597,15 +579,15 @@ def mock_neo4j_store():
             """Setter for driver property."""
             self._driver = value
         
-        def session(self, database=None, default_access_mode=None):
+        def session(self, database: Optional[str] = None, default_access_mode: Optional[str] = None) -> MockSession:
             """Create a mock session."""
             return MockSession(self)
             
-        async def close(self):
+        async def close(self) -> None:
             """Close the mock store."""
             pass
             
-        async def create_concept_node(self, label: str, properties: Dict):
+        async def create_concept_node(self, label: str, properties: Dict[str, Any]) -> str:
             node_id = str(uuid.uuid4())
             self.nodes[node_id] = {
                 "label": label,
@@ -613,14 +595,21 @@ def mock_neo4j_store():
             }
             return node_id
             
-        async def create_relationship(self, start_node: str, end_node: str, type: str, properties: Dict = None):
+        async def create_relationship(
+            self, 
+            start_node: str, 
+            end_node: str, 
+            type: str, 
+            properties: Optional[Dict[str, Any]] = None
+        ) -> None:
+            properties = properties or {}  # Default empty dict
             print(f"\nCreating relationship: {start_node} -> {end_node}")
             print(f"Relationships before: {self.relationships}")
             relationship = {
                 "from": start_node,
                 "to": end_node,
                 "type": type,
-                "properties": properties or {}
+                "properties": properties
             }
             self.relationships.append(relationship)
             print(f"Added relationship: {relationship}")
@@ -632,10 +621,10 @@ def mock_neo4j_store():
             predicate: str, 
             object: str, 
             confidence: float = 1.0,
-            domains: List[str] = None,
-            context: Dict = None,
+            domains: Optional[List[str]] = None,
+            context: Optional[Dict[str, Any]] = None,
             source: str = "professional"
-        ):
+        ) -> None:
             """Create a belief with enhanced metadata."""
             # Validate confidence
             if not 0 <= confidence <= 1:
@@ -661,7 +650,13 @@ def mock_neo4j_store():
                 "last_updated": datetime.now(timezone.utc).isoformat()
             })
             
-        async def store_concept(self, name: str, type: str, description: str = "", validation: Dict = None):
+        async def store_concept(
+            self, 
+            name: str, 
+            type: str, 
+            description: str = "", 
+            validation: Optional[Dict[str, Any]] = None
+        ) -> str:
             """Store a concept in the mock store."""
             node_id = str(uuid.uuid4())
             self.nodes[node_id] = {
@@ -676,13 +671,20 @@ def mock_neo4j_store():
             }
             return node_id
 
-        async def store_relationship(self, source: str, target: str, rel_type: str, attributes: Dict = None):
+        async def store_relationship(
+            self, 
+            source: str, 
+            target: str, 
+            rel_type: str, 
+            attributes: Optional[Dict[str, Any]] = None
+        ) -> None:
+            attributes = attributes or {}  # Default empty dict
             """Store a relationship in the mock store."""
             relationship = {
                 "from": source,
                 "to": target,
                 "type": rel_type,
-                "properties": attributes or {}
+                "properties": attributes
             }
             self.relationships.append(relationship)
             
@@ -699,7 +701,12 @@ def mock_neo4j_store():
                 }
                 self.relationships.append(reverse_relationship)
 
-        async def run_query(self, query: str, params: Dict = None) -> List[Dict]:
+        async def run_query(
+            self, 
+            query: str, 
+            params: Optional[Dict[str, Any]] = None
+        ) -> List[Dict[str, Any]]:
+            params = params or {}  # Default empty dict
             # Mock query execution
             if "type = $type" in query and params and "type" in params:
                 matching_nodes = []
@@ -733,8 +740,9 @@ async def memory_system(mock_vector_store, mock_neo4j_store):
     # Create episodic layer with mock vector store
     system.episodic = EpisodicLayer(vector_store=mock_vector_store)
     
-    # Create consolidation manager
-    system.consolidation_manager = ConsolidationManager(system.episodic, system.semantic)
+    # Create and set consolidation manager
+    consolidation_manager = ConsolidationManager(system.episodic, system.semantic)
+    setattr(system, 'consolidation_manager', consolidation_manager)
     
     # Ensure system is marked as initialized
     system._initialized = True
@@ -763,8 +771,8 @@ async def test_importance_based_consolidation(request):
 
     # Create domain context
     domain_context = DomainContext(
-        primary_domain=BaseDomain.PROFESSIONAL,
-        knowledge_vertical=KnowledgeVertical.GENERAL,
+        primary_domain=BaseDomain.PROFESSIONAL.value,
+        knowledge_vertical=KnowledgeVertical.GENERAL.value,
         validation=validation
     )
 
@@ -802,4 +810,79 @@ async def test_consolidation_metadata(request):
     validation = ValidationSchema(
         domain="professional",
         access_domain="professional",
-        confidence=
+        confidence=0.9,
+        source="professional",
+        cross_domain=CrossDomainSchema(
+            approved=True,
+            requested=True,
+            source_domain="professional",
+            target_domain="professional",
+            justification="Test consolidation metadata"
+        )
+    )
+
+    # Create domain context
+    domain_context = DomainContext(
+        primary_domain=BaseDomain.PROFESSIONAL.value,
+        knowledge_vertical=KnowledgeVertical.GENERAL.value,
+        validation=validation
+    )
+
+    # Create test memory
+    memory = MockMemory(
+        content="Test consolidation metadata",
+        type=MemoryType.EPISODIC,
+        importance=0.8,
+        knowledge={
+            "concepts": [
+                {
+                    "name": "Consolidation Test",
+                    "type": "entity",
+                    "description": "Testing consolidation metadata handling",
+                    "validation": validation.dict(),
+                    "domain_context": domain_context.dict()
+                }
+            ]
+        },
+        validation=validation,
+        domain_context=domain_context
+    )
+    
+    # Store memory
+    await memory_system.store_experience(memory)
+    
+    # Verify metadata was properly set
+    candidates = await memory_system.episodic.get_consolidation_candidates()
+    assert len(candidates) > 0
+    assert candidates[0]["metadata"]["consolidated"] is False
+
+@pytest.mark.asyncio
+async def test_no_recursion_in_thread_creation(request):
+    """Test that creating threads with participants doesn't cause recursion."""
+    memory_system = await request.getfixturevalue('memory_system')
+    
+    # Create test memory with participants
+    memory = MockMemory(
+        content="Test thread creation",
+        type=MemoryType.EPISODIC,
+        importance=0.5,
+        participants=["user1", "user2"],  # Add participants that could trigger thread creation
+        knowledge={
+            "concepts": [
+                {
+                    "name": "Thread Test",
+                    "type": "entity",
+                    "description": "Testing thread creation without recursion"
+                }
+            ]
+        }
+    )
+    
+    # Store memory and verify it completes without recursion
+    await memory_system.store_experience(memory)
+    
+    # Verify the memory was stored
+    stored_memories = await memory_system.episodic.get_consolidation_candidates()
+    assert len(stored_memories) > 0
+    assert stored_memories[0]["content"] == "Test thread creation"
+    assert stored_memories[0]["participants"] == ["user1", "user2"]

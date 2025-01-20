@@ -4,7 +4,8 @@ import logging
 from typing import Dict, List, Any, Optional
 from datetime import datetime
 
-from nia.core.types import AgentResponse, DialogueMessage, DomainContext
+from nia.core.types import DialogueMessage, DomainContext
+from ..core.agent_types import AgentResponse
 from ...core.interfaces.prompts import AGENT_PROMPTS
 from ...memory.chunking import chunk_content
 
@@ -65,7 +66,7 @@ class NovaAgent:
         # Format prompt template
         return self.prompt_template.format(content=content_str.strip())
     
-    def _combine_responses(self, responses: List[Dict]) -> Dict:
+    def _combine_responses(self, responses: List[Dict]) -> AgentResponse:
         """Combine multiple chunk responses into single response.
         
         Args:
@@ -75,7 +76,12 @@ class NovaAgent:
             Combined response
         """
         if not responses:
-            return {}
+            return AgentResponse(
+                response="",
+                agent_id=self.agent_type,
+                status="success",
+                message="No responses to combine"
+            )
             
         # Combine concepts
         all_concepts = []
@@ -116,23 +122,25 @@ class NovaAgent:
         # Combine reasoning steps
         all_reasoning = []
         for response in responses:
-            all_reasoning.extend(response.get("reasoning", []))
+            reasoning = response.get("reasoning", [])
+            if isinstance(reasoning, list):
+                all_reasoning.extend(reasoning)
+            else:
+                all_reasoning.append(str(reasoning))
             
         # Create combined response
-        combined = {
-            "response": "\n\n".join(r.get("response", "") for r in responses),
-            "concepts": all_concepts,
-            "key_points": all_points,
-            "implications": all_implications,
-            "uncertainties": all_uncertainties,
-            "reasoning": all_reasoning
-        }
-        
-        # Add metadata from first response
-        if responses[0].get("metadata"):
-            combined["metadata"] = responses[0]["metadata"]
-            
-        return combined
+        return AgentResponse(
+            response="\n\n".join(r.get("response", "") for r in responses),
+            concepts=all_concepts,
+            key_points=all_points,
+            implications=all_implications,
+            uncertainties=all_uncertainties,
+            reasoning="\n".join(all_reasoning),
+            metadata=responses[0].get("metadata", {}) if responses else {},
+            agent_id=self.agent_type,
+            status="success",
+            message="Combined response"
+        )
     
     async def process(
         self,
@@ -194,48 +202,8 @@ class NovaAgent:
             
             # Combine chunk responses with validation
             logger.debug("Combining chunk responses")
-            combined_response = self._combine_responses(chunk_responses)
-            logger.debug(f"Combined response: {combined_response}")
-            
-            # Validate final response
-            if not isinstance(combined_response, (dict, str)):
-                raise ValueError(f"Invalid combined response type: {type(combined_response)}")
-            
-            # Handle raw string response
-            if isinstance(combined_response, str):
-                # Convert to structured response
-                structured_response = {
-                    "response": combined_response,
-                    "dialogue": combined_response,
-                    "concepts": [{
-                        "name": f"{self.agent_type.title()} Analysis",
-                        "type": self.agent_type,
-                        "description": combined_response,
-                        "related": [],
-                        "validation": {
-                            "confidence": 0.8,
-                            "supported_by": ["Direct analysis"],
-                            "contradicted_by": [],
-                            "needs_verification": []
-                        }
-                    }],
-                    "key_points": [f"{self.agent_type} perspective: {combined_response}"],
-                    "implications": ["Analysis in progress"],
-                    "uncertainties": [],
-                    "reasoning": [f"{self.agent_type} analysis initiated"],
-                    "metadata": {
-                        "response_type": "direct_analysis",
-                        "agent_type": self.agent_type,
-                        "timestamp": datetime.now().isoformat()
-                    }
-                }
-                combined_response = AgentResponse(**structured_response)
-            
-            response = combined_response
-            
-            # Initialize response metadata
-            if not response.metadata:
-                response.metadata = {}
+            response = self._combine_responses(chunk_responses)
+            logger.debug(f"Combined response: {response}")
             
             # Add base metadata
             base_metadata = {
@@ -249,8 +217,7 @@ class NovaAgent:
             if metadata:
                 base_metadata.update(metadata)
             
-            # Add agent perspective and metadata
-            response.perspective = self.agent_type
+            # Update response metadata
             response.metadata.update(base_metadata)
             
             # Add dialogue context and message
@@ -324,10 +291,9 @@ class NovaAgent:
                 key_points=[f"Error in {self.agent_type} agent"],
                 implications=["System needs attention"],
                 uncertainties=["Error cause needs investigation"],
-                reasoning=["Error handling protocol activated"],
+                reasoning="Error handling protocol activated",
                 perspective=self.agent_type,
                 confidence=0.0,
-                timestamp=datetime.now(),
                 metadata={
                     "error": str(e),
                     "agent_type": self.agent_type,
@@ -338,7 +304,10 @@ class NovaAgent:
                         "content": f"[{self.agent_type.capitalize()}] Error: {str(e)}",
                         "timestamp": datetime.now().isoformat()
                     }]
-                }
+                },
+                agent_id=self.agent_type,
+                status="error",
+                message=str(e)
             )
 
             # Add error message to dialogue if available
@@ -357,7 +326,7 @@ class NovaAgent:
         self,
         content: str,
         references: Optional[List[str]] = None
-    ) -> DialogueMessage:
+    ) -> Optional[DialogueMessage]:
         """Provide insight into current dialogue.
         
         Args:
@@ -365,7 +334,7 @@ class NovaAgent:
             references: Optional list of referenced concepts/messages
             
         Returns:
-            New dialogue message
+            New dialogue message or None if no dialogue
         """
         if not self.current_dialogue:
             logger.warning("No active dialogue for insight")
@@ -376,7 +345,8 @@ class NovaAgent:
             message_type="insight",
             agent_type=self.agent_type,
             references=references or [],
-            timestamp=datetime.now()
+            timestamp=datetime.now(),
+            sender=self.agent_type
         )
         
         self.current_dialogue.add_message(message)
@@ -387,7 +357,7 @@ class NovaAgent:
         content: str,
         message_type: str,
         references: Optional[List[str]] = None
-    ) -> DialogueMessage:
+    ) -> Optional[DialogueMessage]:
         """Send message to current dialogue.
         
         Args:
@@ -396,7 +366,7 @@ class NovaAgent:
             references: Optional list of referenced concepts/messages
             
         Returns:
-            New dialogue message
+            New dialogue message or None if no dialogue
         """
         if not self.current_dialogue:
             logger.warning("No active dialogue for message")
@@ -407,7 +377,8 @@ class NovaAgent:
             message_type=message_type,
             agent_type=self.agent_type,
             references=references or [],
-            timestamp=datetime.now()
+            timestamp=datetime.now(),
+            sender=self.agent_type
         )
         
         self.current_dialogue.add_message(message)

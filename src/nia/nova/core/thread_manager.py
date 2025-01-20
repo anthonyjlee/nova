@@ -12,7 +12,7 @@ from logging.handlers import RotatingFileHandler
 from pydantic import BaseModel, Field
 
 from nia.core.types.memory_types import Memory, MemoryType, EpisodicMemory
-from nia.memory.two_layer import TwoLayerMemorySystem
+from nia.nova.memory.two_layer import TwoLayerMemorySystem
 from .error_handling import ResourceNotFoundError, ServiceError
 from qdrant_client.http import models
 
@@ -95,12 +95,12 @@ logger.setLevel(logging.INFO)  # Reduce logging level
 logger.propagate = False  # Prevent console output
 
 # Create logs directory if it doesn't exist
-LOGS_DIR = Path("logs/thread_manager")
+LOGS_DIR = Path("scripts/logs/fastapi")
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 # Create session-specific log file with smaller size and more backups
 session_id = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-session_log = LOGS_DIR / f"session_{session_id}.json"
+session_log = LOGS_DIR / f"thread_manager_{session_id}.json"
 
 class JsonFormatter(logging.Formatter):
     """Format log records as JSON with minimal info."""
@@ -141,6 +141,8 @@ class ThreadManager:
     # System thread UUIDs
     NOVA_TEAM_UUID = "00000000-0000-4000-a000-000000000001"
     NOVA_UUID = "00000000-0000-4000-a000-000000000002"
+    SYSTEM_LOGS_UUID = "00000000-0000-4000-a000-000000000003"
+    AGENT_COMMUNICATION_UUID = "00000000-0000-4000-a000-000000000004"
 
     def __init__(self, memory_system: TwoLayerMemorySystem):
         if not memory_system:
@@ -161,6 +163,8 @@ class ThreadManager:
             # Create system threads if they don't exist
             await self.get_thread(self.NOVA_TEAM_UUID)
             await self.get_thread(self.NOVA_UUID)
+            await self.get_thread(self.SYSTEM_LOGS_UUID)
+            await self.get_thread(self.AGENT_COMMUNICATION_UUID)
             
             self._initialized = True
             logger.info("Thread manager initialization complete")
@@ -170,10 +174,22 @@ class ThreadManager:
             self._initialized = False
             raise
     
-    async def get_thread(self, thread_id: str, max_retries: int = 3, retry_delay: float = 0.5) -> Dict[str, Any]:
+    async def get_thread(self, thread_id: str, max_retries: int = 3, retry_delay: float = 0.5, recursion_depth: int = 0) -> Dict[str, Any]:
         """Get a thread by ID, creating system threads if needed."""
+        # Prevent deep recursion
+        if recursion_depth > 3:
+            logger.error(f"Maximum recursion depth reached for thread {thread_id}")
+            raise ServiceError(f"Maximum recursion depth reached for thread {thread_id}")
         logger.debug(f"Getting thread {thread_id}")
         
+        # Map legacy IDs to UUIDs
+        id_mapping = {
+            "nova-team": self.NOVA_TEAM_UUID,
+            "nova": self.NOVA_UUID,
+            "system-logs": self.SYSTEM_LOGS_UUID,
+            "agent-communication": self.AGENT_COMMUNICATION_UUID
+        }
+
         if not self.memory_system:
             raise ServiceError("Memory system not initialized")
             
@@ -182,12 +198,6 @@ class ThreadManager:
             
         if not self.memory_system.semantic:
             raise ServiceError("Semantic layer not initialized")
-            
-        # Map legacy IDs to UUIDs
-        id_mapping = {
-            "nova-team": self.NOVA_TEAM_UUID,
-            "nova": self.NOVA_UUID
-        }
         
         # Convert legacy IDs to UUIDs
         if thread_id in id_mapping:
@@ -230,13 +240,9 @@ class ThreadManager:
                     logger.debug("Found thread in episodic layer")
                     return result[0]["content"]
 
-                # Handle system threads
-                if thread_id in [self.NOVA_TEAM_UUID, self.NOVA_UUID]:
-                    logger.debug(f"Creating system thread {thread_id}")
-                    return await self._create_system_thread(thread_id)
-
-                # Check semantic layer as fallback
+                # Check semantic layer before creating system thread
                 logger.debug("Checking semantic layer...")
+                
                 if not self.memory_system.semantic:
                     raise ServiceError("Semantic layer not initialized")
                     
@@ -248,10 +254,19 @@ class ThreadManager:
                     {"id": thread_id}
                 )
 
+                # Base case: If thread exists in semantic layer, recreate if it's a system thread
                 if thread_exists:
-                    # Thread exists in semantic but not episodic - recreate it
-                    logger.debug("Thread found in semantic layer but not episodic, recreating...")
+                    if thread_id in [self.NOVA_TEAM_UUID, self.NOVA_UUID, self.SYSTEM_LOGS_UUID, self.AGENT_COMMUNICATION_UUID]:
+                        logger.debug("System thread found in semantic layer but not episodic, recreating...")
+                        return await self._create_system_thread(thread_id)
+                    else:
+                        logger.error(f"Thread {thread_id} exists in semantic but not episodic layer")
+                        raise ResourceNotFoundError(f"Thread {thread_id} exists in semantic but not episodic layer")
+                # Only create new system thread if it doesn't exist in either layer
+                elif thread_id in [self.NOVA_TEAM_UUID, self.NOVA_UUID, self.SYSTEM_LOGS_UUID, self.AGENT_COMMUNICATION_UUID] and recursion_depth == 0:
+                    logger.debug("Creating new system thread...")
                     return await self._create_system_thread(thread_id)
+
 
                 if attempt < max_retries - 1:
                     logger.debug(f"Thread not found, retrying in {retry_delay}s (attempt {attempt + 1}/{max_retries})")
@@ -274,7 +289,7 @@ class ThreadManager:
         # but we need it to satisfy the return type
         raise ServiceError("Failed to get thread: Unexpected code path")
 
-    async def _create_system_thread(self, thread_id: str) -> Dict[str, Any]:
+    async def _create_system_thread(self, thread_id: str, skip_store: bool = False) -> Dict[str, Any]:
         """Create a system thread."""
         now = datetime.now(timezone.utc).isoformat()
         
@@ -315,28 +330,109 @@ class ThreadManager:
             }
         ]
 
+        # Determine thread configuration based on ID
+        thread_config = {
+            self.NOVA_TEAM_UUID: {
+                "name": "Nova Team",
+                "participants": core_agents,
+                "type": "agent-team",
+                "description": "This is where NOVA and core agents collaborate."
+            },
+            self.NOVA_UUID: {
+                "name": "Nova",
+                "participants": [],
+                "type": "agent-team",
+                "description": "Primary Nova thread"
+            },
+            self.SYSTEM_LOGS_UUID: {
+                "name": "System Logs",
+                "participants": [],
+                "type": "system",
+                "description": "System-wide logging and monitoring thread"
+            },
+            self.AGENT_COMMUNICATION_UUID: {
+                "name": "Agent Communication",
+                "participants": [],
+                "type": "system",
+                "description": "Thread for agent-to-agent communication"
+            }
+        }
+
+        config = thread_config.get(thread_id, {})
         thread = {
             "id": thread_id,
-            "name": "Nova Team" if thread_id == self.NOVA_TEAM_UUID else "Nova",
+            "name": config.get("name", "Unknown"),
             "domain": "general",
             "messages": [],
             "createdAt": now,
             "updatedAt": now,
-            "workspace": "system",  # Changed to system workspace
-            "participants": core_agents if thread_id == self.NOVA_TEAM_UUID else [],
+            "workspace": "system",
+            "participants": config.get("participants", []),
             "metadata": {
-                "type": "agent-team",
+                "type": config.get("type", "system"),
                 "system": True,
                 "pinned": True,
-                "description": "This is where NOVA and core agents collaborate." if thread_id == self.NOVA_TEAM_UUID else "Primary Nova thread"
+                "description": config.get("description", "")
             }
         }
 
         try:
-            # Store in both layers
-            await self._store_thread(thread)
+            if not skip_store:
+                # Store directly in both layers without verification to prevent recursion
+                try:
+                    # Store in episodic layer
+                    memory_data = {
+                        "id": thread_id,
+                        "content": thread,
+                        "type": MemoryType.EPISODIC.value,
+                        "importance": 0.8,
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                        "context": {
+                            "domain": thread.get("domain", "general"),
+                            "source": "nova",
+                            "type": MemoryType.EPISODIC.value,
+                            "thread_id": thread_id
+                        },
+                        "metadata": {
+                            "thread_id": thread_id,
+                            "type": MemoryType.EPISODIC.value,
+                            "consolidated": False,
+                            "layer": "episodic",
+                            "domain": thread.get("domain", "general"),
+                            "source": "nova"
+                        }
+                    }
+                    
+                    memory = EpisodicMemory(**memory_data)
+                    if self.memory_system.episodic:
+                        await self.memory_system.episodic.store_memory(memory)
+                        
+                    # Store in semantic layer
+                    if self.memory_system.semantic:
+                        properties = {
+                            "name": thread["name"],
+                            "domain": thread["domain"],
+                            "createdAt": thread["createdAt"],
+                            "updatedAt": thread["updatedAt"],
+                            "workspace": thread["workspace"],
+                            "participants": json.dumps(thread.get("participants", [])),
+                            "metadata": json.dumps(thread.get("metadata", {}))
+                        }
+                        
+                        await self.memory_system.semantic.run_query(
+                            """
+                            MERGE (t:Thread {id: $id})
+                            SET t += $properties
+                            """,
+                            {
+                                "id": thread_id,
+                                "properties": properties
+                            }
+                        )
+                except Exception as e:
+                    logger.error(f"Failed to store system thread {thread_id}: {str(e)}")
+                    raise ServiceError(f"Failed to store system thread {thread_id}: {str(e)}") from e
             
-            # Return thread after successful storage
             return thread
         except Exception as e:
             # Log error and re-raise
@@ -377,8 +473,8 @@ class ThreadManager:
             logger.error(f"Failed to create thread model: {str(e)}")
             raise ServiceError(f"Failed to create thread: {str(e)}") from e
 
-        # Store with verification enabled
-        await self._store_thread(thread, verify=True)
+        # Store with verification disabled for initial creation to prevent recursion
+        await self._store_thread(thread, verify=False)
         
         # Additional verification with retries
         max_retries = 3
@@ -426,9 +522,10 @@ class ThreadManager:
                 if not self.memory_system.episodic or not self.memory_system.episodic.store:
                     raise ServiceError("Episodic store not initialized")
                     
-                # Check if thread already exists in episodic layer
+                # Check if thread already exists in episodic layer, but skip for system threads
                 logger.debug("Checking for existing thread...")
-                existing_thread = await self.memory_system.episodic.store.search_vectors({
+                if thread["id"] not in [self.NOVA_TEAM_UUID, self.NOVA_UUID, self.SYSTEM_LOGS_UUID, self.AGENT_COMMUNICATION_UUID]:
+                    existing_thread = await self.memory_system.episodic.store.search_vectors({
                     "content": {},
                     "filter": {
                         "must": [
@@ -613,7 +710,9 @@ class ThreadManager:
             if "thread_id" in filter_params:
                 id_mapping = {
                     "nova-team": self.NOVA_TEAM_UUID,
-                    "nova": self.NOVA_UUID
+                    "nova": self.NOVA_UUID,
+                    "system-logs": self.SYSTEM_LOGS_UUID,
+                    "agent-communication": self.AGENT_COMMUNICATION_UUID
                 }
                 if filter_params["thread_id"] in id_mapping:
                     filter_params["thread_id"] = id_mapping[filter_params["thread_id"]]
@@ -759,7 +858,9 @@ class ThreadManager:
             # Map legacy IDs to UUIDs
             id_mapping = {
                 "nova-team": self.NOVA_TEAM_UUID,
-                "nova": self.NOVA_UUID
+                "nova": self.NOVA_UUID,
+                "system-logs": self.SYSTEM_LOGS_UUID,
+                "agent-communication": self.AGENT_COMMUNICATION_UUID
             }
             
             # Convert legacy IDs to UUIDs

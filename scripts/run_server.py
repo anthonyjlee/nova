@@ -10,12 +10,11 @@ import subprocess
 import json
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Dict, Any, Optional, Set, TYPE_CHECKING
+from typing import Dict, Any, Optional, Set
 
-if TYPE_CHECKING:
-    from nia.memory.two_layer import TwoLayerMemorySystem
-    from nia.memory.vector_store import VectorStore
-    from nia.nova.core.thread_manager import ThreadManager
+from nia.memory.two_layer import TwoLayerMemorySystem
+from nia.memory.vector_store import VectorStore
+from nia.nova.core.thread_manager import ThreadManager
 
 # Configure logging with both file and console handlers
 project_root = Path(__file__).parent.parent.resolve()
@@ -181,11 +180,6 @@ async def verify_memory_system(status: ServiceStatus) -> Optional[TwoLayerMemory
         memory_system = TwoLayerMemorySystem()
         await memory_system.initialize()
         
-        # Verify vector store with connection pooling
-        if memory_system.vector_store:
-            await memory_system.vector_store.connect()
-            await memory_system.vector_store.inspect_collection()
-        
         # Verify episodic store with minimal serialization
         from nia.core.types.memory_types import EpisodicMemory, MemoryType
         test_memory = EpisodicMemory(
@@ -350,10 +344,4 @@ async def main():
 if __name__ == "__main__":
     # Add src directory to Python path when running directly
     sys.path.append(str(project_root / "src"))
-    
-    # Import nia modules after modifying Python path
-    from nia.memory.two_layer import TwoLayerMemorySystem
-    from nia.memory.vector_store import VectorStore
-    from nia.nova.core.thread_manager import ThreadManager
-    
     asyncio.run(main())

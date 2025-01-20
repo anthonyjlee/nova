@@ -10,42 +10,42 @@ from fastapi import Depends
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
-from nia.memory.two_layer import TwoLayerMemorySystem
-from nia.core.neo4j.concept_manager import ConceptManager
-from nia.core.neo4j.graph_store import GraphStore
-from nia.core.neo4j.agent_store import AgentStore
-from nia.core.neo4j.profile_store import ProfileStore
-from nia.core.interfaces.llm_interface import LLMInterface
+from ..memory.two_layer import TwoLayerMemorySystem
+from ...core.neo4j.concept_manager import ConceptManager
+from ...core.neo4j.graph_store import GraphStore
+from ...core.neo4j.agent_store import AgentStore
+from ...core.neo4j.profile_store import ProfileStore
+from ...core.interfaces.llm_interface import LLMInterface
 # Core cognitive agents
-from nia.agents.specialized.belief_agent import BeliefAgent
-from nia.agents.specialized.desire_agent import DesireAgent
-from nia.agents.specialized.emotion_agent import EmotionAgent
-from nia.agents.specialized.reflection_agent import ReflectionAgent
-from nia.agents.specialized.meta_agent import MetaAgent
-from nia.agents.specialized.self_model_agent import SelfModelAgent
-from nia.agents.specialized.analysis_agent import AnalysisAgent
-from nia.agents.specialized.research_agent import ResearchAgent
-from nia.agents.specialized.integration_agent import IntegrationAgent
-from nia.agents.specialized.task_agent import TaskAgent
-from nia.agents.specialized.logging_agent import LoggingAgent
+from ...agents.specialized.belief_agent import BeliefAgent
+from ...agents.specialized.desire_agent import DesireAgent
+from ...agents.specialized.emotion_agent import EmotionAgent
+from ...agents.specialized.reflection_agent import ReflectionAgent
+from ...agents.specialized.meta_agent import MetaAgent
+from ...agents.specialized.self_model_agent import SelfModelAgent
+from ...agents.specialized.analysis_agent import AnalysisAgent
+from ...agents.specialized.research_agent import ResearchAgent
+from ...agents.specialized.integration_agent import IntegrationAgent
+from ...agents.specialized.task_agent import TaskAgent
+from ...agents.specialized.logging_agent import LoggingAgent
 
 # Support agents
-from nia.agents.specialized.parsing_agent import ParsingAgent
-from nia.agents.specialized.coordination_agent import CoordinationAgent
-from nia.agents.specialized.analytics_agent import AnalyticsAgent
-from nia.agents.specialized.orchestration_agent import OrchestrationAgent
-from nia.agents.specialized.dialogue_agent import DialogueAgent
-from nia.agents.specialized.context_agent import ContextAgent
-from nia.agents.specialized.validation_agent import ValidationAgent
-from nia.agents.specialized.synthesis_agent import SynthesisAgent
-from nia.agents.specialized.alerting_agent import AlertingAgent
-from nia.agents.specialized.monitoring_agent import MonitoringAgent
-from nia.agents.specialized.schema_agent import SchemaAgent
-from nia.agents.specialized.response_agent import ResponseAgent
-from nia.agents.tiny_factory import TinyFactory
-from nia.world.world import World
-from nia.world.environment import NIAWorld
-from nia.nova.core.thread_manager import ThreadManager
+from ...agents.specialized.parsing_agent import ParsingAgent
+from ...agents.specialized.coordination_agent import CoordinationAgent
+from ...agents.specialized.analytics_agent import AnalyticsAgent
+from ...agents.specialized.orchestration_agent import OrchestrationAgent
+from ...agents.specialized.dialogue_agent import DialogueAgent
+from ...agents.specialized.context_agent import ContextAgent
+from ...agents.specialized.validation_agent import ValidationAgent
+from ...agents.specialized.synthesis_agent import SynthesisAgent
+from ...agents.specialized.alerting_agent import AlertingAgent
+from ...agents.specialized.monitoring_agent import MonitoringAgent
+from ...agents.specialized.schema_agent import SchemaAgent
+from ...agents.specialized.response_agent import ResponseAgent
+from ...agents.tiny_factory import TinyFactory
+from ...world.world import World
+from ...world.environment import NIAWorld
+from ..core.thread_manager import ThreadManager
 
 # Global instances
 _memory_system: Optional[TwoLayerMemorySystem] = None
@@ -116,21 +116,32 @@ async def get_memory_system(
             while retry_count < max_retries:
                 try:
                     logger.debug(f"Attempting memory system initialization (attempt {retry_count + 1}/{max_retries})")
-                    await initialize_with_retry(_memory_system, name, store={}, max_retries=max_retries, retry_delay=retry_delay)
-                    logger.debug("Memory system initialization complete")
-                    break
+                    if not _memory_system._initialized:
+                        await _memory_system.initialize()
+                        
+                    # Verify both layers are initialized
+                    if _memory_system._initialized and _memory_system.episodic and _memory_system.semantic:
+                        # Initialize episodic layer if needed
+                        if _memory_system.episodic and _memory_system.episodic.store:
+                            await _memory_system.episodic.initialize()
+                            
+                        # Initialize semantic layer if needed
+                        if _memory_system.semantic and hasattr(_memory_system.semantic, 'connect'):
+                            await _memory_system.semantic.connect()
+                            
+                        logger.debug("Memory system initialization complete")
+                        break
+                    raise RuntimeError("Memory system initialization incomplete")
                 except Exception as e:
                     retry_count += 1
                     if retry_count == max_retries:
-                        logger.warning(f"Memory system initialization failed after {max_retries} retries: {str(e)}")
-                        # Continue without full initialization
-                        break
+                        logger.error(f"Memory system initialization failed after {max_retries} retries: {str(e)}")
+                        raise RuntimeError(f"Failed to initialize memory system: {str(e)}")
                     logger.warning(f"Memory system initialization attempt {retry_count} failed: {str(e)}")
                     await asyncio.sleep(retry_delay)
         except Exception as e:
             logger.error(f"Error in memory system initialization: {str(e)}")
-            # Don't raise - allow startup to continue
-            logger.warning("Continuing without fully initialized memory system")
+            raise RuntimeError(f"Failed to initialize memory system: {str(e)}")
     return _memory_system
 
 async def initialize_with_retry(

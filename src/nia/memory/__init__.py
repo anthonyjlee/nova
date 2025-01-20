@@ -1,18 +1,24 @@
 """Memory system initialization."""
 
-# Import all types from memory_types
+# Import memory types
 from ..core.types.memory_types import (
+    Memory,
+    EpisodicMemory,
+    MemoryType,
+    ValidationSchema,
+    CrossDomainSchema
+)
+
+# Import agent types
+from ..core.types.agent_types import (
     AgentResponse,
     DialogueMessage,
     DialogueContext,
-    Memory,
-    EpisodicMemory,
     SemanticMemory,
     ProceduralMemory,
     Concept,
     Relationship,
     Belief,
-    MemoryType,
     MemoryQuery,
     ConsolidationRule,
     MemoryBatch
@@ -43,6 +49,8 @@ __all__ = [
     'MemoryQuery',
     'ConsolidationRule',
     'MemoryBatch',
+    'ValidationSchema',
+    'CrossDomainSchema',
     
     # Core components
     'TwoLayerMemorySystem',

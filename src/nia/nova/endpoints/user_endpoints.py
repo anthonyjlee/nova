@@ -6,14 +6,14 @@ from datetime import datetime
 from pydantic import BaseModel, Field, validator
 from enum import Enum
 
-from nia.core.dependencies import (
+from ..core.dependencies import (
     get_memory_system,
     get_analytics_agent,
     get_llm_interface,
     get_world
 )
-from nia.core.auth import get_permission
-from nia.core.error_handling import ServiceError
+from ..core.auth import get_permission
+from ..core.error_handling import ServiceError
 
 # Models
 class LearningStyle(BaseModel):

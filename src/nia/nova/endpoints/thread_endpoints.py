@@ -5,16 +5,15 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime
 import uuid
 
-from nia.memory.two_layer import TwoLayerMemorySystem
-from nia.agents.specialized.orchestration_agent import OrchestrationAgent
-from nia.agents.specialized.coordination_agent import CoordinationAgent
+from ..memory.two_layer import TwoLayerMemorySystem
+from ...agents.specialized.orchestration_agent import OrchestrationAgent
+from ...agents.specialized.coordination_agent import CoordinationAgent
 
-from nia.core.auth import (
+from ...core.auth import (
     check_rate_limit,
-    check_domain_access,
     get_permission
 )
-from nia.core.error_handling import (
+from ..core.error_handling import (
     NovaError,
     ValidationError,
     ResourceNotFoundError,
@@ -22,7 +21,7 @@ from nia.core.error_handling import (
     retry_on_error,
     validate_request
 )
-from nia.core.dependencies import (
+from ..core.dependencies import (
     get_memory_system,
     get_orchestration_agent,
     get_coordination_agent,

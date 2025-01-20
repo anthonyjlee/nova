@@ -9,7 +9,7 @@ from .tiny_person import TinyPerson
 from .base import BaseAgent as MemoryBaseAgent
 from ..world.environment import NIAWorld
 from ..memory.two_layer import TwoLayerMemorySystem
-from ..core.types.memory_types import Memory, EpisodicMemory, SemanticMemory, AgentResponse, MemoryType, KnowledgeVertical
+from ..core.types.memory_types import Memory, EpisodicMemory, SemanticMemory, AgentResponse, MemoryType
 from ..config import validate_agent_config
 
 logger = logging.getLogger(__name__)

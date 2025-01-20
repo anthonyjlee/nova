@@ -5,16 +5,17 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime, timezone
 import uuid
 
-from nia.memory.two_layer import TwoLayerMemorySystem
-from nia.agents.specialized.orchestration_agent import OrchestrationAgent
-from nia.core.types.memory_types import Memory, EpisodicMemory, MemoryType
+from qdrant_client.http import models
+from ..memory.two_layer import TwoLayerMemorySystem
+from ...agents.specialized.orchestration_agent import OrchestrationAgent
+from ...core.types.memory_types import Memory, EpisodicMemory, MemoryType
 
-from nia.core.auth import (
+from ..core.auth import (
     check_rate_limit,
     check_domain_access,
     get_permission
 )
-from nia.core.error_handling import (
+from ..core.error_handling import (
     NovaError,
     ValidationError,
     ResourceNotFoundError,
@@ -22,7 +23,7 @@ from nia.core.error_handling import (
     retry_on_error,
     validate_request
 )
-from nia.core.dependencies import (
+from ..core.dependencies import (
     get_memory_system,
     get_orchestration_agent
 )
@@ -55,6 +56,7 @@ async def store_memory(
         
         # Create memory object
         memory = Memory(
+            id=str(uuid.uuid4()),
             content=request["content"],
             type=request["type"],
             importance=request.get("importance", 0.5),
@@ -105,8 +107,21 @@ async def search_memory(
             } if domain or memory_type else {}
         }
         
-        # Search episodic memory
-        results = await memory_system.query_episodic(query_dict)
+        # Search episodic memory using vector store
+        if memory_system.episodic and memory_system.episodic.store:
+            results = await memory_system.episodic.store.search_vectors(
+                content=query_dict["content"],
+                filter_conditions=[
+                    models.FieldCondition(
+                        key=f"metadata_{k}",
+                        match=models.MatchValue(value=v)
+                    )
+                    for k, v in query_dict["filter"].items()
+                ] if query_dict["filter"] else [],
+                limit=limit or 10  # Default to 10 if limit is None
+            )
+        else:
+            results = []
         
         return {
             "query": query,
@@ -175,18 +190,28 @@ async def cross_domain_operation(
 @memory_router.get("/consolidate")
 @retry_on_error(max_retries=3)
 async def consolidate_memory(
+    memory_ids: Optional[List[str]] = None,
     domain: Optional[str] = None,
     _: None = Depends(get_permission("write")),
     memory_system: TwoLayerMemorySystem = Depends(get_memory_system)
 ) -> Dict:
     """Trigger memory consolidation."""
     try:
+        # Get candidates if no IDs provided
+        if not memory_ids:
+            if memory_system.episodic:
+                candidates = await memory_system.episodic.get_consolidation_candidates()
+                memory_ids = [m["id"] for m in candidates if isinstance(m, dict) and "id" in m]
+            else:
+                memory_ids = []
+            
         # Run consolidation
-        await memory_system.consolidate_memories()
+        if memory_ids:
+            await memory_system.consolidate_memories(memory_ids)
         
         # Return basic result since consolidate_memories doesn't return stats
         return {
-            "consolidated_count": 0,  # Not tracked
+            "consolidated_count": len(memory_ids) if memory_ids else 0,
             "pruned_count": 0,  # Not tracked
             "timestamp": datetime.now(timezone.utc).isoformat()
         }
@@ -206,6 +231,7 @@ async def prune_memory(
     try:
         # Create memory for pruning operation
         pruning_memory = Memory(
+            id=str(uuid.uuid4()),
             content="Pruning memory graph",
             type=MemoryType.SEMANTIC,  # Use SEMANTIC type for system operations
             importance=1.0,

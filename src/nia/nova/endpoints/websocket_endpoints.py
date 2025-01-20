@@ -9,11 +9,11 @@ import base64
 import hashlib
 from datetime import datetime
 
-from nia.core.websocket import NovaWebSocket
-from nia.core.dependencies import get_memory_system
-from nia.core.auth import ws_auth, API_KEYS
-from nia.core.websocket_server import WebSocketServer
-from nia.memory.two_layer import TwoLayerMemorySystem
+from ..core.websocket import NovaWebSocket
+from ..core.dependencies import get_memory_system
+from ..core.auth.token import ws_auth, API_KEYS
+from ..core.websocket_server import WebSocketServer
+from ...memory.two_layer import TwoLayerMemorySystem
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)

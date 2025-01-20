@@ -6,18 +6,18 @@ from datetime import datetime
 import logging
 from uuid import uuid4
 
-from nia.core.dependencies import (
+from ..core.dependencies import (
     get_memory_system,
     get_analytics_agent,
     get_coordination_agent
 )
-from nia.core.auth import check_rate_limit, get_permission, verify_token
-from nia.core.error_handling import ServiceError, ValidationError
-from nia.core.websocket_types import (
+from ...core.auth import check_rate_limit, get_permission, verify_token
+from ...core.error_handling import ServiceError, ValidationError
+from ...core.websocket_types import (
     WebSocketState, WebSocketError, WebSocketSession,
     WebSocketConfig, WebSocketEvent, WebSocketMessageType
 )
-from nia.core.types.memory_types import Memory
+from ...core.types.memory_types import Memory
 
 logger = logging.getLogger(__name__)
 

@@ -6,15 +6,15 @@ from typing import Dict, Any, List, Optional
 from datetime import datetime
 import uuid
 
-from nia.core.dependencies import get_memory_system
-from nia.core.auth import get_permission
-from nia.core.error_handling import ServiceError
-from nia.core.validation import ValidationResult, ValidationPattern
-from nia.core.models import (
+from ..core.dependencies import get_memory_system
+from ..core.auth.token import get_permission
+from ..core.error_handling import ServiceError
+from ..core.validation import ValidationResult, ValidationPattern
+from ..core.models import (
     TaskNode, TaskEdge, TaskUpdate, TaskDetails, TaskState, TaskStateTransition,
     SubTask, Comment, TaskPriority
 )
-from nia.core.types.memory_types import Memory, MemoryType
+from ...core.types.memory_types import Memory, MemoryType
 
 logger = logging.getLogger(__name__)
 

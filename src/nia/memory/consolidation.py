@@ -8,13 +8,17 @@ from datetime import datetime, timedelta, timezone
 from ..core.types.memory_types import (
     Memory,
     EpisodicMemory,
-    Concept,
-    Relationship,
-    DomainContext,
-    BaseDomain,
-    KnowledgeVertical,
     ValidationSchema,
     CrossDomainSchema
+)
+from ..core.types.domain_types import (
+    DomainContext,
+    BaseDomain,
+    KnowledgeVertical
+)
+from ..core.types.agent_types import (
+    Concept,
+    Relationship
 )
 from ..core.neo4j.concept_store import ConceptStore
 
@@ -32,8 +36,10 @@ class ConsolidationPattern:
         self.name = name
         self.threshold = threshold
         self.domain_context = domain_context or DomainContext(
-            primary_domain=BaseDomain.PROFESSIONAL,
-            knowledge_vertical=KnowledgeVertical.GENERAL
+            domain=BaseDomain.PROFESSIONAL.value,
+            source="consolidation",
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            knowledge_vertical=KnowledgeVertical.GENERAL.value
         )
         
     async def extract_knowledge(
@@ -50,10 +56,12 @@ class ConsolidationPattern:
         target_domain: DomainContext
     ) -> bool:
         """Validate knowledge transfer between domains."""
-        return source_domain.validate_transfer(
-            target_domain=target_domain.primary_domain,
-            target_vertical=target_domain.knowledge_vertical
-        )
+        # Simple validation based on confidence and domain match
+        if source_domain.confidence < 0.5:
+            return False
+        if source_domain.domain != target_domain.domain:
+            return False
+        return True
 
 class TinyTroupePattern(ConsolidationPattern):
     """Pattern for extracting TinyTroupe-specific knowledge."""
@@ -102,8 +110,10 @@ class TinyTroupePattern(ConsolidationPattern):
                     knowledge_vertical = KnowledgeVertical.GENERAL
                 
                 memory.domain_context = DomainContext(
-                    primary_domain=primary_domain,
-                    knowledge_vertical=knowledge_vertical,
+                    domain=str(primary_domain),
+                    source="consolidation",
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                    knowledge_vertical=str(knowledge_vertical),
                     confidence=0.9
                 )
                 logger.info(f"Created domain context: {memory.domain_context.dict()}")
@@ -186,16 +196,9 @@ class TinyTroupePattern(ConsolidationPattern):
                     # Create a new ValidationSchema with default values
                     validation_data = ValidationSchema(
                         domain="professional",
-                        access_domain="professional",
-                        confidence=0.9,
-                        source="professional",
-                        cross_domain=CrossDomainSchema(
-                            approved=True,
-                            requested=True,
-                            source_domain="professional",
-                            target_domain="professional",
-                            justification="Test justification"
-                        )
+                        source="consolidation",
+                        timestamp=datetime.now(timezone.utc).isoformat(),
+                        confidence=0.9
                     ).dict()
             
             # Update validation data from memory context if available
@@ -418,10 +421,12 @@ class ConsolidationManager:
     def __init__(self, episodic_layer, semantic_layer):
         self.episodic = episodic_layer
         self.semantic = semantic_layer
-        self.patterns = [TinyTroupePattern()]
+        self.patterns: List[ConsolidationPattern] = []
         self.last_consolidation = datetime.now()
         self.consolidation_interval = timedelta(minutes=5)
         self.importance_threshold = 0.8
+        # Initialize with default pattern
+        self.add_pattern(TinyTroupePattern())
         
     async def should_consolidate(self) -> bool:
         """Determine if consolidation should occur."""
@@ -483,7 +488,9 @@ class ConsolidationManager:
         
     def add_pattern(self, pattern: ConsolidationPattern):
         """Add a new consolidation pattern."""
-        self.patterns.append(pattern)
+        if not isinstance(pattern, ConsolidationPattern):
+            raise TypeError("Pattern must be an instance of ConsolidationPattern")
+        self.patterns = [*self.patterns, pattern]  # Create new list instead of using append
         
     def remove_pattern(self, pattern_name: str):
         """Remove a consolidation pattern by name."""

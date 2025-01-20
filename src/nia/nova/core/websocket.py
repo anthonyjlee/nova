@@ -3,7 +3,7 @@
 from fastapi import WebSocket as FastAPIWebSocket
 from typing import Optional, Dict, Any
 import logging
-from .websocket_manager import websocket_manager
+from .websocket_state import websocket_manager
 
 logger = logging.getLogger(__name__)
 

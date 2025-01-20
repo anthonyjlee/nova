@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Optional
 from datetime import datetime
 from pydantic import BaseModel
-from ..endpoints.auth import validate_api_key as get_current_user
+from ..core.auth.token import validate_api_key as get_current_user
 from ..core.dependencies import get_memory_system
 
 channel_router = APIRouter(

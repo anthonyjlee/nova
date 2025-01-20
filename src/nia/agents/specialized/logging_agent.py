@@ -1,19 +1,29 @@
 """TinyTroupe logging agent implementation."""
 
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Union
 from datetime import datetime
 
 from ...nova.core.base import NovaAgent
 from ..tinytroupe_agent import TinyTroupeAgent
 from ...world.environment import NIAWorld
 from ...memory.two_layer import TwoLayerMemorySystem
-from ...core.types.memory_types import AgentResponse
+from ...core.types.agent_types import AgentResponse
 
 logger = logging.getLogger(__name__)
 
 class LoggingAgent(NovaAgent, TinyTroupeAgent):
     """Logging agent with TinyTroupe and memory capabilities."""
+
+    @property
+    def emotions(self) -> Dict[str, str]:
+        """Get agent's emotional state."""
+        return self._configuration.get("current_emotions", {})
+
+    @property
+    def desires(self) -> List[str]:
+        """Get agent's current goals/desires."""
+        return self._configuration.get("current_goals", [])
     
     def __init__(
         self,
@@ -28,12 +38,22 @@ class LoggingAgent(NovaAgent, TinyTroupeAgent):
         self.domain = domain or "professional"  # Default to professional domain
         
         # Initialize NovaAgent first
+        llm = None
+        store = None
+        vector_store = None
+        
+        if memory_system:
+            llm = memory_system.llm
+            if hasattr(memory_system, 'semantic') and memory_system.semantic:
+                store = memory_system.semantic.store
+            if hasattr(memory_system, 'episodic') and memory_system.episodic:
+                vector_store = memory_system.episodic.store
+                
         NovaAgent.__init__(
             self,
-            llm=memory_system.llm if memory_system else None,
-            store=memory_system.semantic.store if memory_system else None,
-            vector_store=memory_system.episodic.store if memory_system else None,
-            domain=self.domain,
+            llm=llm,
+            store=store,
+            vector_store=vector_store,
             agent_type="logging"
         )
         
@@ -99,6 +119,15 @@ class LoggingAgent(NovaAgent, TinyTroupeAgent):
             ]
         }
         self.define(**attributes)
+        
+        # Initialize configuration directly
+        self._configuration = {
+            "occupation": attributes["occupation"],
+            "current_goals": attributes["desires"],
+            "current_emotions": attributes["emotions"],
+            "memory_references": {},
+            "capabilities": attributes["capabilities"]
+        }
         
     async def process(self, content: Dict[str, Any], metadata: Optional[Dict] = None) -> AgentResponse:
         """Process content through both systems with enhanced logging awareness."""
@@ -212,7 +241,7 @@ class LoggingAgent(NovaAgent, TinyTroupeAgent):
         
         # Store logging results with enhanced metadata
         await self.store_memory(
-            content={
+            content=str({
                 "type": "log_processing",
                 "content": content,
                 "logging_type": logging_type,
@@ -230,7 +259,7 @@ class LoggingAgent(NovaAgent, TinyTroupeAgent):
                     "rotation_states": self.rotation_policies,
                     "timestamp": datetime.now().isoformat()
                 }
-            },
+            }),
             importance=0.8,
             context={
                 "type": "logging",
