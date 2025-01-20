@@ -1,7 +1,6 @@
 """WebSocket endpoints for real-time updates."""
 
 from fastapi import APIRouter, Depends, WebSocketDisconnect, Query, HTTPException
-from ..core.websocket import NovaWebSocket
 from typing import Dict, Any, Optional, Literal
 import uuid
 import logging
@@ -10,13 +9,14 @@ import base64
 import hashlib
 from datetime import datetime
 
+from nia.core.websocket import NovaWebSocket
+from nia.core.dependencies import get_memory_system
+from nia.core.auth import ws_auth, API_KEYS
+from nia.core.websocket_server import WebSocketServer
+from nia.memory.two_layer import TwoLayerMemorySystem
+
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
-
-from ..core.dependencies import get_memory_system
-from ..core.auth import ws_auth, API_KEYS
-from ..core.websocket_server import WebSocketServer
-from nia.memory.two_layer import TwoLayerMemorySystem
 
 ws_router = APIRouter(
     tags=["WebSocket"]
