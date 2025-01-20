@@ -10,7 +10,7 @@ from ..core.error_handling import ServiceError
 from ..core.models import (
     AgentMetrics, AgentInteraction, AgentInfo, AgentResponse
 )
-from ..core.neo4j.base_store import Neo4jBaseStore
+from ...core.neo4j.base_store import Neo4jBaseStore
 
 agent_router = APIRouter(
     prefix="/api/agents",
