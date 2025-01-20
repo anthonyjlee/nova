@@ -12,7 +12,7 @@ from ..core.dependencies import (
     get_llm_interface,
     get_world
 )
-from ..core.auth import get_permission
+from nia.nova.core.auth.token import get_permission
 from ..core.error_handling import ServiceError
 
 # Models

@@ -9,7 +9,7 @@ from ..memory.two_layer import TwoLayerMemorySystem
 from ...agents.specialized.orchestration_agent import OrchestrationAgent
 from ...agents.specialized.coordination_agent import CoordinationAgent
 
-from ...core.auth import (
+from nia.nova.core.auth.token import (
     check_rate_limit,
     get_permission
 )

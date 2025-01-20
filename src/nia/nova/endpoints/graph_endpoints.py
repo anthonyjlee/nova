@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Dict, Any, List
 from datetime import datetime
-from nia.core.auth import validate_api_key
+from nia.nova.core.auth.token import validate_api_key
 from ..core.dependencies import get_memory_system
 
 graph_router = APIRouter(prefix="", tags=["Graph"])
